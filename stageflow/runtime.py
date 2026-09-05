@@ -253,12 +253,13 @@ class Runtime:
         调试用 (改 prompt/参数后秒级看效果, 不重跑前序 stage).
         - 不落 checkpoint / 不动 latest pointer (A6/A7: 防 replay 污染 resume 目标)
         - ctx.run_id = 新 UUID4 (临时重放 run 标识, 只活在本次调用)
-        - stage 的 depends_on 未全完成 → 无法重建完整输入 → 明确报错
+        - stage 已完成过 → rebuild_state_before; 未完成但依赖已全完成
+          (如原始 run 里失败的 stage) → rebuild_state; 依赖未完成 → 明确报错
 
         Args:
             dag: DAG (须与 cp 的 workflow_hash 一致, 否则 CheckpointMismatchError)
             task_id: 已有 checkpoint 的 task
-            stage_name: 要重放的 stage (必须已完成过 — 才有 delta 可重建)
+            stage_name: 要重放的 stage (已完成过, 或依赖已完成 — 才有 delta 可重建)
         """
         if self.checkpoint_store is None:
             raise RuntimeError("run_stage requires checkpoint_store")
@@ -281,8 +282,24 @@ class Runtime:
         if stage is None:
             raise KeyError(f"stage '{stage_name}' 不在 DAG {dag.name} 里")
 
-        # 重建 stage 前 state; stage 必须已完成过 (否则 deltas 不齐 → KeyError)
-        state = cp.rebuild_state_before(stage_name)
+        # pre-M2 (v0.5.0) cp 无 stage_deltas → rebuild 静默给出空输入 → 明确报错
+        if cp.done_stages and not cp.stage_deltas and not cp.initial_state and cp.state:
+            raise RuntimeError(
+                "checkpoint 无 stage_deltas — v0.5.0 旧版产物, 请重新 run 一次再重放"
+            )
+
+        # 重建 stage 执行前 state: 已完成 → before; 未完成但依赖已全完成
+        # (原始 run 失败/中断的 stage) → 全量 merge done deltas (F2)
+        if stage_name in cp.done_stages:
+            state = cp.rebuild_state_before(stage_name)
+        else:
+            missing = [d for d in stage.depends_on if d not in cp.done_stages]
+            if missing:
+                raise RuntimeError(
+                    f"stage '{stage_name}' 的依赖未完成 ({missing}), 无法重建其执行前 "
+                    f"state. 先跑完整 run 或 resume."
+                )
+            state = cp.rebuild_state()
 
         run_id = new_id()  # 临时重放 run; 不落 cp
         result = RunResult(task_id=task_id, dag_name=dag.name, run_id=run_id)

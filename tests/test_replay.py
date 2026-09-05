@@ -3,7 +3,7 @@ import tempfile
 
 import pytest
 
-from stageflow import Runtime
+from stageflow import Checkpoint, Runtime, StageError, workflow_hash
 from stageflow.checkpoint import CheckpointStore
 from stageflow.dag import DAG
 from stageflow.storage import FileStorage
@@ -25,20 +25,6 @@ def _dag():
         return {"c": ctx.state["b"] + 1}
 
     return dag
-
-
-async def _run_full(dag, task_id="t-1"):
-    with tempfile.TemporaryDirectory() as tmp:
-        store = CheckpointStore(FileStorage(root_dir=tmp))
-        runtime = Runtime(checkpoint_store=store)
-        result = await runtime.run(dag, task_id=task_id, initial_state={"seed": 0})
-        assert result.status == "done"
-        return store, result
-
-
-def _temp_store():
-    tmp = tempfile.TemporaryDirectory()
-    return CheckpointStore(FileStorage(root_dir=tmp)), tmp
 
 
 async def test_full_run_saves_deltas():
@@ -76,7 +62,7 @@ async def test_run_stage_replays_single_stage():
             dag.stages["s_b"].fn = original
 
         assert result.status == "done"
-        assert result.state["b"] == 10  # 新实现生效
+        assert result.state == {"seed": 0, "a": 1, "b": 10}  # 精确集合: rebuilt 是 {seed,a:1}, 若误用终态会含 b:2/c:3
         assert calls == [1]  # ctx.state.a = 1 (s_a 的 delta, 不是终态 3)
 
 
@@ -114,3 +100,84 @@ async def test_run_stage_unknown_stage_raises():
         await runtime.run(dag, task_id="t-1", initial_state={"seed": 0})
         with pytest.raises(KeyError):
             await runtime.run_stage(dag, task_id="t-1", stage_name="s_nope")
+
+
+def _dag_fail_sb():
+    """s_b 首跑必失败 (StageError) 的 DAG — 失败重放 / 依赖未完成 guard 用."""
+    dag = DAG("d")
+
+    @dag.stage()
+    async def s_a(ctx):
+        return {"a": 1}
+
+    @dag.stage(depends_on=["s_a"])
+    async def s_b(ctx):
+        raise StageError("boom")
+
+    @dag.stage(depends_on=["s_b"])
+    async def s_c(ctx):
+        return {"c": ctx.state["b"] + 1}
+
+    return dag
+
+
+async def test_run_stage_replays_failed_stage():
+    """原始 run 失败的 stage: 依赖已完成 → rebuild_state 全量 merge 后可重放."""
+    dag = _dag_fail_sb()
+    with tempfile.TemporaryDirectory() as tmp:
+        store = CheckpointStore(FileStorage(root_dir=tmp))
+        runtime = Runtime(checkpoint_store=store)
+        result = await runtime.run(dag, task_id="t-1", initial_state={"seed": 0})
+        assert result.status == "failed"
+        cp = store.load_latest("t-1")
+        assert cp.done_stages == ["s_a"]  # s_b 失败, 只完成了 s_a
+
+        # 修好 s_b 再重放 (模拟改 prompt 后只重跑该 stage)
+        seen = []
+        original = dag.stages["s_b"].fn
+
+        async def s_b_fixed(ctx):
+            seen.append(dict(ctx.state))  # 应看到重建输入 {seed:0, a:1}
+            return {"b": ctx.state["a"] + 1}
+
+        dag.stages["s_b"].fn = s_b_fixed
+        try:
+            replayed = await runtime.run_stage(dag, task_id="t-1", stage_name="s_b")
+        finally:
+            dag.stages["s_b"].fn = original
+
+        assert replayed.status == "done"
+        assert replayed.state == {"seed": 0, "a": 1, "b": 2}
+        assert seen == [{"seed": 0, "a": 1}]  # ctx 看到的是重建 pre-state
+
+
+async def test_run_stage_legacy_cp_without_deltas_raises():
+    """v0.5.0 旧 cp (无 stage_deltas) → 明确报错, 不静默用空输入重放."""
+    dag = _dag()
+    with tempfile.TemporaryDirectory() as tmp:
+        store = CheckpointStore(FileStorage(root_dir=tmp))
+        runtime = Runtime(checkpoint_store=store)
+        # 手工构造 pre-M2 cp: done_stages/state 有, stage_deltas/initial_state 空
+        store.save(Checkpoint(
+            task_id="t-1",
+            run_id="legacy1",
+            dag_name="d",
+            workflow_hash=workflow_hash(dag),
+            stage_statuses={"s_a": "done", "s_b": "done", "s_c": "done"},
+            state={"seed": 0, "a": 1, "b": 2, "c": 3},
+            done_stages=["s_a", "s_b", "s_c"],
+        ))
+        with pytest.raises(RuntimeError, match="stage_deltas"):
+            await runtime.run_stage(dag, task_id="t-1", stage_name="s_b")
+
+
+async def test_run_stage_deps_incomplete_raises():
+    """target 未完成且依赖未全完成 → 明确报错 (重建输入残缺)."""
+    dag = _dag_fail_sb()
+    with tempfile.TemporaryDirectory() as tmp:
+        store = CheckpointStore(FileStorage(root_dir=tmp))
+        runtime = Runtime(checkpoint_store=store)
+        await runtime.run(dag, task_id="t-1", initial_state={"seed": 0})
+        # s_b 失败 → s_c 的依赖 [s_b] 未完成 → 明确错误
+        with pytest.raises(RuntimeError, match="依赖未完成"):
+            await runtime.run_stage(dag, task_id="t-1", stage_name="s_c")

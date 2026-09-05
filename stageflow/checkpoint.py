@@ -90,6 +90,16 @@ class Checkpoint:
             stage_deltas=dict(d.get("stage_deltas") or {}),
         )
 
+    def rebuild_state(self) -> dict[str, Any]:
+        """重建所有已完成 stage merge 后的 state (给未完成的 stage 当执行前 state).
+
+        重放"原始 run 失败/中断的 stage"用 — 顺序执行 + 首败即停下,
+        未完成 stage 的依赖必已全部完成, 全量 merge done deltas 即其执行前 state.
+
+        Returns: 新 dict (不 mutate).
+        """
+        return self._rebuild_state()
+
     def rebuild_state_before(self, stage_name: str) -> dict[str, Any]:
         """重建 stage 执行前的 state = initial + 已完成且在该 stage 前的 deltas.
 
@@ -105,9 +115,13 @@ class Checkpoint:
                 f"stage '{stage_name}' 不在 cp 的完成记录里 "
                 f"(done_stages={self.done_stages}). 无法重建其执行前 state."
             )
+        return self._rebuild_state(stop_at=stage_name)
+
+    def _rebuild_state(self, stop_at: str | None = None) -> dict[str, Any]:
+        """initial + done_stages 完成序 deltas 的 merge. stop_at 命中断 (不含)."""
         rebuilt = dict(self.initial_state)
         for done in self.done_stages:
-            if done == stage_name:
+            if done == stop_at:
                 break
             delta = self.stage_deltas.get(done)
             if delta:
