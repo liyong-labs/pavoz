@@ -10,6 +10,8 @@ per-node retry + absolute deadline) + Checkpoint (断点续跑) + TestPipe (回�
     Runtime().run(dag, task_id=None, initial_state=..., resume=False)
         task_id 省略 → 自动 UUID4; run_id 每次 run 自动生成 (resume 复用)
         run_stage(dag, task_id, stage_name) — 从 cp 重建输入单 stage 重放 (v0.5.1)
+        fork_run(dag, task_id, from_stage=..., overrides=...) — 历史节点取输入改装回
+            续跑: 前序复用, from_stage 起用 overrides 重跑, 原 cp 不动 (v0.6)
     TestPipe(dag).mock("s_x", lambda state: {...}).run()
         TestPipe.replay_from(cp, dag) — 真实 cp 已完成 stage 用历史 delta mock 回归 (v0.5.1)
     StorageBackend / FileStorage / CheckpointStore

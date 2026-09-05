@@ -1,4 +1,4 @@
-"""CLI: run / trace / state / replay (v0.5.1, 4 命令).
+"""CLI: run / trace / state / replay / export-input / fork-run (v0.6).
 
 用法:
     python -m stageflow run dags/demo.py --task-id abc [--input '{"name": "x"}']
@@ -7,6 +7,8 @@
     python -m stageflow replay dags/demo.py --task-id abc --stage s_b [--patch patch.py]
 
 replay (--stage 单 stage 重放 + --patch 改 fn): v0.5.1 已 ship (2026-09-05).
+export-input / fork-run (v0.6, 2026-09-06): 任意过去节点取输入 → 改 → 装回续跑
+(LangGraph fork 范式, 见 docs/design/node-input-edit-fork.md).
 """
 
 from __future__ import annotations
@@ -157,6 +159,49 @@ async def _cmd_replay(args) -> int:
     return 0 if result.status == "done" else 1
 
 
+async def _cmd_export_input(args) -> int:
+    """export-input: 打印 stage 执行前 state (rebuild_state_before) — 人编辑的基座."""
+    store = CheckpointStore(_storage())
+    cp = store.load_latest(args.task_id)
+    if cp is None:
+        print(f"task {args.task_id} 无 checkpoint")
+        return 1
+    try:
+        before = cp.rebuild_state_before(args.stage)
+    except KeyError as e:
+        print(f"export-input 失败: {e} (stage 须已执行过)")
+        return 1
+    print(json.dumps(before, ensure_ascii=False, indent=2))
+    return 0
+
+
+async def _cmd_fork_run(args) -> int:
+    """fork-run: export-input 产物 (--input) 或 --overrides 装回 → 从 stage 分支续跑."""
+    dag = _load_dag(args.dag)
+    overrides: dict = {}
+    if args.input:
+        overrides = json.loads(Path(args.input).read_text(encoding="utf-8"))
+    if args.overrides:
+        overrides.update(json.loads(args.overrides))
+    runtime = Runtime(checkpoint_store=CheckpointStore(_storage()))
+    try:
+        result = await runtime.fork_run(dag, task_id=args.task_id,
+                                        from_stage=args.stage, overrides=overrides)
+    except (CheckpointMismatchError, RuntimeError, ValueError, KeyError) as e:
+        print(f"fork-run 失败: {e}")
+        return 1
+    print(json.dumps({
+        "task_id": result.task_id,
+        "run_id": result.run_id,
+        "dag": result.dag_name,
+        "status": result.status,
+        "error": result.error,
+        "stage_statuses": result.stage_statuses,
+        "state": result.state,
+    }, ensure_ascii=False, indent=2))
+    return 0 if result.status == "done" else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="stageflow", description="LLM/SE/Extract 流程编排")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -185,6 +230,21 @@ def main(argv: list[str] | None = None) -> int:
     p_replay.add_argument("--patch", default=None,
                           help="patch 文件 (暴露 patch(dag) -> None, 改 stage fn)")
     p_replay.set_defaults(fn=_cmd_replay)
+
+    p_export = sub.add_parser("export-input", help="导出某 stage 的执行前输入 (state JSON, 可编辑)")
+    p_export.add_argument("--task-id", required=True)
+    p_export.add_argument("--stage", required=True, help="要导出的 stage 名 (须已执行过)")
+    p_export.set_defaults(fn=_cmd_export_input)
+
+    p_fork = sub.add_parser("fork-run", help="从历史 stage 分支: 前序复用, 该 stage 起用改后输入重跑")
+    p_fork.add_argument("dag", help="dag 文件路径")
+    p_fork.add_argument("--task-id", required=True)
+    p_fork.add_argument("--stage", required=True, help="分支点 stage (重跑起点)")
+    p_fork.add_argument("--overrides", default=None,
+                        help='JSON 顶层覆盖, e.g. \'{"topic": "chickens"}\'')
+    p_fork.add_argument("--input", default=None,
+                        help="编辑过的输入 JSON 文件 (export-input 产物, 全量 state 覆盖)")
+    p_fork.set_defaults(fn=_cmd_fork_run)
 
     args = parser.parse_args(argv)
     return asyncio.run(args.fn(args))

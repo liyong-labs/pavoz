@@ -332,6 +332,101 @@ class Runtime:
             result.status = "done"
         return result
 
+    # ── Fork (v0.6, LangGraph fork 范式): 取历史节点输入 → 改 → 装回续跑 ──────
+    async def fork_run(
+        self,
+        dag: DAG,
+        task_id: str,
+        *,
+        from_stage: str,
+        overrides: dict | None = None,
+        run_id: str | None = None,
+    ) -> RunResult:
+        """从历史 run 的 from_stage 分支续跑: 前序 stage 结果复用 (不重跑),
+        from_stage 及其后继用注入的 overrides 重跑. 原 run 的 checkpoint 不动,
+        fork 的新 checkpoint (新 run_id) 成为 latest (LangGraph: fork is latest).
+
+        overrides: 顶层 state key 覆盖, 注入到 from_stage 的执行前 state
+        (与 checkpoint state 同为 json-serializable dict).
+
+        调试闭环 (user 2026-09-06 拍板 "任意过去节点取输入改一改装回去"):
+            stageflow export-input --task-id X --from-stage s_b > in.json
+            # 人编辑 in.json (改几个 key)
+            stageflow fork-run --task-id X --from-stage s_b --input in.json
+        from_stage 可以是: ① 已完成的 stage (截断重跑) ② 失败/未完成的 stage
+        (其依赖已完成 — 修输入重跑失败点, 等价注入式 resume).
+
+        Returns: RunResult (fork run 的最终状态). 调用方可用 checkpoint
+        state_stats / CLI state 查看 fork 分支.
+        """
+        if self.checkpoint_store is None:
+            raise RuntimeError("fork_run requires checkpoint_store")
+        _validate_task_id(task_id)
+        cp = self.checkpoint_store.load_latest(task_id)
+        if cp is None:
+            raise RuntimeError(f"task {task_id} 无 checkpoint, 不能 fork")
+        cur_hash = workflow_hash(dag)
+        if cp.workflow_hash != cur_hash:
+            raise CheckpointMismatchError(
+                f"task {task_id} run {cp.run_id[:8]} checkpoint 的 DAG hash "
+                f"{cp.workflow_hash} ≠ 当前 DAG hash {cur_hash}. DAG 结构变了, 不能 fork."
+            )
+        if from_stage not in dag.stages:
+            raise KeyError(
+                f"stage '{from_stage}' 不在 DAG {dag.name}: {list(dag.stages)}"
+            )
+        missing = [d for d in dag.stages[from_stage].depends_on if d not in cp.done_stages]
+        if missing:
+            raise RuntimeError(
+                f"stage '{from_stage}' 的依赖未完成 ({missing}), 无法重建其执行前 state."
+            )
+
+        # truncate: 保留 from_stage 之前 (run 为线性 topo 序 → done_stages 即执行序)
+        keep = []
+        for _d in cp.done_stages:
+            if _d == from_stage:
+                break
+            keep.append(_d)
+
+        # state 重建 = initial + 保留 deltas (按序) + overrides (用户注入, 最后生效)
+        state = dict(cp.initial_state)
+        producers = {k: "<init>" for k in cp.initial_state}
+        kept_deltas: dict[str, dict[str, Any]] = {}
+        for _d in keep:
+            _dl = cp.stage_deltas.get(_d)
+            if _dl:
+                state.update(_dl)
+                kept_deltas[_d] = _dl
+                for _k in _dl:
+                    producers[_k] = _d
+        if overrides:
+            state.update(overrides)
+            for _k in overrides:
+                producers[_k] = "<fork>"
+        deep_validate_state(state)
+
+        statuses = {s: st for s, st in cp.stage_statuses.items() if s in keep}
+        fork_cp = Checkpoint(
+            task_id=task_id,
+            run_id=run_id or new_id(),
+            dag_name=cp.dag_name,
+            workflow_hash=cur_hash,
+            stage_statuses=statuses,
+            state=state,
+            done_stages=keep,
+            producers=producers,
+            initial_state=dict(cp.initial_state),
+            stage_deltas=kept_deltas,
+        )
+        self.checkpoint_store.save(fork_cp)  # save 同时把 latest 指针移到 fork
+        logger.info(
+            "task=%s fork from_stage=%s overrides_keys=%s run=%s (原 run %s, 复用 %d 个前序 stage)",
+            task_id, from_stage, list((overrides or {}))[:8],
+            fork_cp.run_id[:8], cp.run_id[:8], len(keep),
+        )
+        # 续跑: resume=True 读 latest (= fork cp), 跳过 keep, 从 from_stage 顺序执行
+        return await self.run(dag, task_id, resume=True)
+
     # ── 单 stage ────────────────────────────────────────
     async def _run_stage(
         self,
