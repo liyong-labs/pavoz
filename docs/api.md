@@ -17,7 +17,6 @@ dag = DAG(name: str)
 - `dag.validate()` — 静态校验 (未知依赖 + 环检测), run 前自动调用, 通过即冻结
 - `dag.topo_order() -> list[str]` — Kahn 拓扑序
 - `dag.reachable(upstream, downstream) -> bool` — 传递依赖判定 (链式覆盖用)
-- `dag.entrypoints -> list[str]` — 无依赖的入口 stage
 
 异常: `UnknownDepError` / `CycleError`
 
@@ -130,9 +129,8 @@ result: RunResult = await pipe.run(task_id="t", initial_state={...})
 python -m stageflow run <dag.py> [--task-id X] [--input '{"k": "v"}'] [--resume]
 python -m stageflow trace --task-id X
 python -m stageflow state --task-id X [--key K]
-python -m stageflow inspect --task-id X
 ```
 
 - `run`: 跑 DAG 文件 (模块须暴露 `dag` 变量); `STAGEFLOW_STORAGE` 环境变量
   指向 FileStorage 目录 (缺省不落 checkpoint)
-- `trace/state/inspect`: 读 FileStorage 里的 checkpoint
+- `trace/state`: 读 FileStorage 里的 checkpoint

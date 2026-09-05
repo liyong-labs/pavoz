@@ -1,9 +1,8 @@
-"""CLI: run / trace / inspect / state (v0.1, 4 命令).
+"""CLI: run / trace / state (v0.1, 3 命令).
 
 用法:
     python -m stageflow run dags/demo.py --task-id abc [--input '{"name": "x"}']
     python -m stageflow trace --task-id abc [--storage ./data]
-    python -m stageflow inspect --task-id abc [--call-id N]
     python -m stageflow state --task-id abc [--key k]
 
 replay --prompt-patch 推 v0.2 (架构评估修正, 2026-09-05).
