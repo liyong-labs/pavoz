@@ -5,7 +5,7 @@ description = "LLM/SE/Extract 流程编排系统 — micro/in-process workflow e
 authors = [{ name = "ebziw" }]
 readme = "README.md"
 requires-python = ">=3.12"
-license = { text = "MIT" }
+license = "MIT"
 dependencies = []
 
 [project.optional-dependencies]
