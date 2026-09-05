@@ -1,6 +1,6 @@
 [project]
 name = "stageflow"
-version = "0.5.0"
+version = "0.5.1"
 description = "Micro/in-process Python DAG workflow engine — stdlib only, zero runtime deps, in your process"
 authors = [{ name = "ebziw" }]
 readme = "README.md"

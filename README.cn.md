@@ -6,7 +6,7 @@
 零运行时依赖, 不绑定任何业务系统, 不绑定任何模型/搜索/存储服务。
 
 ```text
-Python 3.12+  |  MIT License  |  stdlib only  |  60 tests
+Python 3.12+  |  MIT License  |  stdlib only  |  81 tests
 ```
 
 stageflow 解决的是流程编排里最常用的一层: **声明式 DAG + 顺序执行 + 失败重试 +
@@ -56,6 +56,7 @@ async def s_save(ctx):
 | **断点续跑** | 每 node 完成即 checkpoint; resume 时校验 `workflow_hash` (改函数体不影响, 改结构拒续跑) |
 | **链式数据演进** | 下游 stage 可覆盖传递上游 producer 的 key (流水线模式); 平行 producer 冲突显式报错 |
 | **确定性回归** | `TestPipe` — mock 任意 stage 输出跑全图, prompt/stage 改动有保护网 |
+| **Stage 重放** | 从 checkpoint 重放: `Runtime.run_stage` 在重建的输入上重跑单 stage (调 prompt/参数不重跑前序); `TestPipe.replay_from(cp, dag)` 把真实 run 存下的 stage 输出当 mock 喂回去 — 对真实 run 做图回归 |
 | **与业务解耦** | 存储 (`StorageBackend`)、外部调用 (`ctx.call` caller) 全部 Protocol, 业务侧注入 |
 | **零依赖** | core 仅 Python 标准库; 不发散到 psycopg/redis/boto3 等 |
 
@@ -127,6 +128,24 @@ CLI 与完整示例 (checkpoint 续跑 / ctx.call / TestPipe) 见
 [`docs/cn/quickstart.md`](docs/cn/quickstart.md)。
 English version: [`docs/en/quickstart.md`](docs/en/quickstart.md).
 
+## CLI
+
+每次 `run` 都落 per-stage checkpoint (单跑也算, v0.5.1) 到
+`~/.stageflow/data` (`STAGEFLOW_STORAGE` 可覆盖目录) — replay/trace/state
+对 CLI 产物直接可用:
+
+```bash
+python -m stageflow run dags/demo.py --task-id demo-1 --input '{"name": "stageflow"}'
+python -m stageflow replay dags/demo.py --task-id demo-1 --stage s_upper
+#   ^-- 在重建的输入上重放单 stage (前序 stage 不重跑)
+python -m stageflow trace --task-id demo-1
+python -m stageflow state --task-id demo-1 --key shout
+```
+
+`replay` 还支持 `--patch P.py` (模块暴露 `patch(dag) -> None`) — 重放前
+换上新实现, prompt/参数秒级迭代。`run --resume` 续跑中断的 run (跳过已
+完成 stage, 复用同 run_id)。
+
 ## 核心概念
 
 - **DAG**: 静态声明、按拓扑顺序执行的有向无环图
@@ -168,7 +187,7 @@ sub-DAG 嵌套、业务 wrapper 实现 (LLM/Search/Extract adapter)、业务表 
 ## 测试
 
 ```bash
-pytest            # 60 tests (52 core + 8 storage_loader)
+pytest            # 81 tests
 ruff check .      # lint
 ```
 

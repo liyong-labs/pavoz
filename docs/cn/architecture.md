@@ -129,17 +129,39 @@ Airflow `dag_id + task_id + run_id + try_number`):
   (`runs/{task_id}/{run_id}/checkpoint` + `runs/{task_id}/latest`)。业务与
   stageflow 共用对象存储时前缀隔离 (如业务产物放 `research/{task_id}/v{v}/`)
 
+### 8. Replay 语义 (v0.5.1, M2/M3)
+
+两种重放模式, 都由 checkpoint 驱动 — 不靠 caller 重新喂数据:
+
+- **checkpoint 存重放所需的一切**。v0.5.1 起 cp 存 `initial_state` + 每个
+  已完成 stage 的原始 return (`stage_deltas`, 按完成序) — 任意已记录 stage
+  执行前的 state 可精确重建 (`initial_state` + 它之前已完成 stage 的 deltas;
+  链式覆盖由完成序天然处理), 不再 naive 地拿最终 `cp.state` 当输入 —
+  那里面含 stage 自己的输出, 会污染重放输入。`rebuild_state()` /
+  `rebuild_state_before(name)` 暴露此能力。旧 (v0.5.0) cp 缺新字段 —
+  读和 resume 都兼容, 但重放 → 明确报错提示重跑一次
+- **单 stage 重放** (`Runtime.run_stage` / CLI `replay <dag.py> --task-id X
+  --stage Y [--patch P.py]`): 重建该 stage 执行前 state, 只跑它 — 调
+  prompt/参数秒级看效果。原始 run 失败/中断、依赖已完成的 stage 也可重放。
+  重放产出是开发临时物: **不写 checkpoint** 也不动 `latest` 指针 —
+  replay 永远不会污染未来 resume/`load_latest` 的目标
+- **图回归** (`TestPipe.replay_from(cp, dag)`): 已完成 stage 用存下的 delta
+  当 mock, 其余真跑 — 真实 run 的 cp 直接当 fixture,"相同 stage 输出进 →
+  相同终态出" (`result.state == cp.state`) 验证换实现后图行为 (拓扑/合并/
+  冲突规则) 没坏。DAG 结构变了 (workflow_hash mismatch) → 明确报错拒
+  replay, 不静默错配
+
 ## 模块
 
 | 文件 | 职责 |
 |---|---|
 | `dag.py` | DAG 声明 + 拓扑排序 (Kahn) + 环检测 (Tarjan SCC + 自环) + 冻结 |
-| `runtime.py` | 执行引擎: 顺序跑 + retry + deadline + state merge + checkpoint |
+| `runtime.py` | 执行引擎: 顺序跑 + retry + deadline + state merge + checkpoint; `run_stage` 单 stage 重放 (v0.5.1) |
 | `state.py` | 类型校验 + ReadOnlyStateView + shallow merge + 冲突检测 |
-| `checkpoint.py` | CheckpointStore + workflow_hash + mismatch 检测 |
+| `checkpoint.py` | CheckpointStore + workflow_hash + mismatch 检测; `stage_deltas`/`initial_state` + `rebuild_state[_before]` (v0.5.1) |
 | `storage.py` | StorageBackend Protocol + FileStorage (默认) |
-| `testing.py` | TestPipe (mock stage 跑全图) |
-| `cli.py` | run/trace/state (v0.1) |
+| `testing.py` | TestPipe (mock stage 跑全图; `replay_from(cp, dag)` checkpoint 回归, v0.5.1) |
+| `cli.py` | run / trace / state / replay (v0.5.1) |
 | `storage_loader.py` | `load_storage(spec, **kwargs)` — config-string 驱动 `StorageBackend` 加载 (importlib + 友好错误); 见 [docs/storage.md](../storage.md) |
 
 ## 不做什么 (YAGNI)

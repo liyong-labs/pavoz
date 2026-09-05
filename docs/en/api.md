@@ -60,6 +60,27 @@ result: RunResult = await rt.run(
 - On completion the checkpoint is kept (not deleted) — it is the task's latest
   run and the target of future resumes/`load_latest`.
 
+### `Runtime.run_stage` (single-stage replay, v0.5.1)
+
+```python
+result: RunResult = await rt.run_stage(dag, task_id: str, stage_name: str)
+```
+
+Debug helper: rebuild the stage's pre-run state from the task's latest
+checkpoint and run **only that stage** — tune a prompt/parameters and see the
+effect in seconds without re-running upstream stages.
+
+- Pre-state rebuild: completed stages → `cp.rebuild_state_before(stage_name)`;
+  a stage that never completed (failed/interrupted original run) whose deps are
+  all done → `cp.rebuild_state()`; deps incomplete → `RuntimeError`
+- Does **not** write a checkpoint and does **not** move the `latest` pointer
+  (replay output is a dev artifact — it must not become the resume target);
+  `ctx.run_id` is a throwaway UUID4 for the call
+- Errors: no checkpoint → `RuntimeError`; DAG hash mismatch →
+  `CheckpointMismatchError`; pre-M2 (v0.5.0) checkpoint without
+  `stage_deltas` → `RuntimeError` (re-run once to produce a fresh checkpoint);
+  unknown stage → `KeyError`
+
 ### `RunResult`
 
 - `task_id`: caller-supplied or auto-generated UUID4
@@ -124,10 +145,25 @@ cp: Checkpoint | None = store.load_compatible(task_id, run_id, dag)
   ≠ chronological). Deleting the run the pointer names → `load_latest` returns
   `None` (clear "no checkpoint" signal — acceptable edge).
 - `Checkpoint` fields: `task_id / run_id / dag_name / workflow_hash /
-  stage_statuses / state / done_stages / producers`. `run_id` is required —
-  pre-v0.5 checkpoints (no `run_id`, old key `runs/{task_id}/checkpoint`) are
-  orphaned (hard cut, no legacy loader); within the v0.5 format, missing
-  optional fields load via defaults (forward-compatible schema).
+  stage_statuses / state / done_stages / producers` + v0.5.1:
+  `initial_state` (the run's starting state) and `stage_deltas` (each
+  completed stage's raw return dict, in completion order). Together they can
+  rebuild the state as it was before any recorded stage (`cp.state` is the
+  final merged state — you cannot derive per-stage inputs from it).
+  `run_id` is required — pre-v0.5 checkpoints (no `run_id`, old key
+  `runs/{task_id}/checkpoint`) are orphaned (hard cut, no legacy loader);
+  within the current format, missing optional fields load via defaults
+  (forward-compatible schema — v0.5.0 checkpoints without the new fields
+  load and resume fine).
+- `cp.rebuild_state() -> dict` — reconstruct the merged state after all
+  completed stages (`initial_state` + done deltas in completion order;
+  chain overwrites resolve by order). This is the input state for replaying
+  a stage that never completed (its deps are done).
+- `cp.rebuild_state_before(stage_name) -> dict` — reconstruct the state as it
+  was just before `stage_name` ran (`initial_state` + deltas of stages
+  completed before it). `KeyError` if the stage is not in this run's record.
+  Used by `run_stage` so a stage's own earlier output can never pollute its
+  replay input.
 - `workflow_hash(dag)`: sha256 over stage names + dependencies + retries + timeout (function-body changes don't affect the hash)
 - `CheckpointMismatchError`: structure changed on resume → refuse to resume (rerun with `resume=False`, or delete the run's checkpoint)
 
@@ -177,13 +213,24 @@ Full reference + ai_writer compatibility + adapter recipe: [docs/storage.md](sto
 ## `TestPipe`
 
 ```python
-pipe = TestPipe(dag, caller=None)
+pipe = TestPipe(dag, initial_state={...})                  # caller=None default
 pipe.mock("s_search", lambda state: {"sources": [...]})   # replace stage output on demand
-result: RunResult = await pipe.run(task_id="t", initial_state={...})
+result: RunResult = await pipe.run()
+
+# v0.5.1: replay a real run's checkpoint as a regression fixture
+pipe2 = TestPipe.replay_from(cp, dag)  # completed stages fed with their saved deltas
+result2 = await pipe2.run()
+assert result2.state == cp.state       # same stage outputs in → same graph behavior out
 ```
 
 - Unmocked stages run normally (you can mock only the heavy external-call segments and let the rest execute for real)
 - Regression scenario: drive the full graph with fixed mock outputs and assert the final state
+- `replay_from(cp, dag)`: every completed stage in `cp.done_stages` is mocked
+  with its saved `stage_deltas` output; stages that never completed run for
+  real. Requires the checkpoint's `workflow_hash` to match the DAG (structure
+  unchanged) → mismatch raises `CheckpointMismatchError`; a pre-M2 (v0.5.0)
+  checkpoint without `stage_deltas` raises `RuntimeError` (re-run once).
+  Hand-written mocks for real runs can be replaced by replaying the checkpoint.
 
 ## CLI
 
@@ -191,10 +238,19 @@ result: RunResult = await pipe.run(task_id="t", initial_state={...})
 python -m stageflow run <dag.py> [--task-id X] [--input '{"k": "v"}'] [--resume]
 python -m stageflow trace --task-id X
 python -m stageflow state --task-id X [--key K]
+python -m stageflow replay <dag.py> --task-id X --stage Y [--patch P.py]   # v0.5.1
 ```
 
-- `run`: runs a DAG file (the module must expose a `dag` variable); `STAGEFLOW_STORAGE` env var points at the `FileStorage` directory (no checkpoint if unset)
+- `run`: runs a DAG file (the module must expose a `dag` variable);
+  `STAGEFLOW_STORAGE` env var points at the `FileStorage` directory — every
+  run persists per-stage checkpoints there (single runs included, v0.5.1 R5
+  fix), so `--resume` / replay / trace / state work on CLI runs
 - `trace`/`state`: read checkpoints from `FileStorage`
+- `replay`: replays one stage on its checkpoint-rebuilt input (see
+  `Runtime.run_stage`); optional `--patch P.py` loads a module exposing
+  `patch(dag) -> None` to swap implementations in before replaying (must be
+  sync — async patch is rejected). Output is the result JSON; nothing is
+  persisted (no checkpoint written, `latest` pointer untouched)
 
 ## Related documents
 

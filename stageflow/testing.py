@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 
+from .checkpoint import Checkpoint, CheckpointMismatchError, workflow_hash
 from .dag import DAG
 from .runtime import Runtime, _default_caller
 from .state import ReadOnlyStateView
@@ -54,6 +55,34 @@ class TestPipe:
     def calls(self) -> list[dict]:
         """stage 调用记录: [{stage, mock, args}]. 用于断言调用顺序/次数."""
         return list(self._recorded)
+
+    @classmethod
+    def replay_from(cls, cp: Checkpoint, dag: DAG) -> TestPipe:
+        """从真实 Checkpoint 构造 TestPipe: 已完成的 stage 用历史 delta 喂 (mock),
+        未完成的走真实现 — 图回归夹具 (M2, ROADMAP). 用法: 真跑存 cp → 改 stage
+        实现 → replay_from 全 mock 回归对比终态 (result.state == cp.state).
+
+        防护 (同 Runtime.run_stage): cp 与 dag 的 workflow_hash 不一致 (DAG
+        结构变了) → CheckpointMismatchError; v0.5.0 旧 cp (无 stage_deltas) →
+        RuntimeError 提示重跑一次 — 不静默错配 / 不静默真跑.
+        """
+        cur_hash = workflow_hash(dag)
+        if cp.workflow_hash != cur_hash:
+            raise CheckpointMismatchError(
+                f"task {cp.task_id} run {cp.run_id[:8]} checkpoint 的 DAG hash "
+                f"{cp.workflow_hash} ≠ 当前 DAG hash {cur_hash}. DAG 结构变了, "
+                f"不能 replay (只改 stage 函数体不影响 hash; 改依赖/retries/timeout 会)."
+            )
+        if cp.done_stages and not cp.stage_deltas and not cp.initial_state and cp.state:
+            raise RuntimeError(
+                "checkpoint 无 stage_deltas — v0.5.0 旧版产物, 请重新 run 一次再重放"
+            )
+        pipe = cls(dag, initial_state=dict(cp.initial_state))
+        for stage_name in cp.done_stages:
+            delta = cp.stage_deltas.get(stage_name)
+            if delta is not None:
+                pipe.mock(stage_name, lambda _state, _d=delta: dict(_d))
+        return pipe
 
     async def run(self, *, resume: bool = False) -> RunResult:
         """跑全图 (mock 的 stage 用假输出, 其余走真实现)."""

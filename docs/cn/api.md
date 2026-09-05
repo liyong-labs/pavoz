@@ -56,6 +56,24 @@ result: RunResult = await rt.run(
 - run 完成后 checkpoint **保留** (不删除) — 它是该 task 的最新 run, 是未来
   resume / `load_latest` 的目标
 
+### `Runtime.run_stage` (单 stage 重放, v0.5.1)
+
+```python
+result: RunResult = await rt.run_stage(dag, task_id: str, stage_name: str)
+```
+
+调试 helper: 从该 task 最新 checkpoint 重建 stage 执行前 state, **只跑这一个
+stage** — 调 prompt/参数秒级看效果, 不重跑前序 stage。
+
+- 执行前 state 重建: 已完成 stage → `cp.rebuild_state_before(stage_name)`;
+  从未完成 (原始 run 失败/中断) 且依赖已全完成的 stage →
+  `cp.rebuild_state()`; 依赖未完成 → `RuntimeError`
+- **不落 checkpoint** 也不动 `latest` 指针 (replay 产出是开发临时物 —
+  不能成为 resume 目标); `ctx.run_id` 是本次调用的一次性 UUID4
+- 错误: 无 checkpoint → `RuntimeError`; DAG hash 不匹配 →
+  `CheckpointMismatchError`; pre-M2 (v0.5.0) cp 无 `stage_deltas` →
+  `RuntimeError` (重跑一次生成新 cp); stage 不存在 → `KeyError`
+
 ### RunResult
 
 - `task_id`: caller 提供或自动生成 UUID4
@@ -122,10 +140,21 @@ cp: Checkpoint | None = store.load_compatible(task_id, run_id, dag)
   run 互不覆盖; "最新" 不靠字典序 (uuid4 字典序 ≠ 时间序)。删的恰是指针
   指向的 run → `load_latest` 返 `None` ("无 checkpoint" 明确信号, 可接受边界)
 - `Checkpoint` 字段: `task_id / run_id / dag_name / workflow_hash /
-  stage_statuses / state / done_stages / producers`。`run_id` 必填 —
-  v0.5 之前的 checkpoint (无 `run_id`, 旧 key `runs/{task_id}/checkpoint`)
-  已 orphan (hard cut, 无 legacy loader); v0.5 格式内缺可选字段走默认值
-  (schema 向前兼容)
+  stage_statuses / state / done_stages / producers` + v0.5.1:
+  `initial_state` (run 的起始 state) 和 `stage_deltas` (每个已完成 stage 的
+  原始 return dict, 按完成序)。两者合起来可重建任意已记录 stage 执行前的
+  state (`cp.state` 是最终合并态 — 无法从它倒推每 stage 的输入)。
+  `run_id` 必填 — v0.5 之前的 checkpoint (无 `run_id`, 旧 key
+  `runs/{task_id}/checkpoint`) 已 orphan (hard cut, 无 legacy loader);
+  当前格式内缺可选字段走默认值 (schema 向前兼容 — v0.5.0 旧 cp 无新字段
+  也可读可 resume)
+- `cp.rebuild_state() -> dict` — 重建所有已完成 stage merge 后的 state
+  (`initial_state` + done deltas 按完成序; 链式覆盖由顺序天然处理)。
+  给从未完成 (依赖已全完成) 的 stage 当执行前 state (重放用)
+- `cp.rebuild_state_before(stage_name) -> dict` — 重建 stage 执行前的 state
+  (`initial_state` + 它之前已完成 stage 的 deltas)。stage 不在本次 run 的
+  记录里 → `KeyError`。`run_stage` 用它 — 保证 stage 自己的旧输出不会污染
+  重放输入
 - `workflow_hash(dag)`: stage 名+依赖+retries+timeout 的 sha256 指纹
   (改函数体不影响 hash)
 - `CheckpointMismatchError`: resume 时结构变了 → 拒续跑 (`resume=False`
@@ -175,13 +204,23 @@ cp_store = CheckpointStore(storage)
 ## TestPipe
 
 ```python
-pipe = TestPipe(dag, caller=None)
-pipe.mock("s_search", lambda state: {"sources": [...]})   # 按需替换 stage
-result: RunResult = await pipe.run(task_id="t", initial_state={...})
+pipe = TestPipe(dag, initial_state={...})                  # caller=None 默认
+pipe.mock("s_search", lambda state: {"sources": [...]})   # 按需替换 stage 输出
+result: RunResult = await pipe.run()
+
+# v0.5.1: 把真实 run 的 checkpoint 当回归夹具
+pipe2 = TestPipe.replay_from(cp, dag)  # 已完成 stage 用存下的 delta 喂 (mock)
+result2 = await pipe2.run()
+assert result2.state == cp.state       # 相同 stage 输出进 → 相同图行为出
 ```
 
 - 未 mock 的 stage 原样执行 (可 mock 外部调用密集段, 其余真跑)
 - 回归场景: 用固定 mock 输出跑全图, 断言最终 state
+- `replay_from(cp, dag)`: `cp.done_stages` 里每个已完成 stage 用存的
+  `stage_deltas` 输出 mock; 从未完成的 stage 真跑。要求 cp 的
+  `workflow_hash` 与 DAG 一致 (结构没变) — mismatch →
+  `CheckpointMismatchError`; pre-M2 (v0.5.0) cp 无 `stage_deltas` →
+  `RuntimeError` (重跑一次)。真实 run 的手写 mock 回归可被它替代
 
 ## CLI
 
@@ -189,11 +228,16 @@ result: RunResult = await pipe.run(task_id="t", initial_state={...})
 python -m stageflow run <dag.py> [--task-id X] [--input '{"k": "v"}'] [--resume]
 python -m stageflow trace --task-id X
 python -m stageflow state --task-id X [--key K]
+python -m stageflow replay <dag.py> --task-id X --stage Y [--patch P.py]   # v0.5.1
 ```
 
 - `run`: 跑 DAG 文件 (模块须暴露 `dag` 变量); `STAGEFLOW_STORAGE` 环境变量
-  指向 FileStorage 目录 (缺省不落 checkpoint)
+  指向 FileStorage 目录 — 每次 run 都落 per-stage checkpoint (单跑也算,
+  v0.5.1 R5 fix), `--resume`/replay/trace/state 对 CLI 产物可用
 - `trace/state`: 读 FileStorage 里的 checkpoint
+- `replay`: 在重建的输入上重放单 stage (见 `Runtime.run_stage`); 可选
+  `--patch P.py` 加载暴露 `patch(dag) -> None` 的模块先换实现 (必须 sync —
+  async patch 拒绝)。输出 result JSON; 不落任何盘 (不写 cp, 不动 latest 指针)
 
 ## 相关文档
 

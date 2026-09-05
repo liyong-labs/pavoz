@@ -67,7 +67,13 @@ save_ms ≥ 0、stage_name 顺序正确; on_checkpoint=None 时不崩。
 
 ---
 
-### M2: DAG 级集成测试夹具 (测试层)
+### M2: DAG 级集成测试夹具 (测试层) — 已 ship (v0.5.1)
+
+> **已 ship (v0.5.1)**: 最终形态 `TestPipe.replay_from(cp, dag)` classmethod
+> (cp = `Checkpoint`, 非 dict; checkpoint 存每 stage `stage_deltas` + `initial_state`)。
+> `run_from` 参数未做 — "从某 stage 起真跑" 由 M3 `Runtime.run_stage` + CLI replay 承担。
+> workflow_hash mismatch / v0.5.0 旧 cp (无 stage_deltas) → 明确报错不静默错配。
+> 见 CHANGELOG [0.5.1]。
 
 **为什么**: "unit test 抓不到 DAG 级 bug (if/elif 静默丢分支), 长流程 debug 需
 per-node 状态快照" (调研角度 3 共识)。TestPipe 已能 mock 任意 stage 跑全图,
@@ -105,7 +111,13 @@ replay_from 明确报错 (不静默错配)。
 
 ---
 
-### M3: CLI replay --prompt-patch (调试层)
+### M3: CLI replay --prompt-patch (调试层) — 已 ship (v0.5.1)
+
+> **已 ship (v0.5.1)**: CLI 命令 `replay <dag.py> --task-id X --stage Y
+> [--patch P.py]` (选项 `--stage` / `--patch`); `Runtime.run_stage(dag, task_id,
+> stage_name)` — 无 initial_state/resume 参数, 输入一律从 cp 重建;
+> patch 约定 `patch(dag) -> None`, 仅 sync (async → 明确拒绝防静默 no-op)。
+> 见 CHANGELOG [0.5.1]。
 
 > **依赖注记 (A7, 2026-09-05)**: M3 重放 stage N 需要 "stage N-1 完成后" 的 state,
 > 但 checkpoint 每 stage 后覆盖保存累计态 → 最新 cp 只有终态 (含 stage N 自身的

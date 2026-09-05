@@ -125,17 +125,47 @@ Operational assumptions (deliberately not enforced in core):
   keep the prefixes isolated (e.g. business artifacts under
   `research/{task_id}/v{v}/`)
 
+### 8. Replay semantics (v0.5.1, M2/M3)
+
+Two replay modes, both driven by the checkpoint — never by the caller
+re-supplying data:
+
+- **Checkpoint stores what replay needs.** Since v0.5.1 the checkpoint keeps
+  `initial_state` plus each completed stage's raw return (`stage_deltas`, in
+  completion order). The state before any recorded stage can then be rebuilt
+  exactly (`initial_state` + the deltas of stages completed earlier — chain
+  overwrites resolve naturally by completion order), instead of naively using
+  the final `cp.state`, which contains the stage's own output and would
+  pollute its replay input. `rebuild_state()` / `rebuild_state_before(name)`
+  expose this. Old (v0.5.0) checkpoints lack the new fields — they load via
+  defaults and resume fine, but replaying them fails with a clear error
+  telling you to run once more.
+- **Single-stage replay** (`Runtime.run_stage` / CLI `replay <dag.py>
+  --task-id X --stage Y [--patch P.py]`): rebuild the stage's pre-run state,
+  run only that stage — tune a prompt/parameters and see the effect in
+  seconds. A stage that never completed (failed/interrupted run) is replayable
+  once its dependencies are done. Replay output is a developer artifact: it is
+  **not** written as a checkpoint and does **not** move the `latest` pointer,
+  so a replay can never pollute the target of a future `resume`/`load_latest`.
+- **Graph regression** (`TestPipe.replay_from(cp, dag)`): completed stages are
+  fed their saved deltas as mocks, everything else runs for real — a real run's
+  checkpoint becomes the fixture, and the assertion "same stage outputs in →
+  same final state out" (`result.state == cp.state`) verifies that graph
+  behavior (topology, merging, conflict rules) didn't break while implementations
+  changed. A DAG-structure change (workflow_hash mismatch) is refused with a
+  clear error rather than silently mis-replayed.
+
 ## Modules
 
 | File | Responsibility |
 |---|---|
 | `dag.py` | DAG declaration + topological sort (Kahn) + cycle detection (Tarjan SCC + self-loops) + freezing |
-| `runtime.py` | Execution engine: sequential run + retry + deadline + state merge + checkpoint |
+| `runtime.py` | Execution engine: sequential run + retry + deadline + state merge + checkpoint; `run_stage` single-stage replay (v0.5.1) |
 | `state.py` | Type validation + `ReadOnlyStateView` + shallow merge + conflict detection |
-| `checkpoint.py` | `CheckpointStore` + `workflow_hash` + mismatch detection |
+| `checkpoint.py` | `CheckpointStore` + `workflow_hash` + mismatch detection; `stage_deltas`/`initial_state` + `rebuild_state[_before]` (v0.5.1) |
 | `storage.py` | `StorageBackend` Protocol + `FileStorage` (default) |
-| `testing.py` | `TestPipe` (mock stages to run the whole graph) |
-| `cli.py` | `run` / `trace` / `state` (v0.1) |
+| `testing.py` | `TestPipe` (mock stages to run the whole graph; `replay_from(cp, dag)` checkpoint regression, v0.5.1) |
+| `cli.py` | `run` / `trace` / `state` / `replay` (v0.5.1) |
 | `storage_loader.py` | `load_storage(spec, **kwargs)` — config-string driven `StorageBackend` loader (importlib + friendly errors); see [docs/storage.md](storage.md) |
 
 ## What we don't do (YAGNI)

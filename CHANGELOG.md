@@ -2,6 +2,44 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.5.1] — 2026-09-05
+
+### Added (M2 stage replay + M3 single-stage replay)
+
+- **Checkpoint 存每 stage 原始 return** (`stage_deltas`, 按完成序) + run 的
+  `initial_state` (M2) — 两者合并可精确重建任意 stage 执行前 state
+  (cp.state 是最终合并态, 不能当 stage 输入逆向拆)
+- `Checkpoint.rebuild_state()` / `rebuild_state_before(stage_name)`: 重建
+  已完成 stage merge 后的 state / 某 stage 执行前的 state (链式覆盖由
+  完成序天然处理)
+- `TestPipe.replay_from(cp, dag)`: 已完成 stage 用历史 delta 全 mock —
+  真实 run 的 cp 直接当回归 fixture (改 stage 实现后对比终态);
+  hash mismatch / v0.5.0 旧 cp → 明确报错
+- `Runtime.run_stage(dag, task_id, stage_name)`: 从 cp 重建输入单 stage
+  重放 (调 prompt/参数秒级迭代) — 不落 cp 不动 latest 指针 (A6/A7 防
+  replay 污染 resume 目标); 失败/中断的 stage (依赖已全完成) 也可重放
+- CLI `replay <dag.py> --task-id X --stage Y [--patch P.py]`: 单 stage 重放;
+  patch 文件约定 `patch(dag) -> None` 替换 stage fn (async patch 拒绝 —
+  防静默 no-op)
+- CLI run 恒落盘 (R5 fix)
+
+### Changed
+
+- CLI `run` 不再只在 `--resume` 时 attach CheckpointStore — 单跑也写
+  `~/.stageflow/data` (`STAGEFLOW_STORAGE` 可覆盖)。行为: 单次 run 即
+  落盘, replay/trace/state 对 CLI 产物直接可用
+
+### Compatibility
+
+- Checkpoint 新字段 (`initial_state` / `stage_deltas`) `from_dict` `.get`
+  默认 `{}` — v0.5.0 旧 cp 可读可 resume
+- v0.5.0 旧 cp (无 stage_deltas) 上重放 (CLI replay / run_stage /
+  TestPipe.replay_from) → 明确报错提示重跑一次, 不静默错配
+
+### Internal
+
+- 81 tests, ruff clean, 零运行时依赖 (stdlib only)
+
 ## [0.5.0] — 2026-09-05
 
 ### Added (industry-standard ID model)

@@ -6,7 +6,7 @@
 Zero runtime dependencies, no business system lock-in, no binding to any model/search/storage service.
 
 ```text
-Python 3.12+  |  MIT License  |  stdlib only  |  60 tests
+Python 3.12+  |  MIT License  |  stdlib only  |  81 tests
 ```
 
 stageflow tackles the most common layer of pipeline orchestration: **declarative DAG + sequential execution + retry on failure + checkpoint resume + regression testing**. It deliberately avoids macro orchestrator concerns (scheduler / UI / distributed execution) and never makes business decisions for you (model selection, audit loops, and prompt templates are business code).
@@ -54,6 +54,7 @@ Automatic retry on transient failures, checkpoint after each node, resume from w
 | **Checkpoint resume** | Checkpoint after each node completes; resume validates `workflow_hash` (function body changes don't matter, structural changes refuse resume) |
 | **Chained data evolution** | Downstream stages may overwrite keys passed through by upstream producers (pipeline pattern); parallel producer conflicts raise explicitly |
 | **Deterministic regression** | `TestPipe` — mock any stage output to run the whole graph; a safety net for prompt/stage changes |
+| **Stage replay** | Replay from a checkpoint: `Runtime.run_stage` reruns one stage on its checkpoint-rebuilt input (tune a prompt/params without re-running upstream); `TestPipe.replay_from(cp, dag)` feeds a real run's saved stage outputs back in as mocks — graph regression against a real run |
 | **Business decoupled** | Storage (`StorageBackend`) and external calls (`ctx.call` caller) are Protocols, injected by business code |
 | **Zero dependencies** | Core uses only Python stdlib; no drift into psycopg/redis/boto3 |
 
@@ -126,6 +127,25 @@ CLI and complete examples (checkpoint resume / `ctx.call` / `TestPipe`) in
 [`docs/en/quickstart.md`](docs/en/quickstart.md).
 中文版示例见 [`docs/cn/quickstart.md`](docs/cn/quickstart.md).
 
+## CLI
+
+Every `run` persists per-stage checkpoints (single runs included, v0.5.1) to
+`~/.stageflow/data` (`STAGEFLOW_STORAGE` overrides the directory), so
+replay/trace/state work on CLI runs:
+
+```bash
+python -m stageflow run dags/demo.py --task-id demo-1 --input '{"name": "stageflow"}'
+python -m stageflow replay dags/demo.py --task-id demo-1 --stage s_upper
+#   ^-- replay one stage on its checkpoint-rebuilt input (upstream stages are not re-run)
+python -m stageflow trace --task-id demo-1
+python -m stageflow state --task-id demo-1 --key shout
+```
+
+`replay` also accepts `--patch P.py` (a module exposing `patch(dag) -> None`)
+to swap in a modified stage implementation before replaying — seconds-level
+prompt/parameter iteration. `run --resume` continues an interrupted run
+(skips completed stages, reuses the same `run_id`).
+
 ## Core Concepts
 
 - **DAG**: a statically declared, topologically ordered directed acyclic graph
@@ -161,7 +181,7 @@ See [`docs/en/architecture.md`](docs/en/architecture.md) and [`docs/en/api.md`](
 ## Testing
 
 ```bash
-pytest            # 60 tests (52 core + 8 storage_loader)
+pytest            # 81 tests
 ruff check .      # lint
 ```
 
