@@ -1,0 +1,21 @@
+[project]
+name = "stageflow"
+version = "0.1.0"
+description = "LLM/SE/Extract 流程编排系统 — micro/in-process workflow engine"
+authors = [{ name = "ebziw" }]
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"
