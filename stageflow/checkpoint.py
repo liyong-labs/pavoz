@@ -154,6 +154,27 @@ class Checkpoint:
                     producers[k] = done
         return rebuilt, producers
 
+    def state_stats(self, top_n: int = 10) -> dict:
+        """state 体积观测 (#36): 各 key json 体积 top N + 总构成. 调试大 state 用."""
+        import json as _json
+
+        def _size(o: Any) -> int:
+            try:
+                return len(_json.dumps(o, ensure_ascii=False, default=str))
+            except Exception:
+                return -1
+
+        _sizes = {k: _size(v) for k, v in self.state.items()}
+        _top = sorted(_sizes.items(), key=lambda kv: kv[1], reverse=True)[:top_n]
+        return {
+            "state_keys": len(self.state),
+            "state_total_bytes": sum(_sizes.values()),
+            "initial_state_bytes": _size(self.initial_state),
+            "deltas_bytes": _size(self.stage_deltas),
+            "done_stages": list(self.done_stages),
+            "top_keys": [{"key": k, "bytes": v} for k, v in _top],
+        }
+
 
 class CheckpointStore:
     """Per-task, per-run checkpoint 持久化.

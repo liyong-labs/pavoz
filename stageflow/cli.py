@@ -106,6 +106,9 @@ async def _cmd_state(args) -> int:
     if cp is None:
         print(f"task {args.task_id} 无 checkpoint")
         return 1
+    if args.stats:
+        print(json.dumps(cp.state_stats(), ensure_ascii=False, indent=2))
+        return 0
     if args.key:
         print(json.dumps(cp.state.get(args.key, None), ensure_ascii=False, indent=2))
     else:
@@ -172,6 +175,7 @@ def main(argv: list[str] | None = None) -> int:
     p_state = sub.add_parser("state", help="看 task state snapshot")
     p_state.add_argument("--task-id", required=True)
     p_state.add_argument("--key", default=None)
+    p_state.add_argument("--stats", action="store_true", help="state 体积统计 (key top N + 构成)")
     p_state.set_defaults(fn=_cmd_state)
 
     p_replay = sub.add_parser("replay", help="重放单 stage (调试: 改 prompt/参数秒级看效果)")
