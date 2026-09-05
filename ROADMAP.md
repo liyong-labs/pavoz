@@ -168,3 +168,35 @@ hash mismatch / 依赖未完成 → 明确错误。
 - 不加 scheduler/UI/分布式/dynamic DAG/sub-DAG 嵌套
 - 不加 retry_budget/escalation/watchdog 等流程原语 (循环在业务层)
 - core 保持零第三方依赖
+
+## v0.3 候选追加 (2026-09-06 triage, use case #2: ai_writer 引用塌缩 debug)
+
+### 需求提案 (ai_writer → stageflow)
+
+**场景**: ai_writer 14d8842 引用塌缩 debug — 终稿 26 个 [ref:79aa] 全同 + 44×[来源待补]。
+debug 摩擦: 回答"audit 看到的素材池 vs compose 用的素材池为什么不同"需手工翻 40+ trace JSON +
+多个 CP 文件; 回答"v1.3→v1.4 正文被谁改的"需逐 trace 对比全文。
+
+**提案能力**: stage 输入快照血缘查询 — `stageflow state --task X --at-stage s_audit --show-inputs`:
+给定 task + stage, 直接返回该 stage 实际收到的输入 (素材池/state) + 该 stage 每次 LLM 调用
+的输入输出摘要。
+
+### Triage 三问裁决 (过滤器 2026-09-06 user 拍板)
+
+| 问 | 裁决 |
+|---|---|
+| 1. 通用吗? | **部分** — "查任一 stage 的前置 state" 通用 (任何 DAG 用户 debug 都要) |
+| 2. 竞品先例? | **有** — LangGraph checkpoint state 全量可查 / Prefect artifact / Temporal event history |
+| 3. 绑 ai_writer? | **会绑** — ai_writer 编排壳模式下素材池/正文**不经 ctx.state** (stage 函数体直调旧 _run_xxx_phase, 业务数据走 ai_writer 自己 CP/DB) → stageflow 层面根本看不到素材池 |
+
+**裁决**: **拒** (回 ai_writer adapter 层) + 1 条收 backlog:
+1. **拒**: "素材池输入血缘" — 根因是 ai_writer 素材池**双路径加载** (compose 用 outliner selected 7 条,
+   audit/save 用另 5 条), 是业务 bug 不是编排缺口. stageflow 不该为"业务数据不经 state"的架构
+   买单 — 真修法是 ai_writer 素材池单一加载源. 附带方向: 编排壳 stage 若想让业务产物进可观测层,
+   应显式 ctx.log/ctx.state 声明, 而非让 stageflow 猜.
+2. **收 backlog (v0.3)**: **checkpoint state edit** — 任意已完成 stage 的 delta 可编辑后重放
+   下游 (debug 改中间产物). 通用 (任何 DAG 调试图), 先例 (LangGraph state update / Temporal
+   patch), 不绑 vendor. 与 M3 replay 互补: replay=改代码重跑, state-edit=改数据重放.
+3. **拒 (YAGNI)**: run_stage 声明"外部产物版本依赖" — 单 use case, 无先例, 编排壳改造前无意义.
+
+### 引用塌缩 bug 本身 → 回 ai_writer (不在本 repo 修)
