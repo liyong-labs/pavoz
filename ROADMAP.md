@@ -2,6 +2,13 @@
 
 > v0.2 计划 (2026-09-05 brainstorm 定稿)。每 milestone 独立可 ship + 可 tag。
 
+## v0.4: StorageBackend contrib adapters (2026-09-05, 已 ship)
+
+- stageflow.contrib.storage: 5 个可选 extras adapter (Postgres / MySQL / Redis / MinIO / SQLite)
+- core 永远 stdlib-only; contrib 是可选 (extras 机制)
+- MinioStorage 行为对齐 ai_writer 既有 sf_storage.py (delete/get 容忍 NoSuchKey)
+- deps 政策 (2026-09-05 拍板): 稳定基础设施 driver (DB/Redis/S3) OK; LLM vendor / 业务 SDK 禁入 contrib
+
 ## v0.2: API 冻结版
 
 **总纲**: 核心语义锁死, 只加观测/测试/调试层能力, 且不动现有 API 语义。

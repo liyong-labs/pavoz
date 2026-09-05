@@ -60,6 +60,29 @@
 - API 冻结面 zero change: `@dag.stage` / `Runtime.run` / `Ctx` / `State` / 异常 / Checkpoint 全部不动
 - 38 tests 全绿, ruff 0 violation
 
+## [0.4.0] — 2026-09-05
+
+### Added (stageflow.contrib.storage)
+
+- **PostgresStorage** (psycopg3 + JSONB, upsert via ON CONFLICT)
+- **MySQLStorage** (PyMySQL + LONGTEXT, upsert via ON DUPLICATE KEY)
+- **RedisStorage** (redis-py, prefix-scoped, SCAN-based list_keys)
+- **MinioStorage** (boto3, **delete/get 容忍 NoSuchKey/404** 对齐 ai_writer `sf_storage.py`)
+- **SqliteStorage** (stdlib sqlite3, 单文件 DB)
+- 公共 helpers: `_validate_key` (路径安全) + `_encode_payload` / `_decode_payload` (UTF-8 JSON)
+
+### Internal
+
+- core 12 模块 + `StorageBackend` Protocol 零变化 (API 冻结); 0 行 core 修改
+- contrib 是独立 subpackage (`stageflow.contrib.storage`); core 不引入任何 driver
+- pyproject extras 分组: `[postgres]` / `[mysql]` / `[redis]` / `[minio]` / `[sqlite]` (空) / `[contrib]` (4 个) / `[all]`
+- 缺 driver 时 adapter 模块顶 try/except ImportError + 安装提示
+
+### Tests
+
+- 38 core tests + 37 contrib tests (10 标 `@pytest.mark.integration` 需 docker)
+- MinioStorage 用 moto[s3] mock; RedisStorage 用 fakeredis mock (无 docker 依赖)
+
 ## [Unreleased]
 
 - (规划) `replay --prompt-patch` (v0.2): checkpoint 加载 + 单 stage 重放

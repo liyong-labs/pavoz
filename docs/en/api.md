@@ -105,6 +105,21 @@ class StorageBackend:
 
 Built-in: `FileStorage(dir)` — local filesystem implementation (tests / single-host).
 
+## Contrib adapters
+
+Optional `StorageBackend` implementations live in `stageflow.contrib.storage` (separate subpackage; core stays stdlib-only). Install drivers via pyproject extras:
+
+```bash
+pip install stageflow[postgres]   # psycopg3 + JSONB
+pip install stageflow[mysql]      # PyMySQL + LONGTEXT
+pip install stageflow[redis]      # redis-py
+pip install stageflow[minio]      # boto3 (S3 / MinIO / R2)
+pip install stageflow[contrib]    # all 4 above
+pip install stageflow[sqlite]     # stdlib, no extras
+```
+
+Each adapter is lazily imported — `from stageflow.contrib.storage import PostgresStorage` raises `ImportError` with install hint if the driver is missing. Full usage, ai_writer compatibility notes, and test strategy: [docs/contrib.md](contrib.md).
+
 ## `TestPipe`
 
 ```python

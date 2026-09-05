@@ -68,6 +68,22 @@ git clone git@github.com:ebziw/stageflow.git
 pip install -e ".[dev]"
 ```
 
+## Optional Contrib (StorageBackend adapters)
+
+```bash
+pip install stageflow[postgres]   # psycopg3 + JSONB
+pip install stageflow[mysql]      # PyMySQL + LONGTEXT
+pip install stageflow[redis]      # redis-py
+pip install stageflow[minio]      # boto3 (AWS S3 / MinIO / R2)
+pip install stageflow[contrib]    # 4 above together
+pip install stageflow[all]        # alias for [contrib]
+pip install stageflow[sqlite]     # stdlib, no extra deps
+```
+
+用法: `from stageflow.contrib.storage import PostgresStorage, MinioStorage, ...`
+
+每个 adapter 只装对应 deps 时可 import, 缺 driver 抛 ImportError + `pip install 'stageflow[<name>]'` 提示. 详见 [`docs/contrib.md`](docs/contrib.md).
+
 ## Quick Start
 
 ```python

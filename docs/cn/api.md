@@ -114,6 +114,21 @@ class StorageBackend:
 
 内置: `FileStorage(dir)` — 本地文件系统实现 (测试/单机)。
 
+## Contrib adapters
+
+可选 `StorageBackend` 实现在 `stageflow.contrib.storage` (独立子包, core 保持 stdlib-only). 通过 pyproject extras 按需安装 driver:
+
+```bash
+pip install stageflow[postgres]   # psycopg3 + JSONB
+pip install stageflow[mysql]      # PyMySQL + LONGTEXT
+pip install stageflow[redis]      # redis-py
+pip install stageflow[minio]      # boto3 (S3 / MinIO / R2)
+pip install stageflow[contrib]    # 4 个全装
+pip install stageflow[sqlite]     # stdlib, 无 extras
+```
+
+每个 adapter 懒导入 — `from stageflow.contrib.storage import PostgresStorage` 缺 driver 时抛 `ImportError` + 安装提示. 完整用法 / ai_writer 兼容说明 / 测试策略: [docs/contrib.md](../contrib.md).
+
 ## TestPipe
 
 ```python

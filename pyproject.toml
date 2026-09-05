@@ -9,15 +9,34 @@ license = "MIT"
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "moto[s3]>=5.0",
+    "fakeredis>=2.20",
+    "psycopg[binary]>=3.1",
+    "pymysql>=1.1",
+    "redis>=5.0",
+    "boto3>=1.34",
+]
+postgres = ["psycopg[binary]>=3.1"]
+mysql = ["pymysql>=1.1"]
+redis = ["redis>=5.0"]
+minio = ["boto3>=1.34"]
+sqlite = []  # stdlib, always available
+contrib = ["psycopg[binary]>=3.1", "pymysql>=1.1", "redis>=5.0", "boto3>=1.34"]
+all = ["psycopg[binary]>=3.1", "pymysql>=1.1", "redis>=5.0", "boto3>=1.34"]
 
 [tool.setuptools]
-packages = ["stageflow"]
+packages = ["stageflow", "stageflow.contrib", "stageflow.contrib.storage"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+markers = [
+    "integration: requires docker (postgres / mysql) — run locally with `docker compose up`",
+]
 
 [tool.ruff]
 line-length = 110

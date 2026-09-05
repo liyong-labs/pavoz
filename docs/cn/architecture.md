@@ -105,6 +105,7 @@ sub_dag/retry_budget/escalation/watchdog 原语.
 | `storage.py` | StorageBackend Protocol + FileStorage (默认) |
 | `testing.py` | TestPipe (mock stage 跑全图) |
 | `cli.py` | run/trace/state (v0.1) |
+| `contrib/storage/` | 可选 `StorageBackend` adapter (Postgres / MySQL / Redis / MinIO / SQLite) — 见 [docs/contrib.md](../contrib.md) |
 
 ## 不做什么 (YAGNI)
 
