@@ -2,8 +2,7 @@
 
 🇨🇳 [简体中文](README.cn.md)
 
-**micro/in-process workflow engine** — a lightweight Python DAG-based engine for orchestrating multi-stage pipelines.
-Zero runtime dependencies, no business system lock-in, no binding to any model/search/storage service.
+**stageflow — a zero-dependency Python DAG workflow engine** for orchestrating LLM pipelines, AI agent workflows, and multi-stage data pipelines directly in your process. Declarative `@dag.stage` DSL, checkpoint-based **durable execution with resume**, automatic retries, and per-stage **replay** for prompt debugging — stdlib only, no scheduler/server/queue, no model or storage vendor lock-in.
 
 ```text
 Python 3.12+  |  MIT License  |  stdlib only  |  81 tests

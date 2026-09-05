@@ -2,8 +2,9 @@
 
 🇬🇧 [English version](README.md)
 
-**micro/in-process workflow engine** — 用 Python DAG 编排多阶段流程的轻量引擎。
-零运行时依赖, 不绑定任何业务系统, 不绑定任何模型/搜索/存储服务。
+**stageflow — 零依赖的 Python DAG 工作流引擎**：在进程内编排 LLM 流水线、AI Agent 工作流与多阶段数据处理管线。
+声明式 `@dag.stage` DSL + 基于 checkpoint 的**持久化执行与断点续跑** + 自动重试 + 单节点 **replay 调试**（改 prompt 不重跑上游）。
+仅标准库, 无调度器/无服务端/无消息队列, 不绑定任何模型/搜索/存储服务。
 
 ```text
 Python 3.12+  |  MIT License  |  stdlib only  |  81 tests
