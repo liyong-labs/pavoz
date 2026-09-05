@@ -1,5 +1,7 @@
 # Use case: ai_writer 研究管线接入 (参考实现)
 
+🇬🇧 [English version](../../en/use-cases/ai-writer.md)
+
 > **这是 stageflow 的第 1 个业务接入, 作参考实现** — 展示一个真实业务如何用
 > stageflow 表达"搜索 → 下载 → 过滤 → 合成 → 审阅 → 保存"类管线。
 > stageflow 本身与 ai_writer 及其使用的模型/服务无关。
@@ -113,3 +115,9 @@ assert result.state == {...}
    依赖显式化为 ctx.state
 2. 子进程心跳/租约 (若有) 是业务 worker 的事, 与 stageflow 无关, 保留
 3. ctx.state 值必须 json-serializable (str/int/float/bool/None/list/dict)
+
+## 相关文档
+
+- [quickstart.md](../quickstart.md) — 5 分钟跑通
+- [architecture.md](../architecture.md) — 架构与设计决策
+- [api.md](../api.md) — 公开 API 参考

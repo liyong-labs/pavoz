@@ -1,5 +1,7 @@
 # API 参考
 
+🇬🇧 [English version](../en/api.md)
+
 公开面 = `stageflow/__init__.py` 的 `__all__`。core 零第三方依赖。
 
 ## DAG
@@ -134,3 +136,9 @@ python -m stageflow state --task-id X [--key K]
 - `run`: 跑 DAG 文件 (模块须暴露 `dag` 变量); `STAGEFLOW_STORAGE` 环境变量
   指向 FileStorage 目录 (缺省不落 checkpoint)
 - `trace/state`: 读 FileStorage 里的 checkpoint
+
+## 相关文档
+
+- [quickstart.md](quickstart.md) — 5 分钟跑通
+- [architecture.md](architecture.md) — 架构与设计决策
+- [use-cases/](use-cases/) — 业务接入参考实现

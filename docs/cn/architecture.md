@@ -1,5 +1,7 @@
 # stageflow 架构
 
+🇬🇧 [English version](../en/architecture.md)
+
 ## 定位
 
 **micro/in-process workflow engine** — 不是 Airflow/Prefect/Dagster 那种 macro orchestrator (自带 scheduler/DB/UI/分布式).
@@ -113,3 +115,9 @@ sub_dag/retry_budget/escalation/watchdog 原语.
 - ❌ sub_dag 嵌套 (循环在业务层, 不需要)
 - ❌ 业务 wrapper 实现 (外部调用 adapter 是业务系统的活; core 只定义 ctx.call Protocol, kind/op 由业务定)
 - ❌ 业务表 schema (runs/task_state 是 caller 的 DB 的事)
+
+## 相关文档
+
+- [quickstart.md](quickstart.md) — 5 分钟跑通
+- [api.md](api.md) — 公开 API 参考
+- [use-cases/](use-cases/) — 业务接入参考实现

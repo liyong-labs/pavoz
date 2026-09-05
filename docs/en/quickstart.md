@@ -1,6 +1,8 @@
-# quickstart — 5 分钟跑通
+# quickstart — 5-minute walkthrough
 
-## 1. 定义 DAG
+🇨🇳 [简体中文](../cn/quickstart.md)
+
+## 1. Define a DAG
 
 ```python
 # dags/my_pipeline.py
@@ -10,7 +12,7 @@ dag = DAG("my_pipeline")
 
 @dag.stage()
 async def s_fetch(ctx):
-    # ctx.state 只读. return dict 写 state.
+    # ctx.state is read-only. return dict writes state.
     return {"items": ["a", "b", "c"]}
 
 @dag.stage(depends_on=["s_fetch"], retries=2, timeout=120)
@@ -23,25 +25,25 @@ async def s_save(ctx):
     return {"saved": ctx.state["count"] > 0}
 ```
 
-## 2. 跑 (CLI)
+## 2. Run via CLI
 
 ```bash
 python -m stageflow run dags/my_pipeline.py
-# 输出 JSON: {task_id, dag, status, stage_statuses, state}
+# Outputs JSON: {task_id, dag, status, stage_statuses, state}
 ```
 
-带初始 state + checkpoint (resume):
+With initial state + checkpoint (resume):
 
 ```bash
 STAGEFLOW_STORAGE=/data/sf \
 python -m stageflow run dags/my_pipeline.py \
-  --task-id task-1 --input '{"query": "北方华创"}'
-# 中途断了再跑 (--resume): 已完成 stage 跳过
+  --task-id task-1 --input '{"query": "north-china-tech"}'
+# If interrupted, rerun with --resume to skip completed stages:
 STAGEFLOW_STORAGE=/data/sf \
 python -m stageflow run dags/my_pipeline.py --task-id task-1 --resume
 ```
 
-## 3. 跑 (代码)
+## 3. Run from code
 
 ```python
 import asyncio
@@ -57,24 +59,24 @@ async def main():
 asyncio.run(main())
 ```
 
-## 4. 对外调用 (ctx.call)
+## 4. External calls (`ctx.call`)
 
-stage 不直接 import requests/httpx — 通过 `ctx.call(kind, op, params)`:
+Stages don't import `requests`/`httpx` directly — all external calls go through `ctx.call(kind, op, params)`:
 
 ```python
 @dag.stage()
 async def s_search(ctx):
-    results = await ctx.call("search", "my_engine", {"query": ctx.state["query"]})  # kind/op 由业务 caller 定义
+    results = await ctx.call("search", "my_engine", {"query": ctx.state["query"]})  # kind/op defined by business caller
     return {"sources": results["items"]}
 ```
 
-默认 caller 是 no-op echo. 真调用由业务注入:
+The default caller is a no-op echo. Real calls are injected by your business code:
 
 ```python
 rt = Runtime(caller=my_business_caller)  # async (kind, op, params) -> dict
 ```
 
-## 5. 回归测试 (TestPipe)
+## 5. Regression testing (`TestPipe`)
 
 ```python
 import pytest
@@ -89,10 +91,15 @@ async def test_pipeline_with_mocked_search():
     assert result.state["count"] == 1
 ```
 
-## CLI 命令 (v0.1)
+## CLI commands (v0.1)
 
-| 命令 | 用途 |
+| Command | Purpose |
 |---|---|
-| `run <dag.py> [--task-id X] [--input JSON] [--resume]` | 跑 DAG |
-| `trace --task-id X` | 看 checkpoint / stage 记录 |
-| `state --task-id X [--key K]` | 看 state snapshot |
+| `run <dag.py> [--task-id X] [--input JSON] [--resume]` | Run a DAG |
+| `trace --task-id X` | Inspect checkpoint / stage records |
+| `state --task-id X [--key K]` | Inspect state snapshot |
+
+Further reading:
+- [architecture.md](architecture.md) — architecture and design decisions
+- [api.md](api.md) — public API reference
+- [use-cases/](use-cases/) — reference business integrations
