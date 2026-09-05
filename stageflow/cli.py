@@ -1,11 +1,12 @@
-"""CLI: run / trace / state (v0.1, 3 命令).
+"""CLI: run / trace / state / replay (v0.5.1, 4 命令).
 
 用法:
     python -m stageflow run dags/demo.py --task-id abc [--input '{"name": "x"}']
     python -m stageflow trace --task-id abc [--storage ./data]
     python -m stageflow state --task-id abc [--key k]
+    python -m stageflow replay dags/demo.py --task-id abc --stage s_b [--patch patch.py]
 
-replay --prompt-patch 推 v0.2 (架构评估修正, 2026-09-05).
+replay (--stage 单 stage 重放 + --patch 改 fn): v0.5.1 已 ship (2026-09-05).
 """
 
 from __future__ import annotations
@@ -56,7 +57,8 @@ async def _cmd_run(args) -> int:
     initial = {}
     if args.input:
         initial = json.loads(args.input)
-    runtime = Runtime(checkpoint_store=CheckpointStore(_storage()) if args.resume else None)
+    # v0.5.1 (R5 fix): 恒 attach store → CLI run 落盘, replay/trace/state 可用
+    runtime = Runtime(checkpoint_store=CheckpointStore(_storage()))
     try:
         result = await runtime.run(
             dag, task_id, initial_state=initial, resume=args.resume
@@ -110,6 +112,44 @@ async def _cmd_state(args) -> int:
     return 0
 
 
+async def _cmd_replay(args) -> int:
+    """重放单 stage: stageflow replay <dag.py> --task-id X --stage Y [--patch P.py].
+
+    patch 文件约定: 模块顶层暴露 patch(dag) -> None (import 后调用, 可改 stage fn).
+    """
+    dag = _load_dag(args.dag)
+    if args.patch:
+        patch_path = Path(args.patch).resolve()
+        if not patch_path.exists():
+            print(f"patch 文件不存在: {patch_path}")
+            return 1
+        spec = importlib.util.spec_from_file_location("_stageflow_patch", patch_path)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["_stageflow_patch"] = mod
+        spec.loader.exec_module(mod)
+        patcher = getattr(mod, "patch", None)
+        if patcher is None:
+            print(f"patch 文件 {patch_path} 需暴露 patch(dag) -> None")
+            return 1
+        patcher(dag)
+    runtime = Runtime(checkpoint_store=CheckpointStore(_storage()))
+    try:
+        result = await runtime.run_stage(dag, task_id=args.task_id, stage_name=args.stage)
+    except (CheckpointMismatchError, RuntimeError, ValueError, KeyError) as e:
+        print(f"replay 失败: {e}")
+        return 1
+    print(json.dumps({
+        "task_id": result.task_id,
+        "run_id": result.run_id,
+        "dag": result.dag_name,
+        "stage": args.stage,
+        "status": result.status,
+        "error": result.error,
+        "state": result.state,
+    }, ensure_ascii=False, indent=2))
+    return 0 if result.status == "done" else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="stageflow", description="LLM/SE/Extract 流程编排")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -129,6 +169,14 @@ def main(argv: list[str] | None = None) -> int:
     p_state.add_argument("--task-id", required=True)
     p_state.add_argument("--key", default=None)
     p_state.set_defaults(fn=_cmd_state)
+
+    p_replay = sub.add_parser("replay", help="重放单 stage (调试: 改 prompt/参数秒级看效果)")
+    p_replay.add_argument("dag", help="dag 文件路径")
+    p_replay.add_argument("--task-id", required=True)
+    p_replay.add_argument("--stage", required=True, help="要重放的 stage 名")
+    p_replay.add_argument("--patch", default=None,
+                          help="patch 文件 (暴露 patch(dag) -> None, 改 stage fn)")
+    p_replay.set_defaults(fn=_cmd_replay)
 
     args = parser.parse_args(argv)
     return asyncio.run(args.fn(args))
