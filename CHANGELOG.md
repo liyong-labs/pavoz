@@ -73,14 +73,14 @@
 
 ### Internal
 
-- core 12 模块 + `StorageBackend` Protocol 零变化 (API 冻结); 0 行 core 修改
+- core 12 模块 + `StorageBackend` Protocol 零变化 (API 冻结); 0 行 core 功能修改 (fix1 仅同步 manifest 版本号)
 - contrib 是独立 subpackage (`stageflow.contrib.storage`); core 不引入任何 driver
 - pyproject extras 分组: `[postgres]` / `[mysql]` / `[redis]` / `[minio]` / `[sqlite]` (空) / `[contrib]` (4 个) / `[all]`
 - 缺 driver 时 adapter 模块顶 try/except ImportError + 安装提示
 
 ### Tests
 
-- 38 core tests + 37 contrib tests (10 标 `@pytest.mark.integration` 需 docker)
+- 38 core tests + 44 contrib tests (10 标 `@pytest.mark.integration` 需 docker)
 - MinioStorage 用 moto[s3] mock; RedisStorage 用 fakeredis mock (无 docker 依赖)
 
 ## [Unreleased]

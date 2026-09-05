@@ -6,4 +6,3 @@ LLM vendor / 业务 SDK 禁入 (deps 政策).
 
 from __future__ import annotations
 
-__version__ = "0.4.0.dev0"

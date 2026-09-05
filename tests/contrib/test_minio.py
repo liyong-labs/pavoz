@@ -64,14 +64,17 @@ def test_unicode_safe(store):
     assert store.get("u") == data
 
 
-def test_delete_swallows_no_such_key(store, aws_credentials, monkeypatch):
-    """对齐 ai_writer sf_storage.py: NoSuchKey 抛 → 静默."""
-    import boto3
+def test_delete_swallows_no_such_key(store, monkeypatch):
+    """对齐 ai_writer sf_storage.py: NoSuchKey 抛 → 静默. 强制 mock 抛 ClientError."""
+    import botocore.exceptions
 
-    s3 = boto3.client("s3", region_name="us-east-1")
-    s3.create_bucket(Bucket="test-kv-2")
-    s2 = MinioStorage(bucket="test-kv-2", access_key="testing", secret_key="testing")
-    s2.delete("never-was")  # 必须不抛
+    def _raise_no_such_key(Bucket, Key):
+        raise botocore.exceptions.ClientError(
+            {"Error": {"Code": "NoSuchKey", "Message": "not found"}}, "DeleteObject"
+        )
+
+    monkeypatch.setattr(store._client, "delete_object", _raise_no_such_key)
+    store.delete("never-existed")  # 必须不抛 (swallow path)
 
 
 def test_get_swallows_no_such_key(store, aws_credentials, monkeypatch):
