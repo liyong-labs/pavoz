@@ -1,6 +1,6 @@
 [project]
 name = "stageflow"
-version = "0.1.3"
+version = "0.4.0"
 description = "LLM/SE/Extract 流程编排系统 — micro/in-process workflow engine"
 authors = [{ name = "ebziw" }]
 readme = "README.md"

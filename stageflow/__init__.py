@@ -20,7 +20,7 @@ from .storage import FileStorage, StorageBackend
 from .testing import TestPipe
 from .types import FatalError, RetryableError, RunResult, StageError
 
-__version__ = "0.1.3"
+__version__ = "0.4.0"
 
 __all__ = [
     "DAG",
