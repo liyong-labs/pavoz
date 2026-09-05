@@ -6,7 +6,7 @@
 Zero runtime dependencies, no business system lock-in, no binding to any model/search/storage service.
 
 ```text
-Python 3.12+  |  MIT License  |  stdlib only  |  38 tests
+Python 3.12+  |  MIT License  |  stdlib only  |  46 tests
 ```
 
 stageflow tackles the most common layer of pipeline orchestration: **declarative DAG + sequential execution + retry on failure + checkpoint resume + regression testing**. It deliberately avoids macro orchestrator concerns (scheduler / UI / distributed execution) and never makes business decisions for you (model selection, audit loops, and prompt templates are business code).
@@ -68,21 +68,33 @@ git clone git@github.com:ebziw/stageflow.git
 pip install -e ".[dev]"
 ```
 
-## Optional Contrib (StorageBackend adapters)
+## Storage Backend (config-driven)
 
-```bash
-pip install stageflow[postgres]   # psycopg3 + JSONB
-pip install stageflow[mysql]      # PyMySQL + LONGTEXT
-pip install stageflow[redis]      # redis-py
-pip install stageflow[minio]      # boto3 (AWS S3 / MinIO / R2)
-pip install stageflow[contrib]    # 4 above together
-pip install stageflow[all]        # alias for [contrib]
-pip install stageflow[sqlite]     # stdlib, no extra deps
+core 不带任何 storage driver — 用户自己 `pip install` 自己要的依赖
+(psycopg / redis / boto3 / ...), 自己写 adapter (或抄 ai_writer 既有
+`backend/integration/sf_storage.py`), 通过 config 字符串 + `load_storage()` 加载.
+
+```python
+from stageflow import load_storage, CheckpointStore
+
+# 内置 FileStorage (stdlib, 无额外依赖)
+storage = load_storage(
+    "stageflow.storage.FileStorage",
+    root_dir="/var/lib/stageflow/cp",
+)
+cp_store = CheckpointStore(storage)
 ```
 
-用法: `from stageflow.contrib.storage import PostgresStorage, MinioStorage, ...`
+```python
+# 用户自定义 adapter — 配置里写自己的 dotted path
+storage = load_storage(
+    "backend.integration.sf_storage.MinioStorage",
+    task_id="run-2026-09-05-001",
+)
+```
 
-每个 adapter 只装对应 deps 时可 import, 缺 driver 抛 ImportError + `pip install 'stageflow[<name>]'` 提示. 详见 [`docs/contrib.md`](docs/contrib.md).
+`load_storage("pkg.module:ClassName", **kwargs)` 用 `importlib` 加载并实例化,
+错误信息含 module path + pip 安装提示. 详见 [`docs/storage.md`](docs/storage.md).
 
 ## Quick Start
 
@@ -149,7 +161,7 @@ See [`docs/en/architecture.md`](docs/en/architecture.md) and [`docs/en/api.md`](
 ## Testing
 
 ```bash
-pytest            # 38 tests
+pytest            # 46 tests (38 core + 8 storage_loader)
 ruff check .      # lint
 ```
 

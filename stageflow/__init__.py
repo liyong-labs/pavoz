@@ -17,10 +17,11 @@ from .dag import DAG, CycleError, Stage, UnknownDepError
 from .runtime import CallResult, Ctx, Runtime
 from .state import ReadOnlyStateView, StateConflictError
 from .storage import FileStorage, StorageBackend
+from .storage_loader import StageflowStorageError, load_storage
 from .testing import TestPipe
 from .types import FatalError, RetryableError, RunResult, StageError
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
 
 __all__ = [
     "DAG",
@@ -38,10 +39,12 @@ __all__ = [
     "Runtime",
     "Stage",
     "StageError",
+    "StageflowStorageError",
     "StateConflictError",
     "StorageBackend",
     "TestPipe",
     "UnknownDepError",
     "__version__",
+    "load_storage",
     "workflow_hash",
 ]

@@ -83,6 +83,28 @@
 - 38 core tests + 44 contrib tests (10 标 `@pytest.mark.integration` 需 docker)
 - MinioStorage 用 moto[s3] mock; RedisStorage 用 fakeredis mock (无 docker 依赖)
 
+## [0.4.1] — 2026-09-05
+
+### Removed (reversal of v0.4 contrib approach)
+
+- `stageflow.contrib.storage` 5 个 vendor adapter (SqliteStorage / PostgresStorage / MySQLStorage / RedisStorage / MinioStorage) — over-engineering, user 自管 deps + 自写 adapter 更合适
+- `stageflow.contrib` subpackage 完全移除
+- pyproject.toml extras (`postgres` / `mysql` / `redis` / `minio` / `sqlite` / `contrib` / `all`) 移除 — 用户自己装自己要的
+- 相关 tests (tests/contrib/) 移除
+
+### Added
+
+- `stageflow.storage_loader.load_storage(spec: str, **kwargs) -> StorageBackend` — 按 `"pkg.module:ClassName"` 字符串 importlib 加载
+- `stageflow.StageflowStorageError` — 友好错误 (module 未装 / class 名错 / kwargs 错 / 类型错 5 类)
+- 用户可自己写 adapter, stageflow 不带 driver, 通过 `pip install` 自管 deps
+- ai_writer 兼容: `load_storage("backend.integration.sf_storage.MinioStorage", ...)` 直接可用
+
+### Internal
+
+- core 仍 stdlib-only + 零第三方依赖
+- 0 行 core 修改 (除新增 storage_loader.py + 2 行 export)
+- reversal 是真实设计演化: v0.4 contrib 是反向教材, git history 保留以做记录
+
 ## [Unreleased]
 
 - (规划) `replay --prompt-patch` (v0.2): checkpoint 加载 + 单 stage 重放

@@ -2,12 +2,19 @@
 
 > v0.2 计划 (2026-09-05 brainstorm 定稿)。每 milestone 独立可 ship + 可 tag。
 
-## v0.4: StorageBackend contrib adapters (2026-09-05, 已 ship)
+## v0.4: StorageBackend contrib adapters (2026-09-05, REVERSED)
 
-- stageflow.contrib.storage: 5 个可选 extras adapter (Postgres / MySQL / Redis / MinIO / SQLite)
-- core 永远 stdlib-only; contrib 是可选 (extras 机制)
-- MinioStorage 行为对齐 ai_writer 既有 sf_storage.py (delete/get 容忍 NoSuchKey)
-- deps 政策 (2026-09-05 拍板): 稳定基础设施 driver (DB/Redis/S3) OK; LLM vendor / 业务 SDK 禁入 contrib
+- 早期决策: vendor 5 个 adapter (Sqlite / Postgres / MySQL / Redis / MinIO)
+- user 拍板反转: 这是 over-engineering, 我们不该替客户决定需要哪些 DB/S3 client
+- git history 保留作为反向教材
+
+## v0.4.1: Storage loader (config-driven, 2026-09-05, 已 ship)
+
+- `stageflow.storage_loader.load_storage(spec: str, **kwargs) -> StorageBackend`
+- spec 格式: `"pkg.module:ClassName"` — 用户 config 写自己 adapter 的 dotted path
+- core 不带任何 driver, 用户自己 pip install 自己要的 deps
+- ai_writer 兼容: `load_storage("backend.integration.sf_storage.MinioStorage", ...)` 直接可用
+- 业界借鉴: SQLAlchemy URL prefix / Kedro catalog type / langchain_community vectorstores / pluggy hooks
 
 ## v0.2: API 冻结版
 

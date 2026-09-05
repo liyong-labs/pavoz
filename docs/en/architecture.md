@@ -100,7 +100,7 @@ Reference: the most mature engines (Airflow/Temporal/Prefect) likewise lack cros
 | `storage.py` | `StorageBackend` Protocol + `FileStorage` (default) |
 | `testing.py` | `TestPipe` (mock stages to run the whole graph) |
 | `cli.py` | `run` / `trace` / `state` (v0.1) |
-| `contrib/storage/` | Optional `StorageBackend` adapters (Postgres / MySQL / Redis / MinIO / SQLite) — see [docs/contrib.md](contrib.md) |
+| `storage_loader.py` | `load_storage(spec, **kwargs)` — config-string driven `StorageBackend` loader (importlib + friendly errors); see [docs/storage.md](storage.md) |
 
 ## What we don't do (YAGNI)
 

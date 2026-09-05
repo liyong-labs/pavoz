@@ -105,20 +105,36 @@ class StorageBackend:
 
 Built-in: `FileStorage(dir)` — local filesystem implementation (tests / single-host).
 
-## Contrib adapters
+## Storage loader
 
-Optional `StorageBackend` implementations live in `stageflow.contrib.storage` (separate subpackage; core stays stdlib-only). Install drivers via pyproject extras:
+stageflow core ships **only** the `StorageBackend` Protocol + `FileStorage`. Drivers
+(psycopg / redis / boto3 / etc.) are the user's responsibility — install what you
+need, write (or vendor) an adapter that implements the Protocol, then load it by
+config string.
 
-```bash
-pip install stageflow[postgres]   # psycopg3 + JSONB
-pip install stageflow[mysql]      # PyMySQL + LONGTEXT
-pip install stageflow[redis]      # redis-py
-pip install stageflow[minio]      # boto3 (S3 / MinIO / R2)
-pip install stageflow[contrib]    # all 4 above
-pip install stageflow[sqlite]     # stdlib, no extras
+```python
+from stageflow import load_storage
+
+storage = load_storage("stageflow.storage.FileStorage", root_dir="/data/cp")
+# or:
+storage = load_storage(
+    "backend.integration.sf_storage.MinioStorage",
+    task_id="run-2026-09-05-001",
+)
+cp_store = CheckpointStore(storage)
 ```
 
-Each adapter is lazily imported — `from stageflow.contrib.storage import PostgresStorage` raises `ImportError` with install hint if the driver is missing. Full usage, ai_writer compatibility notes, and test strategy: [docs/contrib.md](contrib.md).
+### `load_storage(spec: str, **kwargs) -> StorageBackend`
+
+- `spec` — adapter locator. Two equivalent forms:
+  - `"pkg.module:ClassName"` (canonical, explicit separator)
+  - `"pkg.module.path.ClassName"` (dotted, last segment = class name)
+- `**kwargs` — forwarded to `ClassName.__init__`
+- Raises `StageflowStorageError` (subclass of `ImportError`) with friendly messages
+  for 5 failure modes: format error / module not installed / wrong class name /
+  wrong kwargs / non-`StorageBackend` instance.
+
+Full reference + ai_writer compatibility + adapter recipe: [docs/storage.md](storage.md).
 
 ## `TestPipe`
 
