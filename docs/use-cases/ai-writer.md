@@ -25,7 +25,6 @@
 |---|---|---|
 | DAG 定义 | — | 业务侧文件 (8 节点 / s_revise) |
 | 外部调用 | `ctx.call(kind, op, params)` Protocol | 业务 caller (复用自有 LLM/cache/计费) |
-| 任务表 | TaskTrigger Protocol | 业务 adapter (包业务 task 表) |
 | checkpoint 存储 | StorageBackend Protocol | 业务 adapter (对象存储 / DB / 文件) |
 | 循环 (audit cascade) | — | stage 内 Python for/while |
 | 日志 | stage 内业务自理 | 接业务既有日志/SSE |

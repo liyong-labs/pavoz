@@ -101,9 +101,8 @@ sub_dag/retry_budget/escalation/watchdog 原语.
 | `state.py` | 类型校验 + ReadOnlyStateView + shallow merge + 冲突检测 |
 | `checkpoint.py` | CheckpointStore + workflow_hash + mismatch 检测 |
 | `storage.py` | StorageBackend Protocol + FileStorage (默认) |
-| `trigger.py` | TaskTrigger Protocol (业务 task 表边界) |
 | `testing.py` | TestPipe (mock stage 跑全图) |
-| `cli.py` | run/trace/inspect/state (v0.1) |
+| `cli.py` | run/trace/state (v0.1) |
 
 ## 不做什么 (YAGNI)
 

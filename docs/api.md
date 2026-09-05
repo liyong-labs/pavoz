@@ -113,19 +113,6 @@ class StorageBackend:
 
 内置: `FileStorage(dir)` — 本地文件系统实现 (测试/单机)。
 
-## TaskTrigger (Protocol, 业务注入)
-
-```python
-class TaskTrigger:
-    def list_pending(self) -> list[TaskRef]: ...
-    def claim(self, task_id: str) -> bool: ...
-    def mark_done(self, task_id: str, result: dict) -> None: ...
-    def mark_failed(self, task_id: str, error: str) -> None: ...
-    def heartbeat(self, task_id: str) -> bool: ...
-```
-
-编排器不直接查业务 task 表 — worker 侧通过此接口接收/释放任务。
-
 ## TestPipe
 
 ```python

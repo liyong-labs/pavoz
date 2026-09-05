@@ -10,7 +10,6 @@ per-node retry + absolute deadline) + Checkpoint (断点续跑) + TestPipe (回�
     Runtime().run(dag, task_id, initial_state=..., resume=True)
     TestPipe(dag).mock("s_x", lambda state: {...}).run()
     StorageBackend / FileStorage / CheckpointStore
-    TaskTrigger (业务 adapter 实现)
 """
 
 from .checkpoint import Checkpoint, CheckpointMismatchError, CheckpointStore, workflow_hash
@@ -46,9 +45,3 @@ __all__ = [
     "__version__",
     "workflow_hash",
 ]
-
-
-if __name__ == "__main__":
-    from .cli import main
-
-    raise SystemExit(main())
