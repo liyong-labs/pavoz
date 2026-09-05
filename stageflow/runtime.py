@@ -161,6 +161,8 @@ class Runtime:
         producers: dict[str, str] = {}
         # v0.5.1 (M2): 每 stage return delta (按完成序) + run 初始 state — M3 replay 重建用
         stage_deltas: dict[str, dict] = {}
+        # v0.7: stage 完成 epoch ts — 恢复侧 TTL 判定 (内容过期 gate) 用
+        stage_ts: dict[str, float] = {}
         initial_state_saved: dict = {}
 
         # ── resume: 恢复 checkpoint 状态 ──
@@ -178,6 +180,7 @@ class Runtime:
             stage_statuses = dict(cp.stage_statuses)
             producers = dict(cp.producers)
             stage_deltas = dict(cp.stage_deltas)      # resume 续收集
+            stage_ts = dict(cp.stage_ts)              # v0.7: resume 续记
             initial_state_saved = dict(cp.initial_state)
             result.state = state
             logger.info(
@@ -225,14 +228,15 @@ class Runtime:
                 result.status = "failed"
                 result.error = err
                 self._save_cp(task_id, run_id, dag, state, done_stages, stage_statuses,
-                              producers, stage_deltas, initial_state_saved)
+                              producers, stage_deltas, initial_state_saved, stage_ts)
                 return result
 
             if delta:
                 stage_deltas[name] = delta  # 收集 (完成序)
+            stage_ts[name] = time.time()   # v0.7: 完成时刻 (内容过期 TTL 判定用)
             done_stages.append(name)
             self._save_cp(task_id, run_id, dag, state, done_stages, stage_statuses,
-                          producers, stage_deltas, initial_state_saved)
+                          producers, stage_deltas, initial_state_saved, stage_ts)
             logger.info(
                 "task=%s run=%s stage=%s done (len state=%d)",
                 task_id, run_id[:8], name, len(state),
@@ -417,6 +421,7 @@ class Runtime:
             producers=producers,
             initial_state=dict(cp.initial_state),
             stage_deltas=kept_deltas,
+            stage_ts={s: cp.stage_ts.get(s, 0.0) for s in keep},
         )
         self.checkpoint_store.save(fork_cp)  # save 同时把 latest 指针移到 fork
         logger.info(
@@ -520,7 +525,8 @@ class Runtime:
     def _save_cp(self, task_id: str, run_id: str, dag: DAG, state: dict,
                  done_stages: list, statuses: dict, producers: dict | None = None,
                  stage_deltas: dict | None = None,
-                 initial_state: dict | None = None) -> None:
+                 initial_state: dict | None = None,
+                 stage_ts: dict | None = None) -> None:
         if self.checkpoint_store is None:
             return
         try:
@@ -535,6 +541,7 @@ class Runtime:
                 producers=dict(producers or {}),
                 initial_state=dict(initial_state or {}),
                 stage_deltas=dict(stage_deltas or {}),
+                stage_ts=dict(stage_ts or {}),
             )
             self.checkpoint_store.save(cp)
         except Exception:

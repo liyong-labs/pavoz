@@ -59,6 +59,8 @@ class Checkpoint:
     # v0.5.1 (M2): 每 stage 的原始 return delta (按完成序) + run 的初始 state.
     initial_state: dict[str, Any] = field(default_factory=dict)
     stage_deltas: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # v0.7: stage 完成 epoch ts — 恢复侧内容过期 (TTL) gate 判定用.
+    stage_ts: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -72,6 +74,7 @@ class Checkpoint:
             "producers": self.producers,
             "initial_state": self.initial_state,
             "stage_deltas": self.stage_deltas,
+            "stage_ts": self.stage_ts,
         }
 
     @classmethod
@@ -88,6 +91,7 @@ class Checkpoint:
             producers=dict(d.get("producers") or {}),
             initial_state=dict(d.get("initial_state") or {}),
             stage_deltas=dict(d.get("stage_deltas") or {}),
+            stage_ts=dict(d.get("stage_ts") or {}),
         )
 
     def rebuild_state(self) -> dict[str, Any]:
