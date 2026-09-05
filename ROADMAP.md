@@ -98,9 +98,24 @@ per-node 状态快照" (调研角度 3 共识)。TestPipe 已能 mock 任意 sta
 **验收**: 手写 mock 回归可被 checkpoint 回放替代; workflow_hash mismatch 时
 replay_from 明确报错 (不静默错配)。
 
+> **依赖注记 (A7, 2026-09-05)**: M3 replay **依赖**本 milestone 的
+> `stage_deltas` — 执行顺序锁定 M2 → M3, 不可跳。v0.5 checkpoint schema 已保证
+> 向后兼容 (to_dict/from_dict, 未来字段 .get 默认), 届时加 stage_deltas 字段
+> 不 breaking, 现无需动作。
+
 ---
 
 ### M3: CLI replay --prompt-patch (调试层)
+
+> **依赖注记 (A7, 2026-09-05)**: M3 重放 stage N 需要 "stage N-1 完成后" 的 state,
+> 但 checkpoint 每 stage 后覆盖保存累计态 → 最新 cp 只有终态 (含 stage N 自身的
+> 输出), 用终态重放 = 输入污染。`producers` 字段无法替代 (chain overwrite 场景
+> 逆向剥离不可靠)。replay 必须从 `initial_state + stage_deltas[0..N-1]` 重建 —
+> stage_deltas 由 M2 提供。
+>
+> **重放不落 checkpoint (A6, 2026-09-05)**: replay 是临时实验, 产出给开发者看,
+> 不需要可 resume — **不写 checkpoint**, 落盘会错误更新 `runs/{task_id}/latest`
+> 指针, 污染后续 load_latest/resume (指针污染防护)。
 
 **为什么**: 调试场景 1 (调 prompt/参数) 的闭环 — 改 prompt 不用重跑全图,
 单 stage 用 checkpoint state 重放, 分钟级迭代 (调研角度 4: 长流程 debug 无

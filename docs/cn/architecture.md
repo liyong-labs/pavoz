@@ -76,12 +76,18 @@ sub_dag/retry_budget/escalation/watchdog 原语.
 
 ### 4. Checkpoint + workflow hash
 
-- 每 node 完成后落盘 (StorageBackend)
+- 每 node 完成后落盘 (StorageBackend)。checkpoint 是 **run 级**:
+  存 `runs/{task_id}/{run_id}/checkpoint` + 指针文件 `runs/{task_id}/latest` —
+  同 task 可有多 run (original / resume / 重跑), 互不覆盖
 - checkpoint 含 `workflow_hash` (stage 名 + 依赖 + retries + timeout 的 sha256)
 - resume 时 hash 不匹配 → `CheckpointMismatchError` (DAG 结构变了不能续跑; 只改函数体不影响 hash)
 - checkpoint 持久化 `producers` (key → producer stage, 链式覆盖恢复判定用);
-  旧 checkpoint 无此字段 → resume 走宽松模式 (视同单链), 向后兼容
-- run 全部完成 → checkpoint 自动清
+  当前格式内缺可选字段走默认值 (schema 向前兼容)。v0.5 之前的 checkpoint
+  (无 `run_id`, 旧 key `runs/{task_id}/checkpoint`) 已 hard cut orphan — 无
+  legacy loader
+- run 完成后 checkpoint **保留** (不自动清) — 它是该 task 的最新 run;
+  已完成 run 再 resume → done guard 明确报错 (防静默 no-op), 重跑用
+  `resume=False` (起新 run_id)
 
 ### 5. 超时 = absolute deadline 传播
 
@@ -93,6 +99,35 @@ sub_dag/retry_budget/escalation/watchdog 原语.
 
 - 值类型限定: str/int/float/bool/None/list/dict (json-serializable). set/datetime/Path/bytes raise
 - 每 stage 前: 深拷贝给 ctx.state (defensive — stage 原地改 = 改了个寂寞)
+
+### 7. Run 身份 + 恢复模型 (v0.5)
+
+三级身份, 对齐业界先例 (Temporal WorkflowId/RunId, DBOS workflow_id,
+Airflow `dag_id + task_id + run_id + try_number`):
+
+- `task_id` — caller 提供 (或自动 UUID4)。跨 retry/resume 的稳定幂等键。
+  入口校验: 非空、≤128、字符集仅 `[A-Za-z0-9_.-]` (禁 `/` — 直接进 storage
+  key 路径)
+- `run_id` — 每次 `run()` stageflow 自动生成 UUID4。resume 复用 checkpoint
+  的 run_id (Continue-As-New); 重跑 (`resume=False`) 起新 run_id
+- `attempt` — stageflow 注入 Ctx 的 1-based int; stage 每 retry +1
+  (Airflow try_number / Celery retries 模式)
+
+恢复模式: stageflow `resume` 是**从 checkpoint 真续跑** (恢复 state、跳过
+已完成节点、复用 run_id)。"从头重跑 + external cache 免单" (`resume=False`)
+是首批接入方的日常默认 — 重复成本由业务 cache 吸收 — `resume` 留给真续跑
+场景 (中断后重启)。
+
+运行假设 (刻意不在 core 强制, 归业务层):
+
+- **每 task 单写者** — stageflow 假定同 task 同时只有一个活跃 writer;
+  并发由业务层防 (lease/epoch)。同 `(task_id, run_id)` 双写 = last-writer-wins,
+  core 不做锁
+- **不感知 cancel** — stageflow in-process: worker 死 = run 死 (checkpoint 存到
+  最后一个完成节点)。cancel = 业务侧 kill + 重启 + `resume=True`
+- **存储命名空间** — checkpoint 落在 `runs/` 前缀下
+  (`runs/{task_id}/{run_id}/checkpoint` + `runs/{task_id}/latest`)。业务与
+  stageflow 共用对象存储时前缀隔离 (如业务产物放 `research/{task_id}/v{v}/`)
 
 ## 模块
 

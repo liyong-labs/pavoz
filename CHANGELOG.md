@@ -2,6 +2,55 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.5.0] — 2026-09-05
+
+### Added (industry-standard ID model)
+
+- `task_id` 参数可选: 省略 → stageflow 自动生成 UUID4。跨 retry/resume 稳定 —
+  幂等键 (Temporal WorkflowId / DBOS workflow_id 模式)。入口校验: 非空、
+  ≤128、字符集 `[A-Za-z0-9_.-]` (禁 `/`, 防 storage key 路径注入)
+- `run_id`: 每次 `Runtime.run()` 自动生成 UUID4, 返回在 `RunResult.run_id`。
+  同 task 多次 run 互不覆盖 (original / resume / 重跑)
+- `Ctx.run_id` + `Ctx.attempt` (1-based, stage retry 时 +1) 自动注入
+- `ctx.call` 底层 caller 签名 3 参 → 4 参 (新增 `CallMeta`) —
+  caller 落 trace/llm_calls 时可直接关联 task/run/stage/attempt (A1)
+- `CheckpointStore.list_runs(task_id)` + `load_latest(task_id)` (指针文件) helpers
+
+### Changed (BREAKING)
+
+- Checkpoint 存储 key: `runs/{task_id}/{run_id}/checkpoint` (was
+  `runs/{task_id}/checkpoint`) + 指针文件 `runs/{task_id}/latest` =
+  `{"run_id": ...}` (uuid4 字典序 ≠ 时间序, 不靠排序判 "最新")
+- `RunResult` / `Checkpoint` 新增必填 `run_id` 字段 (was absent)
+- `CheckpointStore.load(task_id, run_id)` 2 参 (was 1 参); "最新 run" 用
+  `load_latest(task_id)`
+- `CheckpointStore.delete(task_id, run_id)` 2 参 (was 1 参 task 级); 指针文件不随
+  删除更新 (删的恰是最新 run → 后续 load_latest 返 None, 属可接受边界)
+- `CheckpointStore.load_compatible(task_id, run_id, dag)` 3 参 (was 2 参);
+  `run_id=""` = 加载最新
+- `Runtime(caller=...)` 自定义 caller 需接第 4 参 `CallMeta` (默认 no-op 已同步)
+- resume 语义收紧: `resume=True` 无 checkpoint → RuntimeError; run 已全部完成
+  (done guard) → RuntimeError 防静默 no-op。重跑 = `resume=False` 起新 run_id
+- run 完成后 checkpoint **不再自动删除** (v0.4.1 前会清) — done guard 取代
+
+### Rationale
+
+Adopts Temporal WorkflowId/RunId, DBOS workflow_id idempotency key, and
+Airflow `dag_id + task_id + run_id + try_number` composite key patterns.
+Industry-standard, no caller-invented ID schemes.
+
+### Migration (hard cut)
+
+No legacy loader. Old `runs/{task_id}/checkpoint` keys become orphaned
+on disk — caller can clean up with their storage backend.
+旧数据 (无 run_id 字段) 同样不可加载。
+
+### Internal
+
+- 60 tests (52 core + 8 storage_loader), ruff clean, 零运行时依赖 (stdlib only)
+- CLI: resume 语义错误 (无 cp / 已全部完成) → 友好消息 + exit 1, 不炸 traceback
+
+
 ## [0.1.1] — 2026-09-05
 
 ### Added

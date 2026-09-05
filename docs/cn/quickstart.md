@@ -53,8 +53,11 @@ from dags.my_pipeline import dag
 
 async def main():
     rt = Runtime(checkpoint_store=CheckpointStore(FileStorage("/data/sf")))
-    result = await rt.run(dag, task_id="task-1", initial_state={"query": "x"}, resume=True)
-    print(result.status, result.state)
+    # 首跑: resume=False (默认) — 起新 run_id.
+    # 中途断了再跑: resume=True 跳过已完成 stage (复用原 run_id;
+    # run 已全部完成 → RuntimeError, 重跑 resume=False 起新 run_id).
+    result = await rt.run(dag, task_id="task-1", initial_state={"query": "x"})
+    print(result.status, result.state, result.run_id)
 
 asyncio.run(main())
 ```

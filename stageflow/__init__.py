@@ -7,7 +7,8 @@ per-node retry + absolute deadline) + Checkpoint (断点续跑) + TestPipe (回�
 
 公开 API:
     DAG / @dag.stage(depends_on, retries, timeout)
-    Runtime().run(dag, task_id, initial_state=..., resume=True)
+    Runtime().run(dag, task_id=None, initial_state=..., resume=False)
+        task_id 省略 → 自动 UUID4; run_id 每次 run 自动生成 (resume 复用)
     TestPipe(dag).mock("s_x", lambda state: {...}).run()
     StorageBackend / FileStorage / CheckpointStore
 """
@@ -21,7 +22,7 @@ from .storage_loader import StageflowStorageError, load_storage
 from .testing import TestPipe
 from .types import FatalError, RetryableError, RunResult, StageError
 
-__version__ = "0.4.1"
+__version__ = "0.5.0"
 
 __all__ = [
     "DAG",

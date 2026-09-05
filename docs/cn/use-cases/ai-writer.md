@@ -38,7 +38,7 @@
 ```toml
 # 业务 pyproject.toml
 [tool.poetry.dependencies]  # 或 pip / uv
-stageflow = { git = "ssh://git@github.com/ebziw/stageflow.git", tag = "v0.1.1" }
+stageflow = { git = "ssh://git@github.com/ebziw/stageflow.git", tag = "v0.5.0" }
 ```
 
 ### 2. 定义 DAG (纯图, 阶段函数搬业务逻辑)
@@ -87,16 +87,29 @@ rt = Runtime(
     checkpoint_store=CheckpointStore(ObjectStoreStorage(task_id)),  # 每 task 隔离
     default_timeout=4 * 3600,   # 整跑 absolute deadline
 )
-result = asyncio.run(rt.run(dag, task_id=task_id,
-                            initial_state={...}, resume=True))
+# 首跑 / 日常重跑: resume=False (默认) — 起新 run_id; 重复 LLM 成本由业务
+# external cache 免单, 从头重跑不心疼.
+result = asyncio.run(rt.run(dag, task_id=task_id, initial_state={...}))
 if result.status != "done":
     raise RuntimeError(result.error or "run failed")
+
+# 真续跑 (中断后重启, 已有 checkpoint): resume=True — 跳过已完成节点,
+# 复用原 run_id. 无 checkpoint / run 已全部完成 → RuntimeError (done guard),
+# 回退 resume=False (起新 run_id).
+result = asyncio.run(rt.run(dag, task_id=task_id, resume=True))
 ```
 
-要点:
-- `task_id` = 业务 task id (opaque key, checkpoint/state 按它隔离)
-- `resume=True`: 中断重启自动跳过已完成节点; 链式演进靠 producers 恢复
+要点 (v0.5 ID model):
+- `task_id` = 业务 task id (opaque key, 稳定幂等键)
+- `run_id`: 每次 run() 自动 UUID4 — checkpoint 按 `runs/{task_id}/{run_id}/checkpoint`
+  隔离 (+ `runs/{task_id}/latest` 指针)。与业务产物 (`research/{task_id}/v{v}/`)
+  同桶时前缀隔离, 互不干扰
+- 恢复模式: 默认 "从头重跑 + external LLM cache" (`resume=False`);
+  stageflow `resume=True` 留给真续跑 (中断重启)。每 task 单写者 —
+  并发由业务 worker 自己的 lease/heartbeat 防
 - stage 函数体改动不影响 resume (workflow_hash 只含结构); 改依赖/retries → 拒续跑
+- `Ctx.run_id` / `Ctx.attempt` + caller 第 4 参 `CallMeta` — 业务 caller 落
+  trace 可直接关联执行现场 (task/run/stage/attempt)
 
 ### 5. 回归
 

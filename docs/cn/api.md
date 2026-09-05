@@ -27,27 +27,40 @@ dag = DAG(name: str)
 ```python
 rt = Runtime(
     checkpoint_store: CheckpointStore | None = None,
-    caller: Callable[[str, str, dict], Awaitable[dict]] | None = None,
+    caller: Callable[[str, str, dict, CallMeta], Awaitable[dict]] | None = None,
     default_timeout: float | None = None,   # 整跑 absolute deadline (秒)
 )
 
 result: RunResult = await rt.run(
-    dag, task_id: str,
+    dag, task_id: str | None = None,
     *,
     initial_state: dict | None = None,
-    resume: bool = True,
-    deadline: float | None = None,   # 覆盖 default_timeout
+    resume: bool = False,
 )
 ```
 
-- `task_id` 是 caller 提供的 opaque key — 所有 checkpoint/state 按它隔离,
-  多任务并行互不干扰
-- resume: 有 checkpoint 且 workflow_hash 匹配 → 跳过已完成 stage
-- 跑完 (`status == "done"`) → checkpoint 自动删除
+- `task_id` 可选: 省略 → stageflow 自动生成 UUID4 (36 字符)。显式传入时入口
+  校验: 非空、≤128、字符集仅 `[A-Za-z0-9_.-]` (禁 `/` — task_id 直接进
+  storage key 路径)。跨 retry/resume 稳定 — 幂等键。resume 必须有显式
+  task_id (自动生成的 ID 不会有 checkpoint 可找)
+- `run_id` 每次 `run()` 自动生成 (UUID4), 返回在 `RunResult.run_id`。resume
+  **复用** checkpoint 的原 run_id (Temporal Continue-As-New 模式) — 同 task
+  多次 run 互不覆盖
+- `resume` (默认 `False`): `True` → 加载该 task 最新 checkpoint 从断点续跑
+  (跳过已完成 stage, 恢复 state)。无 checkpoint → `RuntimeError`; run 已全部
+  完成 (done guard) → `RuntimeError` 防静默 no-op。重跑 = `resume=False`
+  (起新 run_id)
+- resume 时 `workflow_hash` 不匹配 (DAG 结构变了) → `CheckpointMismatchError`
+- run 级 absolute deadline 只来自 `Runtime(default_timeout=...)` — `run()` 无
+  deadline 参数; stage 级 `timeout` 受 run 剩余 deadline 封顶
+- run 完成后 checkpoint **保留** (不删除) — 它是该 task 的最新 run, 是未来
+  resume / `load_latest` 的目标
 
 ### RunResult
 
-- `status`: `"done" | "failed"`
+- `task_id`: caller 提供或自动生成 UUID4
+- `run_id`: 本次 run 的 UUID4 (resume 时 = 复用的原 run_id)
+- `status`: `"running" | "done" | "failed"` (终态: `done` / `failed`)
 - `state`: 最终 state
 - `stage_statuses`: 每 stage 的 `done | failed`
 - `error`: failed 原因 (异常转字符串)
@@ -64,6 +77,8 @@ result: RunResult = await rt.run(
 
 ```python
 ctx.task_id: str
+ctx.run_id: str          # 本次 run 的 UUID4 (resume 复用的原 run_id)
+ctx.attempt: int         # 1-based; 本 stage 当前尝试次数 (retry 一次 +1)
 ctx.stage_name: str
 ctx.state: ReadOnlyStateView   # 只读深拷贝; 写任何属性 raise
 ctx.deadline: float | None     # 本 stage absolute deadline
@@ -74,6 +89,10 @@ await ctx.call(kind: str, op: str, params: dict | None = None) -> dict
 - `ctx.call` 是 stage 内**唯一**外部调用入口。`kind`/`op`/返回值结构由业务
   caller 决定 — 框架只透传, 默认 caller 是 no-op echo
   (`CallResult(kind=..., op=..., params=...)`)
+- 注入的 caller 收**第 4 参** `meta: CallMeta` (`task_id` / `run_id` / `stage` /
+  `attempt`) — caller 落 trace/llm_calls 时可直接关联执行上下文。
+  `CallMeta` 在 `stageflow.runtime`。stage 函数签名不受影响
+  (`async def fn(ctx) -> dict`)
 - `ctx.logger`: logging.Logger (stage 名已注入)
 
 ## State
@@ -89,18 +108,28 @@ await ctx.call(kind: str, op: str, params: dict | None = None) -> dict
 
 ```python
 store = CheckpointStore(storage: StorageBackend)
-cp: Checkpoint | None = store.load_compatible(task_id, dag)   # hash 不匹配 raise
-store.save(cp)
-store.delete(task_id)
+store.save(cp)                                  # 写 checkpoint + 更新 latest 指针
+cp: Checkpoint | None = store.load(task_id, run_id)       # 指定 run
+cp: Checkpoint | None = store.load_latest(task_id)        # 按指针文件加载最新
+run_ids: list[str] = store.list_runs(task_id)             # 有哪些 run? (调试/清理)
+store.delete(task_id, run_id)                             # 指针不随删除更新
+cp: Checkpoint | None = store.load_compatible(task_id, run_id, dag)
+# hash 校验加载; run_id="" → 该 task 最新 run (load_latest 哨兵)
 ```
 
-- `Checkpoint`: `task_id / dag_name / workflow_hash / stage_statuses / state /
-  done_stages / producers`
+- 存储布局: 每次 run 存 `runs/{task_id}/{run_id}/checkpoint`; 每次 `save()`
+  同时更新指针文件 `runs/{task_id}/latest` (`{"run_id": ...}`)。同 task 多次
+  run 互不覆盖; "最新" 不靠字典序 (uuid4 字典序 ≠ 时间序)。删的恰是指针
+  指向的 run → `load_latest` 返 `None` ("无 checkpoint" 明确信号, 可接受边界)
+- `Checkpoint` 字段: `task_id / run_id / dag_name / workflow_hash /
+  stage_statuses / state / done_stages / producers`。`run_id` 必填 —
+  v0.5 之前的 checkpoint (无 `run_id`, 旧 key `runs/{task_id}/checkpoint`)
+  已 orphan (hard cut, 无 legacy loader); v0.5 格式内缺可选字段走默认值
+  (schema 向前兼容)
 - `workflow_hash(dag)`: stage 名+依赖+retries+timeout 的 sha256 指纹
   (改函数体不影响 hash)
-- `CheckpointMismatchError`: resume 时结构变了 → 拒续跑 (删 checkpoint 或
-  `resume=False` 强制重跑)
-- 旧 checkpoint (无 `producers`) → resume 走宽松模式 (视同单链)
+- `CheckpointMismatchError`: resume 时结构变了 → 拒续跑 (`resume=False`
+  强制重跑, 或删该 run 的 checkpoint)
 
 ## StorageBackend (Protocol, 业务注入)
 

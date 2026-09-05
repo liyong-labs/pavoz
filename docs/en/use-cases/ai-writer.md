@@ -32,7 +32,7 @@ Code location (business side, not in this repo): `backend/integration/` — `res
 ```toml
 # Business pyproject.toml
 [tool.poetry.dependencies]  # or pip / uv
-stageflow = { git = "ssh://git@github.com/ebziw/stageflow.git", tag = "v0.1.1" }
+stageflow = { git = "ssh://git@github.com/ebziw/stageflow.git", tag = "v0.5.0" }
 ```
 
 ### 2. Define the DAG (pure graph; stage functions carry business logic)
@@ -81,16 +81,32 @@ rt = Runtime(
     checkpoint_store=CheckpointStore(ObjectStoreStorage(task_id)),  # per-task isolation
     default_timeout=4 * 3600,   # absolute deadline for the whole run
 )
-result = asyncio.run(rt.run(dag, task_id=task_id,
-                            initial_state={...}, resume=True))
+# First run / routine rerun: resume=False (default) — fresh run_id; repeat LLM
+# costs are absorbed by the business's external cache, so a full rerun is cheap.
+result = asyncio.run(rt.run(dag, task_id=task_id, initial_state={...}))
 if result.status != "done":
     raise RuntimeError(result.error or "run failed")
+
+# Genuine continuation (restart after interruption, checkpoint exists):
+# resume=True — skips completed nodes and reuses the original run_id.
+# No checkpoint, or the run already completed → RuntimeError (done guard);
+# fall back to resume=False (new run_id).
+result = asyncio.run(rt.run(dag, task_id=task_id, resume=True))
 ```
 
-Key points:
-- `task_id` = business task id (opaque key; checkpoint/state isolated by it)
-- `resume=True`: on restart after interruption, completed nodes are skipped automatically; chained evolution relies on `producers` for restoration
+Key points (v0.5 ID model):
+- `task_id` = business task id (opaque key; the stable idempotency key)
+- `run_id`: auto-generated UUID4 per `run()` — checkpoints are isolated by
+  `runs/{task_id}/{run_id}/checkpoint` (+ a `runs/{task_id}/latest` pointer).
+  This prefix is isolated from business artifacts (`research/{task_id}/v{v}/`)
+  when both live in the same object store — no interference
+- Recovery modes: default is "restart from scratch + external LLM cache"
+  (`resume=False`); stageflow `resume=True` is reserved for real continuation
+  (interrupted-run restart). Single-writer per task is assumed — the business
+  worker's own lease/heartbeat guards concurrent runs
 - Editing a stage's function body does not affect resume (`workflow_hash` only covers structure); changing dependencies/retries → refuse to resume
+- `Ctx.run_id` / `Ctx.attempt` and the caller's 4th `CallMeta` arg give business
+  callers the execution context (task/run/stage/attempt) for trace recording
 
 ### 5. Regression
 

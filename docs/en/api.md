@@ -26,26 +26,45 @@ Exceptions: `UnknownDepError` / `CycleError`
 ```python
 rt = Runtime(
     checkpoint_store: CheckpointStore | None = None,
-    caller: Callable[[str, str, dict], Awaitable[dict]] | None = None,
+    caller: Callable[[str, str, dict, CallMeta], Awaitable[dict]] | None = None,
     default_timeout: float | None = None,   # absolute deadline for the whole run (seconds)
 )
 
 result: RunResult = await rt.run(
-    dag, task_id: str,
+    dag, task_id: str | None = None,
     *,
     initial_state: dict | None = None,
-    resume: bool = True,
-    deadline: float | None = None,   # overrides default_timeout
+    resume: bool = False,
 )
 ```
 
-- `task_id` is an opaque key supplied by the caller — checkpoints/state are isolated by it, so parallel tasks don't interfere
-- `resume`: if a checkpoint exists and the `workflow_hash` matches → skip completed stages
-- When the run completes (`status == "done"`) → checkpoint is auto-deleted
+- `task_id` is optional. If omitted, stageflow auto-generates a UUID4 (36 chars).
+  If supplied, it is validated at entry: non-empty, ≤ 128 chars, charset
+  `[A-Za-z0-9_.-]` only (`/` rejected — the task_id is embedded in the storage
+  key path). Stable across retries/resumes — the idempotency key. Resume needs
+  an explicit task_id (an auto-generated one has no checkpoint to find).
+- `run_id` is auto-generated (UUID4) per `run()` invocation and returned in
+  `RunResult.run_id`. Resume **reuses** the checkpoint's original run_id
+  (Temporal Continue-As-New pattern) — one task can have multiple runs without
+  overwriting each other.
+- `resume` (default `False`): `True` → load this task's latest checkpoint and
+  continue from where it stopped (skipping completed stages, restoring state).
+  Raises `RuntimeError` if there is no checkpoint, and raises if the run already
+  completed (done guard — no silent no-op; start over with `resume=False`, which
+  begins a new run_id).
+- On `resume`, a `workflow_hash` mismatch (DAG structure changed) →
+  `CheckpointMismatchError`.
+- Run-level absolute deadline comes from `Runtime(default_timeout=...)`; there
+  is no per-`run()` deadline parameter. Per-stage `timeout` is capped by the
+  remaining run deadline.
+- On completion the checkpoint is kept (not deleted) — it is the task's latest
+  run and the target of future resumes/`load_latest`.
 
 ### `RunResult`
 
-- `status`: `"done" | "failed"`
+- `task_id`: caller-supplied or auto-generated UUID4
+- `run_id`: this run's UUID4 (or the reused original on resume)
+- `status`: `"running" | "done" | "failed"` (terminal: `done` / `failed`)
 - `state`: final state
 - `stage_statuses`: each stage's `done` or `failed`
 - `error`: failure reason (exception converted to string)
@@ -62,6 +81,8 @@ result: RunResult = await rt.run(
 
 ```python
 ctx.task_id: str
+ctx.run_id: str          # UUID4 of the current run (reused on resume)
+ctx.attempt: int         # 1-based; current attempt for this stage (+1 per retry)
 ctx.stage_name: str
 ctx.state: ReadOnlyStateView   # read-only deep copy; any write raises
 ctx.deadline: float | None     # absolute deadline for this stage
@@ -70,6 +91,10 @@ await ctx.call(kind: str, op: str, params: dict | None = None) -> dict
 ```
 
 - `ctx.call` is the **only** entry point for external calls inside a stage. The `kind`/`op`/return-value shape is defined by the business caller — the framework just passes them through. The default caller is a no-op echo (`CallResult(kind=..., op=..., params=...)`)
+- The injected caller receives a 4th argument: `meta: CallMeta` (`task_id` /
+  `run_id` / `stage` / `attempt`) — callers that record traces/`llm_calls` can
+  correlate the execution context without extra plumbing. `CallMeta` lives in
+  `stageflow.runtime`. Stage functions are unaffected (`async def fn(ctx) -> dict`).
 - `ctx.logger`: `logging.Logger` (with the stage name already injected)
 
 ## State
@@ -83,15 +108,28 @@ await ctx.call(kind: str, op: str, params: dict | None = None) -> dict
 
 ```python
 store = CheckpointStore(storage: StorageBackend)
-cp: Checkpoint | None = store.load_compatible(task_id, dag)   # raises on hash mismatch
-store.save(cp)
-store.delete(task_id)
+store.save(cp)                                  # write checkpoint + latest pointer
+cp: Checkpoint | None = store.load(task_id, run_id)       # a specific run
+cp: Checkpoint | None = store.load_latest(task_id)        # via the latest pointer
+run_ids: list[str] = store.list_runs(task_id)             # what runs exist? (debug/cleanup)
+store.delete(task_id, run_id)                             # pointer is NOT updated on delete
+cp: Checkpoint | None = store.load_compatible(task_id, run_id, dag)
+# hash-checked load; run_id="" → load the task's latest run (load_latest sentinel)
 ```
 
-- `Checkpoint`: `task_id / dag_name / workflow_hash / stage_statuses / state / done_stages / producers`
+- Storage layout: each run is saved at `runs/{task_id}/{run_id}/checkpoint`;
+  every `save()` also updates a pointer file `runs/{task_id}/latest`
+  (`{"run_id": ...}`). Multiple runs of the same task never overwrite each
+  other, and "latest" does not rely on lexicographic ordering (UUID4 lex order
+  ≠ chronological). Deleting the run the pointer names → `load_latest` returns
+  `None` (clear "no checkpoint" signal — acceptable edge).
+- `Checkpoint` fields: `task_id / run_id / dag_name / workflow_hash /
+  stage_statuses / state / done_stages / producers`. `run_id` is required —
+  pre-v0.5 checkpoints (no `run_id`, old key `runs/{task_id}/checkpoint`) are
+  orphaned (hard cut, no legacy loader); within the v0.5 format, missing
+  optional fields load via defaults (forward-compatible schema).
 - `workflow_hash(dag)`: sha256 over stage names + dependencies + retries + timeout (function-body changes don't affect the hash)
-- `CheckpointMismatchError`: structure changed on resume → refuse to resume (delete the checkpoint or force `resume=False` to rerun)
-- Old checkpoints (no `producers` field) → resume falls back to permissive mode (treat as single-chain)
+- `CheckpointMismatchError`: structure changed on resume → refuse to resume (rerun with `resume=False`, or delete the run's checkpoint)
 
 ## `StorageBackend` (Protocol, business-injected)
 

@@ -72,11 +72,14 @@ Reference: the most mature engines (Airflow/Temporal/Prefect) likewise lack cros
 
 ### 4. Checkpoint + workflow hash
 
-- Each node persists to disk after completion (via `StorageBackend`)
+- Each node persists a checkpoint to storage after completion (via `StorageBackend`).
+  Checkpoints are **per-run**: stored at `runs/{task_id}/{run_id}/checkpoint`,
+  plus a pointer file `runs/{task_id}/latest` — one task can have many runs
+  (original / resume / rerun) without overwriting each other
 - Checkpoint includes `workflow_hash` (sha256 over stage names + dependencies + retries + timeout)
 - On resume, hash mismatch → `CheckpointMismatchError` (DAG structure changed, cannot resume; editing the function body alone does not affect the hash)
-- Checkpoint persists `producers` (key → producer stage, used to restore chained-overwrite judgment); older checkpoints lacking this field → resume falls back to permissive mode (treat as single-chain), backward compatible
-- Run completes → checkpoint auto-deleted
+- Checkpoint persists `producers` (key → producer stage, used to restore chained-overwrite judgment); within the current format, missing optional fields load with defaults (forward-tolerant schema). Pre-v0.5 checkpoints (no `run_id`, old key `runs/{task_id}/checkpoint`) are hard-cut orphaned — no legacy loader
+- On completion the checkpoint is **kept** (no auto-delete) — it is the task's latest run. `resume=True` on a completed run raises a done guard (no silent no-op); rerun with `resume=False` (fresh run_id)
 
 ### 5. Timeout = absolute deadline propagation
 
@@ -88,6 +91,39 @@ Reference: the most mature engines (Airflow/Temporal/Prefect) likewise lack cros
 
 - Value types limited to: `str`/`int`/`float`/`bool`/`None`/`list`/`dict` (json-serializable); `set`/`datetime`/`Path`/`bytes` raise
 - Before each stage: deep-copy into `ctx.state` (defensive — in-place mutation by the stage is a no-op)
+
+### 7. Run identity + recovery model (v0.5)
+
+Three-level identity, following industry precedents (Temporal WorkflowId/RunId,
+DBOS workflow_id, Airflow `dag_id + task_id + run_id + try_number`):
+
+- `task_id` — caller-supplied (or auto UUID4). The stable idempotency key across
+  retries/resumes. Validated at entry: non-empty, ≤ 128 chars,
+  `[A-Za-z0-9_.-]` only (no `/` — it is embedded in the storage key path)
+- `run_id` — stageflow-generated UUID4 per `run()` invocation. Resume reuses the
+  checkpoint's run_id (Continue-As-New); a rerun (`resume=False`) starts a new one
+- `attempt` — stageflow-injected 1-based int into `Ctx`; +1 per stage retry
+  (Airflow try_number / Celery retries)
+
+Recovery modes: stageflow `resume` is **real continuation** from the last
+checkpoint (state restored, completed nodes skipped, same run_id). "Restart from
+scratch + external cache" (`resume=False`) is the default the first integrations
+use for routine reruns — the caller's cache absorbs repeat costs — and `resume`
+is reserved for genuine continuation scenarios (interrupted run restart).
+
+Operational assumptions (deliberately not enforced in core):
+
+- **Single writer per task** — stageflow assumes one active writer per
+  `(task_id)`; concurrent writers are the business layer's concern (lease /
+  epoch). Two writers on the same `(task_id, run_id)` = last-writer-wins, no locking
+- **No cancellation sense** — stageflow is in-process: if the worker dies the run
+  dies (checkpoint up to the last completed node). Cancellation = business-side
+  kill + restart + `resume=True`
+- **Storage namespace** — checkpoints live under a `runs/` prefix
+  (`runs/{task_id}/{run_id}/checkpoint` + `runs/{task_id}/latest`). Callers
+  sharing an object store between stageflow checkpoints and business artifacts
+  keep the prefixes isolated (e.g. business artifacts under
+  `research/{task_id}/v{v}/`)
 
 ## Modules
 

@@ -6,7 +6,7 @@
 Zero runtime dependencies, no business system lock-in, no binding to any model/search/storage service.
 
 ```text
-Python 3.12+  |  MIT License  |  stdlib only  |  46 tests
+Python 3.12+  |  MIT License  |  stdlib only  |  60 tests
 ```
 
 stageflow tackles the most common layer of pipeline orchestration: **declarative DAG + sequential execution + retry on failure + checkpoint resume + regression testing**. It deliberately avoids macro orchestrator concerns (scheduler / UI / distributed execution) and never makes business decisions for you (model selection, audit loops, and prompt templates are business code).
@@ -131,7 +131,7 @@ CLI and complete examples (checkpoint resume / `ctx.call` / `TestPipe`) in
 - **DAG**: a statically declared, topologically ordered directed acyclic graph
 - **Stage**: `async def fn(ctx) -> dict`; `ctx.state` is read-only, return value is the only write path
 - **State**: must be json-serializable; conflict detection (parallel producers raise, chained evolution allowed)
-- **Checkpoint**: every node persists + workflow hash validated, auto-cleanup after run completes
+- **Checkpoint**: every node persists a per-run checkpoint (keyed `task_id + run_id`, `latest` pointer); resume continues the same run_id, refuses when the run is already complete (rerun = fresh run_id)
 - **ctx.call**: the sole entry point for external calls (`kind`/`op` defined by business code, framework is agnostic)
 - **TestPipe**: mock-based regression
 
@@ -161,7 +161,7 @@ See [`docs/en/architecture.md`](docs/en/architecture.md) and [`docs/en/api.md`](
 ## Testing
 
 ```bash
-pytest            # 46 tests (38 core + 8 storage_loader)
+pytest            # 60 tests (52 core + 8 storage_loader)
 ruff check .      # lint
 ```
 
