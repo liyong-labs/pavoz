@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import importlib.util
+import inspect
 import json
 import os
 import sys
@@ -130,6 +131,9 @@ async def _cmd_replay(args) -> int:
         patcher = getattr(mod, "patch", None)
         if patcher is None:
             print(f"patch 文件 {patch_path} 需暴露 patch(dag) -> None")
+            return 1
+        if inspect.iscoroutinefunction(patcher):
+            print(f"patch 文件 {patch_path} 的 patch 不能是 async — 用同步 def patch(dag)")
             return 1
         patcher(dag)
     runtime = Runtime(checkpoint_store=CheckpointStore(_storage()))
