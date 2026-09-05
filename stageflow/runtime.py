@@ -97,6 +97,9 @@ class Runtime:
         state: dict[str, Any] = {}
         done_stages: list[str] = []
         stage_statuses: dict[str, str] = {}
+        # v0.1.1 链式覆盖: state key → producer stage
+        producers: dict[str, str] = {}
+        _legacy_resume = False  # 旧 checkpoint 无 producers → 宽松模式 (视同单链)
 
         # ── resume: 加载 checkpoint ──
         if resume and self.checkpoint_store is not None:
@@ -106,11 +109,17 @@ class Runtime:
                 done_stages = list(cp.done_stages)
                 stage_statuses = dict(cp.stage_statuses)
                 result.state = state
+                if cp.producers:
+                    producers = dict(cp.producers)
+                else:
+                    _legacy_resume = bool(cp.state)  # 旧 cp: state key producer 未知
                 logger.info("task=%s resume: 已完成 %d stages", task_id, len(done_stages))
 
         # initial_state 只在无 checkpoint 时注入 (resume 时 initial_state 已含在 cp.state)
         if not done_stages and initial_state:
             state = merge_state({}, initial_state, "<init>")
+            for _k in initial_state:
+                producers[_k] = "<init>"
             result.state = state
 
         deep_validate_state(state)
@@ -132,8 +141,9 @@ class Runtime:
                     min(stage_deadline, run_deadline) if stage_deadline is not None else run_deadline
                 )
 
-            status, state, err = await self._run_stage(
-                dag, stage.fn, name, task_id, state, stage.retries, stage_deadline
+            status, state, err, producers = await self._run_stage(
+                dag, stage.fn, name, task_id, state, stage.retries, stage_deadline,
+                producers, _legacy_resume,
             )
             stage_statuses[name] = status
             result.stage_statuses = stage_statuses
@@ -142,11 +152,11 @@ class Runtime:
             if status == "failed":
                 result.status = "failed"
                 result.error = err
-                self._save_cp(task_id, dag, state, done_stages, stage_statuses)
+                self._save_cp(task_id, dag, state, done_stages, stage_statuses, producers)
                 return result
 
             done_stages.append(name)
-            self._save_cp(task_id, dag, state, done_stages, stage_statuses)
+            self._save_cp(task_id, dag, state, done_stages, stage_statuses, producers)
             logger.info("task=%s stage=%s done (len state=%d)", task_id, name, len(state))
 
         result.status = "done"
@@ -164,8 +174,10 @@ class Runtime:
         state: dict,
         retries: int,
         stage_deadline: float | None,
-    ) -> tuple[str, dict, str | None]:
-        """跑一个 stage (含 retry). 返 (status, new_state, error)."""
+        producers: dict[str, str],
+        legacy_resume: bool = False,
+    ) -> tuple[str, dict, str | None, dict]:
+        """跑一个 stage (含 retry). 返 (status, new_state, error, producers)."""
         attempt = 0
         while True:
             attempt += 1
@@ -187,13 +199,24 @@ class Runtime:
                         f"stage '{name}' 必须返回 dict, got {type(delta).__name__}"
                     )
                 deep_validate_state(delta)
-                new_state = merge_state(state, delta, name)
-                return "done", new_state, None
+                # v0.1.1 链式覆盖: producer 是当前 stage 传递上游 → 允许覆盖 (流水线演进)
+                if legacy_resume:
+                    _ow: set[str] = set(delta)  # 旧 cp 无 producer 记录 → 宽松 (视同单链)
+                else:
+                    _ow = {
+                        k for k in delta
+                        if k in state and producers.get(k)
+                        and dag.reachable(producers[k], name)
+                    }
+                new_state = merge_state(state, delta, name, overwrite_keys=_ow)
+                for _k in delta:
+                    producers[_k] = name
+                return "done", new_state, None, producers
 
             except (StageError, FatalError) as e:
                 # 业务错误 / 程序 bug: 不重试
                 logger.warning("task=%s stage=%s %s: %s", task_id, name, type(e).__name__, e)
-                return "failed", state, str(e)
+                return "failed", state, str(e), producers
             except (RetryableError, TimeoutError) as e:
                 if attempt <= retries:
                     backoff = min(2 ** (attempt - 1), 30)
@@ -204,10 +227,10 @@ class Runtime:
                     await asyncio.sleep(backoff)
                     continue
                 logger.warning("task=%s stage=%s retries 耗尽: %s", task_id, name, e)
-                return "failed", state, str(e)
+                return "failed", state, str(e), producers
             except Exception as e:  # 未知异常 → FatalError 语义
                 logger.exception("task=%s stage=%s 未预期异常", task_id, name)
-                return "failed", state, f"FatalError: {e}"
+                return "failed", state, f"FatalError: {e}", producers
 
     # ── timeout wrapper ─────────────────────────────────
     async def _with_timeout(self, fn, _req_unused, ctx, deadline, name, task_id):
@@ -221,7 +244,8 @@ class Runtime:
             raise TimeoutError(f"stage '{name}' 超时 ({timeout:.0f}s)") from None
 
     # ── checkpoint ──────────────────────────────────────
-    def _save_cp(self, task_id: str, dag: DAG, state: dict, done_stages: list, statuses: dict) -> None:
+    def _save_cp(self, task_id: str, dag: DAG, state: dict, done_stages: list,
+                 statuses: dict, producers: dict | None = None) -> None:
         if self.checkpoint_store is None:
             return
         try:
@@ -234,6 +258,7 @@ class Runtime:
                 stage_statuses=dict(statuses),
                 state=state,
                 done_stages=list(done_stages),
+                producers=dict(producers or {}),
             )
             self.checkpoint_store.save(cp)
         except Exception:

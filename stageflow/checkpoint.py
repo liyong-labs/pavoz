@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from .dag import DAG
@@ -42,6 +42,9 @@ class Checkpoint:
     stage_statuses: dict[str, str]
     state: dict[str, Any]
     done_stages: list[str]  # 按完成顺序
+    # v0.1.1: state key → producer stage. 链式覆盖判定用.
+    # 旧 checkpoint 无此字段 → {} → resume 走 legacy 宽松模式 (视同单链).
+    producers: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -51,6 +54,7 @@ class Checkpoint:
             "stage_statuses": self.stage_statuses,
             "state": self.state,
             "done_stages": self.done_stages,
+            "producers": self.producers,
         }
 
     @classmethod
@@ -62,6 +66,7 @@ class Checkpoint:
             stage_statuses=d["stage_statuses"],
             state=d["state"],
             done_stages=d["done_stages"],
+            producers=dict(d.get("producers") or {}),
         )
 
 

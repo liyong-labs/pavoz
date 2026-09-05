@@ -129,6 +129,26 @@ class DAG:
             raise CycleError(f"DAG {self.name} 含环, 环内节点: {cyclic}")
         return order
 
+    def reachable(self, upstream: str, downstream: str) -> bool:
+        """upstream 是否 downstream 的传递依赖 (含直接 depends_on).
+
+        链式覆盖判定用: downstream stage 覆盖 upstream producer 写的 state key
+        是数据流水线演进的明确意图 (v0.1.1), 平行 producer 才 raise 冲突.
+        """
+        if upstream == downstream:
+            return True
+        seen: set[str] = set()
+        queue = [downstream]
+        while queue:
+            n = queue.pop(0)
+            for dep in self._stages[n].depends_on:
+                if dep == upstream:
+                    return True
+                if dep not in seen:
+                    seen.add(dep)
+                    queue.append(dep)
+        return False
+
     # ── Cycle 检测 (Tarjan SCC) ─────────────────────────
     def _detect_cycle(self) -> None:
         """Tarjan SCC: 任一 SCC 大小 >1 或自环 → CycleError."""

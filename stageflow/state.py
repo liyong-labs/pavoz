@@ -102,13 +102,19 @@ def deep_validate_state(state: dict) -> None:
         _validate_value(k, v)
 
 
-def merge_state(prev: dict, delta: dict, stage_name: str) -> dict:
+def merge_state(
+    prev: dict, delta: dict, stage_name: str, overwrite_keys: set[str] | None = None
+) -> dict:
     """shallow merge + 冲突检测: stage 不能覆盖已存在的 key.
 
     返回新 dict (不 mutate prev). prev key 与 delta key 重叠 → StateConflictError.
-    这是 v1 语义: 每个 state key 只有一个 producer.
+    默认语义 (v1): 每个 state key 只有一个 producer.
+    v0.1.1 链式演进: overwrite_keys 内的 key 允许覆盖 — runtime 已确认其 producer
+    是当前 stage 的传递上游 (数据流水线: search→filter→compress 逐级更新同一产物).
+    平行 producer (无依赖链) 覆盖仍 raise.
     """
-    conflicts = [k for k in delta if k in prev]
+    _ow = overwrite_keys or set()
+    conflicts = [k for k in delta if k in prev and k not in _ow]
     if conflicts:
         raise StateConflictError(
             f"stage '{stage_name}' 试图写已存在的 state key: {conflicts}. "

@@ -153,3 +153,43 @@ async def test_stage_returning_non_dict_fails():
 
     result = await Runtime().run(dag, "t10")
     assert result.status == "failed"
+
+
+async def test_chain_overwrite_allowed_downstream():
+    """v0.1.1 链式演进: 下游覆盖传递上游 producer 的 key 合法 (流水线模式)."""
+    dag = DAG("chain_evolve")
+
+    @dag.stage()
+    async def s_search(ctx):
+        return {"unique_sources": ["u1", "u2"]}
+
+    @dag.stage(depends_on=["s_search"])
+    async def s_filter(ctx):
+        return {"unique_sources": ["u1"]}  # 演进同一产物
+
+    @dag.stage(depends_on=["s_filter"])
+    async def s_compress(ctx):
+        return {"unique_sources": ["u1"], "outline": "o1"}
+
+    result = await Runtime().run(dag, "t11")
+    assert result.status == "done", result.error
+    assert result.state["unique_sources"] == ["u1"]
+    assert result.state["outline"] == "o1"
+
+
+async def test_parallel_producer_conflict_still_raises():
+    """平行 producer (无依赖链) 覆盖仍 raise — v1 冲突语义保留."""
+    dag = DAG("parallel_conflict")
+
+    @dag.stage()
+    async def s_a(ctx):
+        return {"x": 1}
+
+    @dag.stage()  # 与 s_a 平行, 不依赖
+    async def s_b(ctx):
+        return {"x": 2}
+
+    result = await Runtime().run(dag, "t12")
+    assert result.status == "failed"
+    assert "s_b" in (result.error or "")
+    assert "x" in (result.error or "")
