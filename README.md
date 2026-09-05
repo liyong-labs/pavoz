@@ -54,7 +54,7 @@ async def s_save(ctx):
 | **断点续跑** | 每 node 完成即 checkpoint; resume 时校验 `workflow_hash` (改函数体不影响, 改结构拒续跑) |
 | **链式数据演进** | 下游 stage 可覆盖传递上游 producer 的 key (流水线模式); 平行 producer 冲突显式报错 |
 | **确定性回归** | `TestPipe` — mock 任意 stage 输出跑全图, prompt/stage 改动有保护网 |
-| **与业务解耦** | 存储 (`StorageBackend`)、任务表 (`TaskTrigger`)、外部调用 (`ctx.call` caller) 全部 Protocol, 业务侧注入 |
+| **与业务解耦** | 存储 (`StorageBackend`)、外部调用 (`ctx.call` caller) 全部 Protocol, 业务侧注入 |
 | **零依赖** | core 仅 Python 标准库; 不发散到 psycopg/redis/boto3 等 |
 
 ## 安装

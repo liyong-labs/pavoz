@@ -45,6 +45,21 @@
 - **CLI**: `run / trace / state / inspect` (v0.1 面)
 - 38 tests, ruff clean, 零运行时依赖 (stdlib only)
 
+## [0.1.2] — 2026-09-05
+
+### Removed (ponytail cleanup)
+
+- `trigger.py` (`TaskTrigger` / `TaskRef` — zero callers)
+- `Ctx.log` / `Ctx.remaining_seconds` (zero callers)
+- `Stage.metadata` field + `@dag.stage` `**metadata` (zero callers)
+- `DAG.entrypoints` / `DAG.depth_of` (zero callers)
+- CLI `inspect` subcommand (空壳 — "v0.1 无 call 级 trace" 提示)
+
+### Internal
+
+- API 冻结面 zero change: `@dag.stage` / `Runtime.run` / `Ctx` / `State` / 异常 / Checkpoint 全部不动
+- 38 tests 全绿, ruff 0 violation
+
 ## [Unreleased]
 
 - (规划) `replay --prompt-patch` (v0.2): checkpoint 加载 + 单 stage 重放
