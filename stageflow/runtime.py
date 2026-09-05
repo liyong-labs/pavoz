@@ -159,6 +159,9 @@ class Runtime:
         stage_statuses: dict[str, str] = {}
         # v0.1.1 链式覆盖: state key → producer stage
         producers: dict[str, str] = {}
+        # v0.5.1 (M2): 每 stage return delta (按完成序) + run 初始 state — M3 replay 重建用
+        stage_deltas: dict[str, dict] = {}
+        initial_state_saved: dict = {}
 
         # ── resume: 恢复 checkpoint 状态 ──
         if cp is not None:
@@ -174,6 +177,8 @@ class Runtime:
             done_stages = list(cp.done_stages)
             stage_statuses = dict(cp.stage_statuses)
             producers = dict(cp.producers)
+            stage_deltas = dict(cp.stage_deltas)      # resume 续收集
+            initial_state_saved = dict(cp.initial_state)
             result.state = state
             logger.info(
                 "task=%s run=%s resume: 已完成 %d stages",
@@ -183,6 +188,7 @@ class Runtime:
         # initial_state 仅在无已完成 stage 时注入 (resume 且 cp 已有完成 stage → 已含在 cp.state)
         if not done_stages and initial_state:
             state = merge_state({}, initial_state, "<init>")
+            initial_state_saved = dict(initial_state)  # 存初始 (rebuild 需要)
             for _k in initial_state:
                 producers[_k] = "<init>"
             result.state = state
@@ -206,7 +212,7 @@ class Runtime:
                     min(stage_deadline, run_deadline) if stage_deadline is not None else run_deadline
                 )
 
-            status, new_state, err, producers = await self._run_stage(
+            status, new_state, err, producers, delta = await self._run_stage(
                 dag, stage.fn, name, task_id, run_id, state, stage.retries,
                 stage_deadline, producers,
             )
@@ -218,17 +224,91 @@ class Runtime:
             if status == "failed":
                 result.status = "failed"
                 result.error = err
-                self._save_cp(task_id, run_id, dag, state, done_stages, stage_statuses, producers)
+                self._save_cp(task_id, run_id, dag, state, done_stages, stage_statuses,
+                              producers, stage_deltas, initial_state_saved)
                 return result
 
+            if delta:
+                stage_deltas[name] = delta  # 收集 (完成序)
             done_stages.append(name)
-            self._save_cp(task_id, run_id, dag, state, done_stages, stage_statuses, producers)
+            self._save_cp(task_id, run_id, dag, state, done_stages, stage_statuses,
+                          producers, stage_deltas, initial_state_saved)
             logger.info(
                 "task=%s run=%s stage=%s done (len state=%d)",
                 task_id, run_id[:8], name, len(state),
             )
 
         result.status = "done"
+        return result
+
+    # ── 单 stage 重放 (M3 调试) ─────────────────────────
+    async def run_stage(
+        self,
+        dag: DAG,
+        task_id: str,
+        stage_name: str,
+    ) -> RunResult:
+        """重放单 stage: 用已保存 cp 重建其执行前 state, 只跑该 stage.
+
+        调试用 (改 prompt/参数后秒级看效果, 不重跑前序 stage).
+        - 不落 checkpoint / 不动 latest pointer (A6/A7: 防 replay 污染 resume 目标)
+        - ctx.run_id = 新 UUID4 (临时重放 run 标识, 只活在本次调用)
+        - stage 的 depends_on 未全完成 → 无法重建完整输入 → 明确报错
+
+        Args:
+            dag: DAG (须与 cp 的 workflow_hash 一致, 否则 CheckpointMismatchError)
+            task_id: 已有 checkpoint 的 task
+            stage_name: 要重放的 stage (必须已完成过 — 才有 delta 可重建)
+        """
+        if self.checkpoint_store is None:
+            raise RuntimeError("run_stage requires checkpoint_store")
+        _validate_task_id(task_id)
+        dag.validate()
+
+        cp = self.checkpoint_store.load_latest(task_id)
+        if cp is None:
+            raise RuntimeError(
+                f"task_id={task_id} 无 checkpoint, 不能重放. 先 run 一次."
+            )
+        cur_hash = workflow_hash(dag)
+        if cp.workflow_hash != cur_hash:
+            raise CheckpointMismatchError(
+                f"task {task_id} run {cp.run_id[:8]} checkpoint 的 DAG hash "
+                f"{cp.workflow_hash} ≠ 当前 DAG hash {cur_hash}. DAG 结构变了, "
+                f"不能重放 (改依赖/retries/timeout 会变 hash)."
+            )
+        stage = dag.stages.get(stage_name)
+        if stage is None:
+            raise KeyError(f"stage '{stage_name}' 不在 DAG {dag.name} 里")
+
+        # 重建 stage 前 state; stage 必须已完成过 (否则 deltas 不齐 → KeyError)
+        state = cp.rebuild_state_before(stage_name)
+
+        run_id = new_id()  # 临时重放 run; 不落 cp
+        result = RunResult(task_id=task_id, dag_name=dag.name, run_id=run_id)
+        result.state = state
+
+        run_deadline = time.time() + self.default_timeout if self.default_timeout else None
+        stage_deadline: float | None = None
+        if stage.timeout is not None:
+            stage_deadline = time.time() + stage.timeout
+        if run_deadline is not None:
+            stage_deadline = (
+                min(stage_deadline, run_deadline) if stage_deadline is not None
+                else run_deadline
+            )
+
+        status, new_state, err, _producers, _delta = await self._run_stage(
+            dag, stage.fn, stage_name, task_id, run_id, state, stage.retries,
+            stage_deadline, dict(cp.producers),
+        )
+        result.state = new_state
+        result.stage_statuses = {stage_name: status}
+        if status == "failed":
+            result.status = "failed"
+            result.error = err
+        else:
+            result.status = "done"
         return result
 
     # ── 单 stage ────────────────────────────────────────
@@ -243,9 +323,10 @@ class Runtime:
         retries: int,
         stage_deadline: float | None,
         producers: dict[str, str],
-    ) -> tuple[str, dict, str | None, dict]:
-        """跑一个 stage (含 retry). 返 (status, new_state, error, producers).
+    ) -> tuple[str, dict, str | None, dict, dict | None]:
+        """跑一个 stage (含 retry). 返 (status, new_state, error, producers, delta).
 
+        delta = stage 的 return dict (成功, 可能 {}), 失败 = None.
         ctx.attempt = 1-based 当前尝试次数, RetryableError 重试时 +1.
         """
         attempt = 0
@@ -280,7 +361,7 @@ class Runtime:
                 new_state = merge_state(state, delta, name, overwrite_keys=_ow)
                 for _k in delta:
                     producers[_k] = name
-                return "done", new_state, None, producers
+                return "done", new_state, None, producers, delta
 
             except (StageError, FatalError) as e:
                 # 业务错误 / 程序 bug: 不重试
@@ -288,7 +369,7 @@ class Runtime:
                     "task=%s run=%s stage=%s %s: %s",
                     task_id, run_id[:8], name, type(e).__name__, e,
                 )
-                return "failed", state, str(e), producers
+                return "failed", state, str(e), producers, None
             except (RetryableError, TimeoutError) as e:
                 if attempt <= retries:
                     backoff = min(2 ** (attempt - 1), 30)
@@ -303,10 +384,10 @@ class Runtime:
                     "task=%s run=%s stage=%s retries 耗尽: %s",
                     task_id, run_id[:8], name, e,
                 )
-                return "failed", state, str(e), producers
+                return "failed", state, str(e), producers, None
             except Exception as e:  # 未知异常 → FatalError 语义
                 logger.exception("task=%s run=%s stage=%s 未预期异常", task_id, run_id[:8], name)
-                return "failed", state, f"FatalError: {e}", producers
+                return "failed", state, f"FatalError: {e}", producers, None
 
     # ── timeout wrapper ─────────────────────────────────
     async def _with_timeout(self, fn, _req_unused, ctx, deadline, name, task_id):
@@ -321,7 +402,9 @@ class Runtime:
 
     # ── checkpoint ──────────────────────────────────────
     def _save_cp(self, task_id: str, run_id: str, dag: DAG, state: dict,
-                 done_stages: list, statuses: dict, producers: dict | None = None) -> None:
+                 done_stages: list, statuses: dict, producers: dict | None = None,
+                 stage_deltas: dict | None = None,
+                 initial_state: dict | None = None) -> None:
         if self.checkpoint_store is None:
             return
         try:
@@ -334,6 +417,8 @@ class Runtime:
                 state=state,
                 done_stages=list(done_stages),
                 producers=dict(producers or {}),
+                initial_state=dict(initial_state or {}),
+                stage_deltas=dict(stage_deltas or {}),
             )
             self.checkpoint_store.save(cp)
         except Exception:
