@@ -94,13 +94,23 @@ async def test_pipeline_with_mocked_search():
     assert result.state["count"] == 1
 ```
 
-## CLI commands (v0.1)
+## CLI commands (v0.5.1)
+
+Every `run` persists a checkpoint after each completed stage (single runs
+included, v0.5.1) — `trace`/`state`/`replay` work on any CLI run:
 
 | Command | Purpose |
 |---|---|
-| `run <dag.py> [--task-id X] [--input JSON] [--resume]` | Run a DAG |
+| `run <dag.py> [--task-id X] [--input JSON] [--resume]` | Run a DAG (persists checkpoints per stage) |
 | `trace --task-id X` | Inspect checkpoint / stage records |
 | `state --task-id X [--key K]` | Inspect state snapshot |
+| `replay <dag.py> --task-id X --stage S [--patch P.py]` | Replay one stage on its checkpoint-rebuilt input (upstream stages are not re-run) |
+
+Replay example — after tuning a stage's prompt/params, rerun only `s_process`:
+
+```bash
+python -m stageflow replay dags/my_pipeline.py --task-id task-1 --stage s_process
+```
 
 Further reading:
 - [architecture.md](architecture.md) — architecture and design decisions

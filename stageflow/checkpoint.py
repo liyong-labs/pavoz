@@ -98,6 +98,14 @@ class Checkpoint:
 
         Returns: 新 dict (不 mutate).
         """
+        return self.rebuild_state_and_producers()[0]
+
+    def rebuild_state_and_producers(self) -> tuple[dict[str, Any], dict[str, str]]:
+        """重建全量 merge 后的 (state, producers) — producers 为执行时点值.
+
+        未完成但依赖已完成的 stage 重放用 (run_stage): 与 rebuild_state 同一次
+        遍历收集 producers (initial keys → "<init>"; merged delta 的 keys → 其 stage).
+        """
         return self._rebuild_state()
 
     def rebuild_state_before(self, stage_name: str) -> dict[str, Any]:
@@ -110,6 +118,17 @@ class Checkpoint:
 
         Returns: 新 dict (不 mutate).
         """
+        return self.rebuild_state_and_producers_before(stage_name)[0]
+
+    def rebuild_state_and_producers_before(
+        self, stage_name: str
+    ) -> tuple[dict[str, Any], dict[str, str]]:
+        """重建 stage 执行前的 (state, producers) — producers 按执行时点重建.
+
+        cp.producers 是终态 (chain-overwrite 后指向最后写者); 重放中间 stage 的
+        覆盖判定必须用"该 stage 执行时点"的 producer — 这里随 state 重建同步
+        收集: initial keys → "<init>", 已 merge delta (stage X) 的 keys → X.
+        """
         if stage_name not in self.done_stages and stage_name not in self.stage_deltas:
             raise KeyError(
                 f"stage '{stage_name}' 不在 cp 的完成记录里 "
@@ -117,16 +136,23 @@ class Checkpoint:
             )
         return self._rebuild_state(stop_at=stage_name)
 
-    def _rebuild_state(self, stop_at: str | None = None) -> dict[str, Any]:
-        """initial + done_stages 完成序 deltas 的 merge. stop_at 命中断 (不含)."""
+    def _rebuild_state(self, stop_at: str | None = None) -> tuple[dict[str, Any], dict[str, str]]:
+        """initial + done_stages 完成序 deltas 的 merge + 执行时点 producers.
+
+        stop_at 命中断 (不含). Returns: (state, producers) — producers 记录每个
+        merged delta 的 keys → 其 stage; initial keys → "<init>".
+        """
         rebuilt = dict(self.initial_state)
+        producers = {k: "<init>" for k in self.initial_state}
         for done in self.done_stages:
             if done == stop_at:
                 break
             delta = self.stage_deltas.get(done)
             if delta:
                 rebuilt.update(delta)
-        return rebuilt
+                for k in delta:
+                    producers[k] = done
+        return rebuilt, producers
 
 
 class CheckpointStore:

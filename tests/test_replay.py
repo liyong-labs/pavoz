@@ -181,3 +181,53 @@ async def test_run_stage_deps_incomplete_raises():
         # s_b 失败 → s_c 的依赖 [s_b] 未完成 → 明确错误
         with pytest.raises(RuntimeError, match="依赖未完成"):
             await runtime.run_stage(dag, task_id="t-1", stage_name="s_c")
+
+
+def _dag_chain_overwrite():
+    """chain-overwrite DAG: s_a→a / s_b→b / s_c→a=99 (a 的终态 producer = s_c)."""
+    dag = DAG("d")
+
+    @dag.stage()
+    async def s_a(ctx):
+        return {"a": 1}
+
+    @dag.stage(depends_on=["s_a"])
+    async def s_b(ctx):
+        return {"b": ctx.state["a"] + 1}
+
+    @dag.stage(depends_on=["s_b"])
+    async def s_c(ctx):
+        return {"a": 99}  # chain-overwrite: 覆盖 s_a 写的 a
+
+    return dag
+
+
+async def test_run_stage_chain_overwrite_uses_rebuilt_producers():
+    """chain-overwrite DAG 重放中间 stage: 覆盖判定用执行时点 producer (非终态).
+
+    原始 run: s_a→a=1 / s_b→b=2 / s_c→a=99 → cp 终态 producers["a"]="s_c".
+    重放 s_b 且新实现改写 a: s_b 执行时 a 的 producer 是 s_a (其祖先) → 允许覆盖,
+    必须 done. 若误用终态 producers (a→s_c), reachable("s_c","s_b")=False →
+    误报 StateConflictError (reviewer live-reproduced bug).
+    """
+    dag = _dag_chain_overwrite()
+    with tempfile.TemporaryDirectory() as tmp:
+        store = CheckpointStore(FileStorage(root_dir=tmp))
+        runtime = Runtime(checkpoint_store=store)
+        await runtime.run(dag, task_id="t-1")
+        cp = store.load_latest("t-1")
+        assert cp.producers["a"] == "s_c"  # 确认 DAG 形状: 终态 producer 是后写者
+
+        original = dag.stages["s_b"].fn
+
+        async def s_b_v2(ctx):  # 模拟调 prompt: 新实现额外改写 a
+            return {"b": ctx.state["a"] + 1, "a": ctx.state["a"] * 10}
+
+        dag.stages["s_b"].fn = s_b_v2
+        try:
+            result = await runtime.run_stage(dag, task_id="t-1", stage_name="s_b")
+        finally:
+            dag.stages["s_b"].fn = original
+
+        assert result.status == "done"
+        assert result.state == {"a": 10, "b": 2}

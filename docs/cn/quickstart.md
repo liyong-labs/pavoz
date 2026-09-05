@@ -94,13 +94,23 @@ async def test_pipeline_with_mocked_search():
     assert result.state["count"] == 1
 ```
 
-## CLI 命令 (v0.1)
+## CLI 命令 (v0.5.1)
+
+每次 `run` 都会在每 stage 完成后落 checkpoint (单跑也算, v0.5.1) —
+`trace`/`state`/`replay` 对任意 CLI run 直接可用:
 
 | 命令 | 用途 |
 |---|---|
-| `run <dag.py> [--task-id X] [--input JSON] [--resume]` | 跑 DAG |
+| `run <dag.py> [--task-id X] [--input JSON] [--resume]` | 跑 DAG (每 stage 落 checkpoint) |
 | `trace --task-id X` | 看 checkpoint / stage 记录 |
 | `state --task-id X [--key K]` | 看 state snapshot |
+| `replay <dag.py> --task-id X --stage S [--patch P.py]` | 在重建输入上重放单 stage (前序 stage 不重跑) |
+
+重放示例 — 改完某个 stage 的 prompt/参数后, 只重跑 `s_process`:
+
+```bash
+python -m stageflow replay dags/my_pipeline.py --task-id task-1 --stage s_process
+```
 
 更多参考:
 - [architecture.md](architecture.md) — 架构与设计决策

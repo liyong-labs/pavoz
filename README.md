@@ -134,11 +134,11 @@ Every `run` persists per-stage checkpoints (single runs included, v0.5.1) to
 replay/trace/state work on CLI runs:
 
 ```bash
-python -m stageflow run dags/demo.py --task-id demo-1 --input '{"name": "stageflow"}'
-python -m stageflow replay dags/demo.py --task-id demo-1 --stage s_upper
+python -m stageflow run dags/demo.py --task-id demo-1 --input '{"query": "北方华创"}'
+python -m stageflow replay dags/demo.py --task-id demo-1 --stage s_compose
 #   ^-- replay one stage on its checkpoint-rebuilt input (upstream stages are not re-run)
 python -m stageflow trace --task-id demo-1
-python -m stageflow state --task-id demo-1 --key shout
+python -m stageflow state --task-id demo-1 --key saved
 ```
 
 `replay` also accepts `--patch P.py` (a module exposing `patch(dag) -> None`)

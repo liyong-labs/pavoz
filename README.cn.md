@@ -135,11 +135,11 @@ English version: [`docs/en/quickstart.md`](docs/en/quickstart.md).
 对 CLI 产物直接可用:
 
 ```bash
-python -m stageflow run dags/demo.py --task-id demo-1 --input '{"name": "stageflow"}'
-python -m stageflow replay dags/demo.py --task-id demo-1 --stage s_upper
+python -m stageflow run dags/demo.py --task-id demo-1 --input '{"query": "北方华创"}'
+python -m stageflow replay dags/demo.py --task-id demo-1 --stage s_compose
 #   ^-- 在重建的输入上重放单 stage (前序 stage 不重跑)
 python -m stageflow trace --task-id demo-1
-python -m stageflow state --task-id demo-1 --key shout
+python -m stageflow state --task-id demo-1 --key saved
 ```
 
 `replay` 还支持 `--patch P.py` (模块暴露 `patch(dag) -> None`) — 重放前

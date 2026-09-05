@@ -255,6 +255,8 @@ class Runtime:
         - ctx.run_id = 新 UUID4 (临时重放 run 标识, 只活在本次调用)
         - stage 已完成过 → rebuild_state_before; 未完成但依赖已全完成
           (如原始 run 里失败的 stage) → rebuild_state; 依赖未完成 → 明确报错
+        - 覆盖判定用"执行时点 producers" (随 state 重建, 不用 cp 终态
+          producers) — chain-overwrite 下重放中间 stage 改写上游 key 不误报冲突
 
         Args:
             dag: DAG (须与 cp 的 workflow_hash 一致, 否则 CheckpointMismatchError)
@@ -288,10 +290,12 @@ class Runtime:
                 "checkpoint 无 stage_deltas — v0.5.0 旧版产物, 请重新 run 一次再重放"
             )
 
-        # 重建 stage 执行前 state: 已完成 → before; 未完成但依赖已全完成
-        # (原始 run 失败/中断的 stage) → 全量 merge done deltas (F2)
+        # 重建 stage 执行前 state + 执行时点 producers (覆盖判定用 — 不是终态
+        # cp.producers: chain-overwrite 下终态 producer 是后写者, 会误拒中间重放):
+        # 已完成 → before; 未完成但依赖已全完成 (原始 run 失败/中断的 stage) →
+        # 全量 merge done deltas (F2)
         if stage_name in cp.done_stages:
-            state = cp.rebuild_state_before(stage_name)
+            state, producers = cp.rebuild_state_and_producers_before(stage_name)
         else:
             missing = [d for d in stage.depends_on if d not in cp.done_stages]
             if missing:
@@ -299,7 +303,7 @@ class Runtime:
                     f"stage '{stage_name}' 的依赖未完成 ({missing}), 无法重建其执行前 "
                     f"state. 先跑完整 run 或 resume."
                 )
-            state = cp.rebuild_state()
+            state, producers = cp.rebuild_state_and_producers()
 
         run_id = new_id()  # 临时重放 run; 不落 cp
         result = RunResult(task_id=task_id, dag_name=dag.name, run_id=run_id)
@@ -317,7 +321,7 @@ class Runtime:
 
         status, new_state, err, _producers, _delta = await self._run_stage(
             dag, stage.fn, stage_name, task_id, run_id, state, stage.retries,
-            stage_deadline, dict(cp.producers),
+            stage_deadline, producers,
         )
         result.state = new_state
         result.stage_statuses = {stage_name: status}
