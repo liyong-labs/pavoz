@@ -110,8 +110,11 @@ class CheckpointStore:
 
     def save(self, cp: Checkpoint) -> None:
         self.storage.put(self._key(cp.task_id, cp.run_id), cp.to_dict())
-        # 指针: 永远指向最后保存的 run (uuid4 字典序 ≠ 时间序, 不能靠排序)
-        self.storage.put(self._latest_key(cp.task_id), {"run_id": cp.run_id})
+        # 指针: 永远指向最后保存的 run (uuid4 字典序 ≠ 时间序, 不能靠排序).
+        # legacy lane (run_id="") 不写指针 — 防止旧形态运行时把指针污染成 "",
+        # 让 load_latest / Task 2 resume 误入 legacy 单 cp.
+        if cp.run_id:
+            self.storage.put(self._latest_key(cp.task_id), {"run_id": cp.run_id})
 
     def load(self, task_id: str, run_id: str = "") -> Checkpoint | None:
         """读指定 run 的 checkpoint. run_id="" → legacy task 级单 cp."""
@@ -158,15 +161,16 @@ class CheckpointStore:
 
         run_id="" → 加载该 task 最新 run (load_latest).
         (兼容 v0.5 过渡: 旧 2-参调用 load_compatible(task_id, dag) — 第二参是 DAG —
-        视同 run_id="", Task 2 重写 runtime 后可删此分支.)
+        直接读 legacy task 级单 cp; 升级边界上旧 cp 没有指针文件, 不能走 load_latest.
+        Task 2 重写 runtime 后可删此分支.)
         """
         if dag is None:
             if isinstance(run_id, DAG):  # 旧 2-参形态: (task_id, dag)
                 dag = run_id
-                run_id = ""
+                cp = self.load(task_id, "")  # legacy 直读
             else:
                 raise TypeError("load_compatible 缺 dag 参数")
-        if run_id:
+        elif run_id:
             cp = self.load(task_id, run_id)
         else:
             cp = self.load_latest(task_id)

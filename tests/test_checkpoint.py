@@ -65,9 +65,11 @@ async def test_resume_skips_done_stages(tmp_path):
     from stageflow.checkpoint import workflow_hash as wh
 
     store.save(Checkpoint(
-        task_id="t-cp", run_id="run-cp", dag_name="cp", workflow_hash=wh(dag),
+        task_id="t-cp", dag_name="cp", workflow_hash=wh(dag),
         stage_statuses={"s_a": "done"}, state={"a": 1}, done_stages=["s_a"],
     ))
+    # 上面 run_id 留空 = legacy 单 cp lane — resume 走旧 2-参 load_compatible,
+    # 直读 legacy key, 不用指针 (旧 cp 无指针文件, 升级边界必须能续跑).
 
     # resume: 应只跑 s_b, 不重跑 s_a
     result = await rt.run(dag, "t-cp", resume=True)
@@ -93,7 +95,7 @@ async def test_resume_hash_mismatch_rejected(tmp_path):
     from stageflow.checkpoint import workflow_hash as wh
 
     store.save(Checkpoint(
-        task_id="t-mid", run_id="run-mid", dag_name="cp", workflow_hash=wh(dag1),
+        task_id="t-mid", dag_name="cp", workflow_hash=wh(dag1),
         stage_statuses={"s_a": "done"}, state={"a": 1}, done_stages=["s_a"],
     ))
     dag2 = DAG("cp")
