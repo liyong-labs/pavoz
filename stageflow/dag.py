@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable, Coroutine
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 __all__ = ["DAG", "CycleError", "NodeFn", "Stage", "UnknownDepError"]
@@ -41,7 +41,6 @@ class Stage:
     depends_on: tuple[str, ...]
     retries: int = 0            # RetryableError 可重试次数
     timeout: float | None = None  # 本 stage 硬超时 (秒); None = 继承 run 的 absolute deadline
-    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class DAG:
@@ -62,7 +61,6 @@ class DAG:
         depends_on: list[str] | tuple[str, ...] | None = None,
         retries: int = 0,
         timeout: float | None = None,
-        **metadata: Any,
     ) -> Callable[[NodeFn], NodeFn]:
         """@dag.stage() 装饰器. stage fn 签名: async def fn(req, ctx) -> dict."""
 
@@ -80,7 +78,6 @@ class DAG:
                 depends_on=tuple(depends_on or ()),
                 retries=retries,
                 timeout=timeout,
-                metadata=metadata,
             )
             self._definition_order.append(name)
             return fn
@@ -91,11 +88,6 @@ class DAG:
     @property
     def stages(self) -> dict[str, Stage]:
         return dict(self._stages)
-
-    @property
-    def entrypoints(self) -> list[str]:
-        """无依赖的 stage (拓扑排序起点)."""
-        return [n for n in self._definition_order if not self._stages[n].depends_on]
 
     # ── 校验 ────────────────────────────────────────────
     def validate(self) -> None:
@@ -189,23 +181,6 @@ class DAG:
                 _strongconnect(node)
         if result:
             raise CycleError(f"DAG {self.name} 含环: {result}")
-
-    # ── 拓扑序的依赖深度 (sub_dag 用不上, 但 info 有用) ─
-    def depth_of(self, name: str) -> int:
-        """stage 在拓扑序里的深度 (最长依赖链长度)."""
-        if name not in self._stages:
-            raise KeyError(name)
-        cache: dict[str, int] = {}
-
-        def _d(n: str) -> int:
-            if n in cache:
-                return cache[n]
-            deps = self._stages[n].depends_on
-            d = 0 if not deps else 1 + max(_d(x) for x in deps)
-            cache[n] = d
-            return d
-
-        return _d(name)
 
     def __repr__(self) -> str:
         return f"<DAG {self.name} stages={list(self._stages)}>"

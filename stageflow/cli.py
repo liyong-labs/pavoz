@@ -103,15 +103,6 @@ async def _cmd_state(args) -> int:
     return 0
 
 
-async def _cmd_inspect(args) -> int:
-    """查某次 wrapper call 的详情 (trace 数据存哪由 CallRecorder 决定, v0.1 无 call 级 trace)."""
-    print(
-        "inspect: v0.1 无 call 级 trace (CallRecorder Protocol 待 ai_writer adapter 接入后可用). "
-        "先看 state/checkpoint."
-    )
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="stageflow", description="LLM/SE/Extract 流程编排")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -131,11 +122,6 @@ def main(argv: list[str] | None = None) -> int:
     p_state.add_argument("--task-id", required=True)
     p_state.add_argument("--key", default=None)
     p_state.set_defaults(fn=_cmd_state)
-
-    p_inspect = sub.add_parser("inspect", help="查 wrapper call 详情 (v0.2)")
-    p_inspect.add_argument("--task-id", required=True)
-    p_inspect.add_argument("--call-id", default=None)
-    p_inspect.set_defaults(fn=_cmd_inspect)
 
     args = parser.parse_args(argv)
     return asyncio.run(args.fn(args))

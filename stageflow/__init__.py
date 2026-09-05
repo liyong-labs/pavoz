@@ -19,7 +19,6 @@ from .runtime import CallResult, Ctx, Runtime
 from .state import ReadOnlyStateView, StateConflictError
 from .storage import FileStorage, StorageBackend
 from .testing import TestPipe
-from .trigger import TaskRef, TaskTrigger
 from .types import FatalError, RetryableError, RunResult, StageError
 
 __version__ = "0.1.1"
@@ -42,10 +41,14 @@ __all__ = [
     "StageError",
     "StateConflictError",
     "StorageBackend",
-    "TaskRef",
-    "TaskTrigger",
     "TestPipe",
     "UnknownDepError",
     "__version__",
     "workflow_hash",
 ]
+
+
+if __name__ == "__main__":
+    from .cli import main
+
+    raise SystemExit(main())

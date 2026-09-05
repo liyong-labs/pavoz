@@ -61,17 +61,6 @@ class Ctx:
         """
         return await self.caller(kind, op, params or {})
 
-    def log(self, msg: str, *, level: str = "INFO", **meta) -> None:
-        """业务日志 (JSON trace 的一部分). level: DEBUG/INFO/WARN/ERROR."""
-        lvl = getattr(logging, level.upper(), logging.INFO)
-        self.logger.log(lvl, "task=%s stage=%s %s %s", self.task_id, self.stage_name, msg, meta)
-
-    def remaining_seconds(self) -> float | None:
-        """absolute deadline 剩余秒数. 无 deadline 返 None."""
-        if self.deadline is None:
-            return None
-        return max(0.0, self.deadline - time.time())
-
 
 @dataclass
 class Runtime:

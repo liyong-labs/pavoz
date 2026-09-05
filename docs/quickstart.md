@@ -96,4 +96,3 @@ async def test_pipeline_with_mocked_search():
 | `run <dag.py> [--task-id X] [--input JSON] [--resume]` | 跑 DAG |
 | `trace --task-id X` | 看 checkpoint / stage 记录 |
 | `state --task-id X [--key K]` | 看 state snapshot |
-| `inspect --task-id X` | wrapper call 详情 (v0.2, adapter 接入后) |
