@@ -161,7 +161,7 @@ class Checkpoint:
         def _size(o: Any) -> int:
             try:
                 return len(_json.dumps(o, ensure_ascii=False, default=str))
-            except Exception:
+            except (TypeError, ValueError):  # 不可序列化 → 记 -1
                 return -1
 
         _sizes = {k: _size(v) for k, v in self.state.items()}
