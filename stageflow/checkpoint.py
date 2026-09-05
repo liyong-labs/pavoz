@@ -43,8 +43,8 @@ class CheckpointMismatchError(Exception):
 class Checkpoint:
     """一次 runtime.run() (一个 run_id) 的持久化状态.
 
-    Same task_id can have multiple Checkpoints (one per run_id).
-    run_id 必填: 每次 runtime.run() 一个 UUID4, resume 复用. 无 legacy lane.
+    stage_deltas + initial_state 合起来可重建任意 stage 前的 state
+    (M3 replay 用). 旧 cp (v0.5.0) 无这两个字段 → from_dict .get 默认 {}.
     """
 
     task_id: str
@@ -56,6 +56,9 @@ class Checkpoint:
     done_stages: list[str]  # 按完成顺序
     # v0.1.1: state key → producer stage. 链式覆盖判定用.
     producers: dict[str, str] = field(default_factory=dict)
+    # v0.5.1 (M2): 每 stage 的原始 return delta (按完成序) + run 的初始 state.
+    initial_state: dict[str, Any] = field(default_factory=dict)
+    stage_deltas: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -67,6 +70,8 @@ class Checkpoint:
             "state": self.state,
             "done_stages": self.done_stages,
             "producers": self.producers,
+            "initial_state": self.initial_state,
+            "stage_deltas": self.stage_deltas,
         }
 
     @classmethod
@@ -81,7 +86,33 @@ class Checkpoint:
             state=d["state"],
             done_stages=d["done_stages"],
             producers=dict(d.get("producers") or {}),
+            initial_state=dict(d.get("initial_state") or {}),
+            stage_deltas=dict(d.get("stage_deltas") or {}),
         )
+
+    def rebuild_state_before(self, stage_name: str) -> dict[str, Any]:
+        """重建 stage 执行前的 state = initial + 已完成且在该 stage 前的 deltas.
+
+        顺序按 done_stages 完成序 merge (dict.update) — chain-overwrite 由
+        完成顺序天然处理 (后完成者覆盖先完成者). 要求 stage_name 的依赖已全完成
+        (即 stage_name in done_stages 或它的 depends_on ⊆ done_stages) —
+        否则它之前的 delta 不齐, raise KeyError.
+
+        Returns: 新 dict (不 mutate).
+        """
+        if stage_name not in self.done_stages and stage_name not in self.stage_deltas:
+            raise KeyError(
+                f"stage '{stage_name}' 不在 cp 的完成记录里 "
+                f"(done_stages={self.done_stages}). 无法重建其执行前 state."
+            )
+        rebuilt = dict(self.initial_state)
+        for done in self.done_stages:
+            if done == stage_name:
+                break
+            delta = self.stage_deltas.get(done)
+            if delta:
+                rebuilt.update(delta)
+        return rebuilt
 
 
 class CheckpointStore:
