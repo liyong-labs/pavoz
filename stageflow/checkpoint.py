@@ -1,7 +1,12 @@
-"""Checkpoint: 每 node 后落盘 + workflow hash + mismatch 拒 resume.
+"""Checkpoint: per-run 持久化 + workflow hash + mismatch 拒 resume.
 
-- checkpoint 存: {workflow_hash, task_id, dag_name, stage_statuses, state, done_stages}
-- resume 时 workflow_hash 不匹配 (DAG 结构变了) → CheckpointMismatchError, 除非显式 force
+- 每次 runtime.run() 一个 run_id (UUID4); checkpoint 存 runs/{task_id}/{run_id}/checkpoint.
+- 指针文件 runs/{task_id}/latest 记 {"run_id": ...} — load_latest 靠它
+  (uuid4 字典序 ≠ 时间序, 不能拿 list_keys 末位当 "最新").
+- 同 task_id 可有多个 run_id 的 checkpoint (original / resume / replay),
+  resume 复用同一 run_id (v0.5 runtime 起).
+- 过渡兼容: run_id="" = legacy task 级单 cp (旧 key runs/{task_id}/checkpoint,
+  Task 2 之前的 runtime 形态在用); 新代码一律显式 run_id.
 """
 
 from __future__ import annotations
@@ -13,7 +18,7 @@ from typing import Any
 from .dag import DAG
 from .storage import StorageBackend
 
-__all__ = ["CheckpointMismatchError", "CheckpointStore", "workflow_hash"]
+__all__ = ["Checkpoint", "CheckpointMismatchError", "CheckpointStore", "workflow_hash"]
 
 
 def workflow_hash(dag: DAG) -> str:
@@ -36,6 +41,12 @@ class CheckpointMismatchError(Exception):
 
 @dataclass
 class Checkpoint:
+    """一次 runtime.run() (一个 run_id) 的持久化状态.
+
+    Same task_id can have multiple Checkpoints (one per run_id).
+    run_id="" = legacy task 级单 cp (v0.5 前 runtime 落盘形态, 无 run 概念).
+    """
+
     task_id: str
     dag_name: str
     workflow_hash: str
@@ -45,10 +56,12 @@ class Checkpoint:
     # v0.1.1: state key → producer stage. 链式覆盖判定用.
     # 旧 checkpoint 无此字段 → {} → resume 走 legacy 宽松模式 (视同单链).
     producers: dict[str, str] = field(default_factory=dict)
+    run_id: str = ""  # 每次 runtime.run() 一个 UUID4; 空 = legacy task 级单 cp
 
     def to_dict(self) -> dict:
         return {
             "task_id": self.task_id,
+            "run_id": self.run_id,
             "dag_name": self.dag_name,
             "workflow_hash": self.workflow_hash,
             "stage_statuses": self.stage_statuses,
@@ -59,6 +72,7 @@ class Checkpoint:
 
     @classmethod
     def from_dict(cls, d: dict) -> Checkpoint:
+        # 加字段一律 .get 默认 (A7): 旧数据缺 run_id → "" (legacy lane), 不 KeyError
         return cls(
             task_id=d["task_id"],
             dag_name=d["dag_name"],
@@ -67,38 +81,101 @@ class Checkpoint:
             state=d["state"],
             done_stages=d["done_stages"],
             producers=dict(d.get("producers") or {}),
+            run_id=d.get("run_id", ""),
         )
 
 
 class CheckpointStore:
-    """读写 Checkpoint. key = runs/{task_id}/checkpoint"""
+    """Per-task, per-run checkpoint 持久化.
+
+    Key format: runs/{task_id}/{run_id}/checkpoint (run_id 非空)
+    + 指针 runs/{task_id}/latest = {"run_id": ...}.
+    run_id="" → legacy key runs/{task_id}/checkpoint (Task 2 前 runtime 形态).
+    """
 
     def __init__(self, storage: StorageBackend):
         self.storage = storage
 
     @staticmethod
-    def _key(task_id: str) -> str:
-        return f"runs/{task_id}/checkpoint"
+    def _key(task_id: str, run_id: str) -> str:
+        """run 级 key. run_id="" → legacy task 级单 cp key (旧格式)."""
+        if not run_id:
+            return f"runs/{task_id}/checkpoint"
+        return f"runs/{task_id}/{run_id}/checkpoint"
+
+    @staticmethod
+    def _latest_key(task_id: str) -> str:
+        """最新 run 指针文件 key. 内容 = {"run_id": "<latest>"}."""
+        return f"runs/{task_id}/latest"
 
     def save(self, cp: Checkpoint) -> None:
-        self.storage.put(self._key(cp.task_id), cp.to_dict())
+        self.storage.put(self._key(cp.task_id, cp.run_id), cp.to_dict())
+        # 指针: 永远指向最后保存的 run (uuid4 字典序 ≠ 时间序, 不能靠排序)
+        self.storage.put(self._latest_key(cp.task_id), {"run_id": cp.run_id})
 
-    def load(self, task_id: str) -> Checkpoint | None:
-        d = self.storage.get(self._key(task_id))
+    def load(self, task_id: str, run_id: str = "") -> Checkpoint | None:
+        """读指定 run 的 checkpoint. run_id="" → legacy task 级单 cp."""
+        d = self.storage.get(self._key(task_id, run_id))
         return Checkpoint.from_dict(d) if d else None
 
-    def delete(self, task_id: str) -> None:
-        self.storage.delete(self._key(task_id))
+    def list_runs(self, task_id: str) -> list[str]:
+        """列 task 的所有 run_id (字典序, UUID4 下 ≠ 时间序).
 
-    def load_compatible(self, task_id: str, dag: DAG) -> Checkpoint:
-        """加载 + 校验 workflow hash. mismatch → CheckpointMismatchError."""
-        cp = self.load(task_id)
+        调试/清理用. 不含指针文件, 也不含 legacy 单 cp (run_id="") —
+        resume 一律走 load_latest (指针), 不要拿排序当 "最新".
+        """
+        prefix = f"runs/{task_id}/"
+        keys = self.storage.list_keys(prefix)
+        run_ids: list[str] = []
+        for k in keys:
+            tail = k[len(prefix):]
+            if tail.endswith("/checkpoint"):
+                run_ids.append(tail[: -len("/checkpoint")])
+        return sorted(run_ids)
+
+    def load_latest(self, task_id: str) -> Checkpoint | None:
+        """按指针文件加载该 task 最新 run 的 checkpoint.
+
+        指针指向的 run 已被删 → load 返 None (边界: caller 收到 "无 checkpoint").
+        """
+        d = self.storage.get(self._latest_key(task_id))
+        if d is None:
+            return None
+        return self.load(task_id, d["run_id"])
+
+    def delete(self, task_id: str, run_id: str = "") -> None:
+        """删指定 run 的 checkpoint. run_id="" → legacy task 级单 cp.
+
+        指针不随删除更新 (A2): 删的恰是指针指向的 run → 后续 load_latest
+        读到已删 run → 返 None → caller 收到明确 "无 checkpoint".
+        """
+        self.storage.delete(self._key(task_id, run_id))
+
+    def load_compatible(
+        self, task_id: str, run_id: str = "", dag: DAG | None = None
+    ) -> Checkpoint | None:
+        """加载 + 校验 workflow hash. mismatch → CheckpointMismatchError.
+
+        run_id="" → 加载该 task 最新 run (load_latest).
+        (兼容 v0.5 过渡: 旧 2-参调用 load_compatible(task_id, dag) — 第二参是 DAG —
+        视同 run_id="", Task 2 重写 runtime 后可删此分支.)
+        """
+        if dag is None:
+            if isinstance(run_id, DAG):  # 旧 2-参形态: (task_id, dag)
+                dag = run_id
+                run_id = ""
+            else:
+                raise TypeError("load_compatible 缺 dag 参数")
+        if run_id:
+            cp = self.load(task_id, run_id)
+        else:
+            cp = self.load_latest(task_id)
         if cp is None:
-            return cp  # type: ignore[return-value]  # None = 无 checkpoint
+            return cp  # type: ignore[return-value]
         cur_hash = workflow_hash(dag)
         if cp.workflow_hash != cur_hash:
             raise CheckpointMismatchError(
-                f"task {task_id} checkpoint 的 DAG hash {cp.workflow_hash} "
+                f"task {task_id} run {cp.run_id[:8]} checkpoint 的 DAG hash {cp.workflow_hash} "
                 f"≠ 当前 DAG hash {cur_hash}. DAG 结构变了, 不能 resume."
                 f"(只改 stage 函数体不影响 hash; 改依赖/retries/timeout 会). "
                 f"如需强制重跑: 删 checkpoint 或 Runtime(..., resume=False)"

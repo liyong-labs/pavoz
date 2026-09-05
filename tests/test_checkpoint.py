@@ -65,7 +65,7 @@ async def test_resume_skips_done_stages(tmp_path):
     from stageflow.checkpoint import workflow_hash as wh
 
     store.save(Checkpoint(
-        task_id="t-cp", dag_name="cp", workflow_hash=wh(dag),
+        task_id="t-cp", run_id="run-cp", dag_name="cp", workflow_hash=wh(dag),
         stage_statuses={"s_a": "done"}, state={"a": 1}, done_stages=["s_a"],
     ))
 
@@ -93,7 +93,7 @@ async def test_resume_hash_mismatch_rejected(tmp_path):
     from stageflow.checkpoint import workflow_hash as wh
 
     store.save(Checkpoint(
-        task_id="t-mid", dag_name="cp", workflow_hash=wh(dag1),
+        task_id="t-mid", run_id="run-mid", dag_name="cp", workflow_hash=wh(dag1),
         stage_statuses={"s_a": "done"}, state={"a": 1}, done_stages=["s_a"],
     ))
     dag2 = DAG("cp")

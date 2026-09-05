@@ -25,17 +25,28 @@ class FatalError(Exception):
 
 
 class RunResult:
-    """一次 DAG run 的结果 (task 粒度)."""
+    """一次 DAG run 的结果 (task 粒度).
 
-    __slots__ = ("dag_name", "error", "stage_statuses", "state", "status", "task_id")
+    Attributes:
+        task_id: caller-supplied (or auto UUID4), stable across retries/resumes
+        run_id: stageflow auto UUID4 per runtime.run() — distinguishes runs
+        state: final merged state after all completed stages
+        stage_statuses: {stage_name: "done" | "failed" | "skipped"}
+        status: "running" | "done" | "failed"
+        error: error message if status == "failed"
+    """
 
-    def __init__(self, task_id: str, dag_name: str):
+    __slots__ = ("dag_name", "error", "run_id", "stage_statuses", "state", "status", "task_id")
+
+    def __init__(self, task_id: str, dag_name: str, run_id: str = ""):
         self.task_id = task_id
         self.dag_name = dag_name
+        self.run_id = run_id
         self.state: dict = {}
-        self.stage_statuses: dict[str, str] = {}  # stage_name -> done/failed/skipped
-        self.status: str = "running"  # running/done/failed
+        self.stage_statuses: dict[str, str] = {}
+        self.status: str = "running"
         self.error: str | None = None
 
     def __repr__(self) -> str:
-        return f"<RunResult {self.dag_name} {self.task_id} status={self.status}>"
+        short = self.run_id[:8] if self.run_id else "?"
+        return f"<RunResult {self.dag_name} {self.task_id} run={short} status={self.status}>"
