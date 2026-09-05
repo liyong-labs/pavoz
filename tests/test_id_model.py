@@ -239,6 +239,24 @@ async def test_task_id_validation():
     assert r.status == "done"
 
 
+async def test_task_id_rejects_unicode():
+    """Unicode task_id → ValueError. str.isalnum() 把非 ASCII 当字母 (如 "任务"),
+    字符集必须显式 ASCII-only [A-Za-z0-9_.-] (A3)."""
+    dag = DAG("d")
+
+    @dag.stage()
+    async def s_x(ctx):
+        return {}
+
+    rt = Runtime()
+    for bad in ("任务-1", "task_任务", "café", "ｔ-1"):  # 全角 ｔ 也非 ASCII
+        with pytest.raises(ValueError, match="task_id"):
+            await rt.run(dag, task_id=bad)
+    # ASCII 组合照常放行
+    r = await rt.run(dag, task_id="t-1.abc_XYZ9")
+    assert r.status == "done"
+
+
 async def test_caller_receives_call_meta():
     """caller 第 4 参 CallMeta: task_id/run_id/stage/attempt, frozen."""
     from stageflow.runtime import CallMeta

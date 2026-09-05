@@ -117,7 +117,8 @@ class Runtime:
             dag: 要执行的 DAG
             task_id: caller 提供的 task ID (省略 → 自动 UUID4). 跨 retry/resume
                      稳定 — 幂等键. resume 时必填 (自动生成的 ID 不会有 cp).
-            initial_state: 起始 state (默认 {}; resume 命中 cp 时忽略, 已含在 cp.state)
+            initial_state: 起始 state (默认 {}; 仅在无已完成 stage 时注入 — resume
+                     命中 cp 且 cp 已有完成 stage 时忽略, 初始值已含在 cp.state)
             resume: True → 从该 task 最新 checkpoint 续跑 (复用原 run_id).
                      无 cp / 已全部完成 → RuntimeError. 重跑用 resume=False.
         """
@@ -179,7 +180,7 @@ class Runtime:
                 task_id, run_id[:8], len(done_stages),
             )
 
-        # initial_state 只在无 checkpoint 时注入 (resume 时 initial_state 已含在 cp.state)
+        # initial_state 仅在无已完成 stage 时注入 (resume 且 cp 已有完成 stage → 已含在 cp.state)
         if not done_stages and initial_state:
             state = merge_state({}, initial_state, "<init>")
             for _k in initial_state:
@@ -347,7 +348,8 @@ def _validate_task_id(task_id: str) -> None:
         raise ValueError("task_id 不能为空")
     if len(task_id) > 128:
         raise ValueError(f"task_id 过长: {len(task_id)} > 128")
-    if not all(c.isalnum() or c in "_.-" for c in task_id):
+    # str.isalnum() 认 Unicode 字母 (如 "任务" isalpha=True) — 必须显式 ASCII-only
+    if not all(c.isascii() and (c.isalnum() or c in "_.-") for c in task_id):
         raise ValueError(
             f"task_id 含非法字符: {task_id!r}. 只允许 [A-Za-z0-9_.-] "
             f"(不含 '/', 防止 storage key 路径注入)"

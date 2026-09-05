@@ -31,7 +31,8 @@ class RunResult:
         task_id: caller-supplied (or auto UUID4), stable across retries/resumes
         run_id: stageflow auto UUID4 per runtime.run() — distinguishes runs
         state: final merged state after all completed stages
-        stage_statuses: {stage_name: "done" | "failed" | "skipped"}
+        stage_statuses: {stage_name: "done" | "failed"} — only executed stages;
+            resume-skipped stages are absent, never recorded as "skipped"
         status: "running" | "done" | "failed"
         error: error message if status == "failed"
     """

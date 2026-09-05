@@ -18,7 +18,7 @@ import os
 import sys
 from pathlib import Path
 
-from .checkpoint import CheckpointStore
+from .checkpoint import CheckpointMismatchError, CheckpointStore
 from .runtime import Runtime
 from .storage import FileStorage
 
@@ -61,12 +61,14 @@ async def _cmd_run(args) -> int:
         result = await runtime.run(
             dag, task_id, initial_state=initial, resume=args.resume
         )
-    except RuntimeError as e:
-        # v0.5: resume 语义错误 (无 cp / 已全部完成) → 友好消息, 不炸 traceback
+    except (CheckpointMismatchError, RuntimeError, ValueError) as e:
+        # v0.5: resume/校验错误 (无 cp / 已全部完成 / DAG hash 变了 / task_id 非法)
+        # → 友好消息, 不炸 traceback
         print(f"run 失败: {e}")
         return 1
     print(json.dumps({
         "task_id": result.task_id,
+        "run_id": result.run_id,
         "dag": result.dag_name,
         "status": result.status,
         "stage_statuses": result.stage_statuses,

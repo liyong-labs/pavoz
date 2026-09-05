@@ -6,7 +6,7 @@
 零运行时依赖, 不绑定任何业务系统, 不绑定任何模型/搜索/存储服务。
 
 ```text
-Python 3.12+  |  MIT License  |  stdlib only  |  38 tests
+Python 3.12+  |  MIT License  |  stdlib only  |  60 tests
 ```
 
 stageflow 解决的是流程编排里最常用的一层: **声明式 DAG + 顺序执行 + 失败重试 +
@@ -70,12 +70,39 @@ git clone git@github.com:ebziw/stageflow.git
 pip install -e ".[dev]"
 ```
 
+## 存储后端 (配置驱动)
+
+core 不带任何 storage driver — 用户自己 `pip install` 自己要的依赖
+(psycopg / redis / boto3 / ...), 自己写 adapter (或抄 ai_writer 既有
+`backend/integration/sf_storage.py`), 通过 config 字符串 + `load_storage()` 加载.
+
+```python
+from stageflow import load_storage, CheckpointStore
+
+# 内置 FileStorage (stdlib, 无额外依赖)
+storage = load_storage(
+    "stageflow.storage.FileStorage",
+    root_dir="/var/lib/stageflow/cp",
+)
+cp_store = CheckpointStore(storage)
+```
+
+```python
+# 用户自定义 adapter — 配置里写自己的 dotted path
+storage = load_storage(
+    "backend.integration.sf_storage.MinioStorage",
+    task_id="run-2026-09-05-001",
+)
+```
+
+`load_storage("pkg.module:ClassName", **kwargs)` 用 `importlib` 加载并实例化,
+错误信息含 module path + pip 安装提示. 详见 [`docs/storage.md`](docs/storage.md).
+
 ## 快速开始
 
 ```python
 import asyncio
-from stageflow import DAG, Runtime
-from stageflow.storage import FileStorage, CheckpointStore  # noqa: F401
+from stageflow import DAG, Runtime, FileStorage, CheckpointStore  # noqa: F401
 
 dag = DAG("demo")
 
@@ -105,7 +132,8 @@ English version: [`docs/en/quickstart.md`](docs/en/quickstart.md).
 - **DAG**: 静态声明、按拓扑顺序执行的有向无环图
 - **Stage**: `async def fn(ctx) -> dict`; `ctx.state` 只读, 返回值是唯一写路径
 - **State**: json-serializable; 冲突检测 (平行 producer raise, 链式演进允许)
-- **Checkpoint**: 每 node 落盘 + workflow hash 校验, 跑完自动清理
+- **Checkpoint**: 每 node 落盘 per-run checkpoint (key 含 `task_id + run_id`,
+  `latest` 指针); resume 沿用同 run_id, run 已全部完成则拒续跑 (重跑 = 新 run_id)
 - **ctx.call**: 外部调用唯一入口 (`kind`/`op` 由业务定义, 框架不感知)
 - **TestPipe**: mock 回归
 
@@ -140,7 +168,7 @@ sub-DAG 嵌套、业务 wrapper 实现 (LLM/Search/Extract adapter)、业务表 
 ## 测试
 
 ```bash
-pytest            # 38 tests
+pytest            # 60 tests (52 core + 8 storage_loader)
 ruff check .      # lint
 ```
 

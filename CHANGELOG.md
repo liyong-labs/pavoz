@@ -29,6 +29,10 @@
 - `CheckpointStore.load_compatible(task_id, run_id, dag)` 3 参 (was 2 参);
   `run_id=""` = 加载最新
 - `Runtime(caller=...)` 自定义 caller 需接第 4 参 `CallMeta` (默认 no-op 已同步)
+- `Runtime.run()` 移除 `deadline` kwarg (was per-run 绝对超时, 优先于
+  `default_timeout`) — run 级超时现在只走 `Runtime.default_timeout`
+- `Runtime.run()` `resume` 默认值 True → False (默认起新 run_id; 续跑需显式
+  `resume=True`)
 - resume 语义收紧: `resume=True` 无 checkpoint → RuntimeError; run 已全部完成
   (done guard) → RuntimeError 防静默 no-op。重跑 = `resume=False` 起新 run_id
 - run 完成后 checkpoint **不再自动删除** (v0.4.1 前会清) — done guard 取代
