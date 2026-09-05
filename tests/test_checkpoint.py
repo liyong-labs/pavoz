@@ -65,13 +65,12 @@ async def test_resume_skips_done_stages(tmp_path):
     from stageflow.checkpoint import workflow_hash as wh
 
     store.save(Checkpoint(
-        task_id="t-cp", dag_name="cp", workflow_hash=wh(dag),
+        task_id="t-cp", run_id="run-mid", dag_name="cp", workflow_hash=wh(dag),
         stage_statuses={"s_a": "done"}, state={"a": 1}, done_stages=["s_a"],
+        producers={"a": "s_a"},
     ))
-    # 上面 run_id 留空 = legacy 单 cp lane — resume 走旧 2-参 load_compatible,
-    # 直读 legacy key, 不用指针 (旧 cp 无指针文件, 升级边界必须能续跑).
-
-    # resume: 应只跑 s_b, 不重跑 s_a
+    # 指针 runs/t-cp/latest → run-mid. resume 走 load_latest (指针): done_stages
+    # 未全覆盖 → done guard 放行, 应只跑 s_b, 不重跑 s_a
     result = await rt.run(dag, "t-cp", resume=True)
     assert result.status == "done"
     assert calls["a"] == 0  # 没重跑
@@ -84,19 +83,14 @@ async def test_resume_hash_mismatch_rejected(tmp_path):
     dag1 = _dag()
     rt = Runtime(checkpoint_store=store)
 
-    result = await rt.run(dag1, "t-mismatch")
-    assert result.status == "done"
-    # 跑完 checkpoint 已清 → 无 cp, resume 从头
-    result2 = await rt.run(dag1, "t-mismatch", resume=True)
-    assert result2.status == "done"
-
     # 构造一个中途 cp, 然后改 DAG 结构 (retries) → mismatch
     from stageflow import Checkpoint
     from stageflow.checkpoint import workflow_hash as wh
 
     store.save(Checkpoint(
-        task_id="t-mid", dag_name="cp", workflow_hash=wh(dag1),
+        task_id="t-mid", run_id="run-mid", dag_name="cp", workflow_hash=wh(dag1),
         stage_statuses={"s_a": "done"}, state={"a": 1}, done_stages=["s_a"],
+        producers={"a": "s_a"},
     ))
     dag2 = DAG("cp")
 
@@ -112,8 +106,13 @@ async def test_resume_hash_mismatch_rejected(tmp_path):
         await rt.run(dag2, "t-mid", resume=True)
 
 
-async def test_done_clears_checkpoint(tmp_path):
+async def test_done_keeps_checkpoint(tmp_path):
+    """跑完 cp 保留 (A4 done guard 的依据) — load_latest 能读到最终 run."""
     store = _make_store(tmp_path)
     rt = Runtime(checkpoint_store=store)
-    await rt.run(_dag(), "t-clear")
-    assert store.load("t-clear") is None
+    result = await rt.run(_dag(), "t-keep")
+    assert result.status == "done"
+    cp = store.load_latest("t-keep")
+    assert cp is not None
+    assert cp.run_id == result.run_id
+    assert cp.done_stages == ["s_a", "s_b"]

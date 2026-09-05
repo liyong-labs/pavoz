@@ -72,14 +72,15 @@ async def _cmd_run(args) -> int:
 
 
 async def _cmd_trace(args) -> int:
-    """列 task 的所有 checkpoint + stage 记录."""
+    """列 task 的最新 run checkpoint + stage 记录 (per-run, 看 load_latest)."""
     store = CheckpointStore(_storage())
-    cp = store.load(args.task_id)
+    cp = store.load_latest(args.task_id)
     if cp is None:
-        print(f"task {args.task_id} 无 checkpoint (没跑过或已完成已清)")
+        print(f"task {args.task_id} 无 checkpoint (没跑过)")
         return 1
     print(json.dumps({
         "task_id": cp.task_id,
+        "run_id": cp.run_id,
         "dag": cp.dag_name,
         "workflow_hash": cp.workflow_hash,
         "stage_statuses": cp.stage_statuses,
@@ -91,7 +92,7 @@ async def _cmd_trace(args) -> int:
 
 async def _cmd_state(args) -> int:
     store = CheckpointStore(_storage())
-    cp = store.load(args.task_id)
+    cp = store.load_latest(args.task_id)
     if cp is None:
         print(f"task {args.task_id} 无 checkpoint")
         return 1
