@@ -101,7 +101,7 @@ storage = load_storage(
 ```python
 import asyncio
 from stageflow import DAG, Runtime
-from stageflow.storage import FileStorage, CheckpointStore  # noqa: F401
+from stageflow import FileStorage, CheckpointStore  # noqa: F401
 
 dag = DAG("demo")
 
