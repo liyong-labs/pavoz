@@ -55,9 +55,10 @@ class Ctx:
     deadline: float | None = None  # absolute deadline (time.time()), 无 = 不限制
 
     async def call(self, kind: str, op: str, params: dict | None = None) -> dict:
-        """对外调用唯一入口. kind: 'llm'/'search'/'extract'/'http'.
+        """Outbound call entry point. `kind` is opaque (caller-defined: 'llm', 'search', 'http', ...).
 
-        caller (业务 adapter) 决定实际执行. 默认 no-op (demo/TestPipe 覆盖).
+        Caller (via Runtime's caller injection) decides actual execution.
+        Default is a no-op (suitable for TestPipe mocks and demos).
         """
         return await self.caller(kind, op, params or {})
 

@@ -1,7 +1,7 @@
 [project]
 name = "stageflow"
 version = "0.4.1"
-description = "LLM/SE/Extract 流程编排系统 — micro/in-process workflow engine"
+description = "Micro/in-process Python DAG workflow engine — stdlib only, zero runtime deps, in your process"
 authors = [{ name = "ebziw" }]
 readme = "README.md"
 requires-python = ">=3.12"
