@@ -63,3 +63,10 @@
 ## [Unreleased]
 
 - (规划) `replay --prompt-patch` (v0.2): checkpoint 加载 + 单 stage 重放
+
+## [0.1.3] — 2026-09-05
+
+### Fixed
+
+- `pyproject.toml` version + `stageflow/__init__.py` `__version__` 与 tag 同步 (0.1.1 → 0.1.3)。final-review B1: 之前 `pip install -e .` / `import stageflow; stageflow.__version__` 返 0.1.1,与 v0.1.2 tag 不符。
+- 不 amend v0.1.2 (keep git history honest) — 走新 patch tag v0.1.3
