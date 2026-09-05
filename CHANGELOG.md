@@ -1,0 +1,50 @@
+# Changelog
+
+本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
+
+## [0.1.1] — 2026-09-05
+
+### Added
+
+- **链式覆盖 (chain overwrite)**: 下游 stage 可以覆盖**传递上游 producer** 写的
+  state key。数据流水线 (如 `search → filter → compress` 逐级演进同一产物) 是
+  通用模式, 不再被 one-producer-per-key 误判为平行冲突。
+  - `DAG.reachable(upstream, downstream)`: 传递依赖判定
+  - Runtime 追踪 `state key → producer stage`, checkpoint 持久化 `producers`
+  - 平行 producer (无依赖链) 冲突仍抛 `StateConflictError` (v1 语义保留)
+  - 旧 checkpoint (无 producers 字段) resume → 宽松模式 (视同单链), 向后兼容
+
+### Changed
+
+- `merge_state(prev, delta, stage_name, overwrite_keys=None)`: 新增可选参数
+- `Checkpoint`: 新增 `producers` 字段 (序列化向后兼容, 缺省 `{}`)
+
+## [0.1.0] — 2026-09-05
+
+### Added
+
+首个可用版本 (micro/in-process workflow engine):
+
+- **DAG DSL**: `@dag.stage(depends_on, retries, timeout)` 静态声明, Kahn 拓扑
+  排序, Tarjan SCC 环检测 (含自环), validate 后冻结
+- **Runtime**: 顺序执行 + per-node 重试 (指数退避) + absolute deadline 传播 +
+  state merge + 每 node checkpoint
+- **State 契约**: json-serializable 类型白名单 (str/int/float/bool/None/
+  list/dict), `ctx.state` 为只读深拷贝 (写即 raise), `return dict` 是唯一写
+  路径, 平行 producer 冲突 → `StateConflictError`
+- **异常契约**: `StageError` (业务失败, 不重试) / `RetryableError` (退避重试,
+  耗尽 fail) / `FatalError` (程序 bug, 立即 fail)
+- **Checkpoint**: 每 node 落盘, `workflow_hash` (stage 结构指纹) mismatch →
+  拒 resume (只改函数体不影响 hash), run 完成自动清理
+- **ctx.call(kind, op, params)**: 对外调用统一入口 (caller 由业务注入),
+  默认 no-op echo (demo/TestPipe 可用)
+- **TestPipe**: 第一天可用的回归 fixture — mock stage 输出跑全图
+- **StorageBackend Protocol + FileStorage**: core 零依赖, 业务可注入
+  DB/MinIO adapter
+- **TaskTrigger Protocol**: 业务 task 表边界抽象
+- **CLI**: `run / trace / state / inspect` (v0.1 面)
+- 38 tests, ruff clean, 零运行时依赖 (stdlib only)
+
+## [Unreleased]
+
+- (规划) `replay --prompt-patch` (v0.2): checkpoint 加载 + 单 stage 重放

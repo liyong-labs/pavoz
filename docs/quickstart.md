@@ -64,7 +64,7 @@ stage 不直接 import requests/httpx — 通过 `ctx.call(kind, op, params)`:
 ```python
 @dag.stage()
 async def s_search(ctx):
-    results = await ctx.call("search", "searxng", {"query": ctx.state["query"]})
+    results = await ctx.call("search", "my_engine", {"query": ctx.state["query"]})  # kind/op 由业务 caller 定义
     return {"sources": results["items"]}
 ```
 
