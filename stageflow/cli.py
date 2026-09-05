@@ -57,9 +57,14 @@ async def _cmd_run(args) -> int:
     if args.input:
         initial = json.loads(args.input)
     runtime = Runtime(checkpoint_store=CheckpointStore(_storage()) if args.resume else None)
-    result = await runtime.run(
-        dag, task_id, initial_state=initial, resume=args.resume
-    )
+    try:
+        result = await runtime.run(
+            dag, task_id, initial_state=initial, resume=args.resume
+        )
+    except RuntimeError as e:
+        # v0.5: resume 语义错误 (无 cp / 已全部完成) → 友好消息, 不炸 traceback
+        print(f"run 失败: {e}")
+        return 1
     print(json.dumps({
         "task_id": result.task_id,
         "dag": result.dag_name,
