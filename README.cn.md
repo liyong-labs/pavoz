@@ -61,6 +61,8 @@ async def s_save(ctx):
 | **确定性回归** | `TestPipe` — mock 任意 stage 输出跑全图, prompt/stage 改动有保护网 |
 | **Stage 重放** | 从 checkpoint 重放: `Runtime.run_stage` 在重建的输入上重跑单 stage (调 prompt/参数不重跑前序); `TestPipe.replay_from(cp, dag)` 把真实 run 存下的 stage 输出当 mock 喂回去 — 对真实 run 做图回归 |
 | **与业务解耦** | 存储 (`StorageBackend`)、外部调用 (`ctx.call` caller) 全部 Protocol, 业务侧注入 |
+| **协作式取消** | `Runtime(cancel_check=...)` — stage 间/重试间检查点拦截 (status="cancelled", 已完成 stage 照常落 cp, resume 无缝续跑); stage 内长循环 `ctx.cancelled()` 轮询自退出 |
+| **事件钩子** | `Runtime(on_event=...)` — run_start / stage_start / stage_end / stage_retry / run_end 五种结构化事件 (observer 异常隔离); `RunResult.stage_timings` 每 stage 墙钟耗时 |
 | **零依赖** | core 仅 Python 标准库; 不发散到 psycopg/redis/boto3 等 |
 
 ## 安装

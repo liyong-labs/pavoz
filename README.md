@@ -79,6 +79,8 @@ stageflow state  --task-id job-1 --key count
 | **Loops stay in business code** | No framework-level `retry_budget`/loop DSL to learn. Need an audit→fix→re-audit loop? Write a `while` inside one stage — it's your logic, expressed in Python, checkpointed at the node boundary. |
 | **Regression testing built in** | `TestPipe` mocks any stage's output and runs the whole graph; `TestPipe.replay_from(cp, dag)` feeds a *real run's* saved outputs back as mocks — refactor a stage, prove the graph still converges. |
 | **Storage is pluggable** | Core is stdlib-only. Default `FileStorage` needs nothing; for durable/cross-machine runs implement the 5-method `StorageBackend` (get/put/list/delete) over Postgres, MinIO, Redis, whatever you already run — or load it from a config string with `load_storage()`. |
+| **Cooperative cancellation** | `Runtime(cancel_check=...)` — interception at stage/retry boundaries (status="cancelled"; completed stages stay checkpointed, resume picks up seamlessly); long-running stages poll `ctx.cancelled()` and exit on their own |
+| **Event hooks** | `Runtime(on_event=...)` — five structured lifecycle events: run_start / stage_start / stage_end / stage_retry / run_end (observer exceptions isolated); `RunResult.stage_timings` per-stage wall clock |
 
 ## Time-travel debugging
 

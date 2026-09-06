@@ -2,6 +2,19 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Added
+
+- 协作式取消: `Runtime(cancel_check=...)` — stage 间/重试间检查点拦截, `RunResult.status`
+  新增 `"cancelled"`; 已完成 stage 照常落 checkpoint, `resume=True` 无缝续跑.
+  stage 内长循环用 `ctx.cancelled()` 轮询自行退出 (循环留业务层).
+  cancel_check 异常视为未取消 (fail-open).
+- 生命周期事件钩子: `Runtime(on_event=...)` — run_start / stage_start / stage_end /
+  stage_retry / run_end 五种结构化事件, observer 异常隔离. `RunResult.stage_timings`
+  记录每 stage 墙钟耗时 (含 retry 退避). 单 stage 重放 (run_stage) 不发事件.
+- 重试退避 full-jitter: `uniform(0, min(2^(attempt-1), 30))` — 多 task 同步重试防雷群.
+
 ## [0.8.0] — 2026-09-06
 
 ### Changed (checkpoint 格式: state 不落盘 — 旧格式 cp 兼容读但不再写)
