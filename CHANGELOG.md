@@ -2,6 +2,31 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.8.0] — 2026-09-06
+
+### Changed (checkpoint 格式: state 不落盘 — 旧格式 cp 兼容读但不再写)
+
+- `Checkpoint.state` 字段 → property (从 `initial_state` + `stage_deltas` 惰性
+  rebuild) — 落盘 2x 冗余消除. 实测 ai_writer 真实 cp 2.82MB → 2.05MB (-28%),
+  rebuild 0ms 等价. 旧存量 cp (带 state) 照常读 (rebuild 覆盖 state 键).
+- 2026-09-06 user 拍板: 发布前向前看, 不做向后兼容 — 序列化层不再写 state,
+  无兼容分支
+- `fork_overrides` 新字段: fork_run 的 overrides 持久化 (曾靠全量 state 落盘),
+  随每次 checkpoint save 携带 — fork 分支的 overrides 活到分支终点
+
+### Fixed
+
+- fork resume 丢 overrides: fork_cp 保存后 resume 续跑, 每轮 save 的新 cp 若
+  不带 overrides → 分支输入丢失 (从 from_stage 重跑用旧输入)
+- run_stage/replay_from 的 legacy-cp 检查依赖 cp.state truthy — state 变
+  property 后恒有值, 检查短路失效 → 防静默空输入重放的防护恢复 (只看 deltas)
+
+### Chore
+
+- 审计清理 (project-doctor): cli `importlib.sys.modules` → `sys.modules`,
+  Ctx.caller sync-lambda default (await dict 隐患) → 单 async `_noop_caller`,
+  删死 API `validate_state`, ruff UP034, `.gitignore` + data/
+
 ## [0.7.0] — 2026-09-06
 
 ### Added

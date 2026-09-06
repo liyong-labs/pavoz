@@ -140,6 +140,20 @@ Both are excellent for *state machines and dynamic agent graphs* and ship their 
 DBOS pioneered "lightweight durable workflows" and its `fork_workflow(id, step)` is the industry precedent for restart-from-any-step — but it *requires Postgres* as its durability layer. stageflow's equivalent (`fork_run`) works on any `StorageBackend` you already have, including a plain directory. Postgres is a great adapter; it shouldn't be a requirement.
 </details>
 
+## Known limitations
+
+- **Checkpoints store stage deltas, not full state** (v0.8): full state is rebuilt
+  from `initial_state` + `stage_deltas` on load. If a stage returns very large
+  payloads (e.g. full document content) into shared state, checkpoints grow with
+  them — keep big blobs in external storage and pass references/summaries through
+  state. `Checkpoint.state_stats()` helps you see what is actually large.
+- **`resume=True` continues the latest run only**: it refuses to resume a run that
+  already finished (`done` guard) — rerun with `resume=False` (new run id), or use
+  `fork_run` to branch from a historical stage with edited inputs.
+- **One process, one run at a time**: stageflow is an in-process engine with no
+  built-in queue, scheduler, or multi-worker coordination. Lease/heartbeat on the
+  task row is your integration's job (see the ai_writer reference integration).
+
 ## Use cases
 
 - **LLM content pipelines** — search → download → filter → compress → compose → audit → save, with per-stage checkpointing so a failed audit never repeats 40 minutes of upstream work. ([reference integration](docs/en/use-cases/ai-writer.md))

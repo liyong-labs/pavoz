@@ -26,7 +26,7 @@ from .storage_loader import StageflowStorageError, load_storage
 from .testing import TestPipe
 from .types import FatalError, RetryableError, RunResult, StageError
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 __all__ = [
     "DAG",
