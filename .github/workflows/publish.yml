@@ -1,0 +1,28 @@
+name: publish
+
+# PyPI Trusted Publishing (#33): tag v* 时自动发版.
+# 前提 (一次性): repo public + PyPI 建 stageflow 项目 +
+#   GitHub repo Settings → Environments → New environment "pypi" +
+#   PyPI 项目 Settings → Publishing → 添加 GitHub 仓库 ebziw/stageflow 信任.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  id-token: write  # Trusted Publishing 必需
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build wheel + sdist
+        run: |
+          pip install --upgrade build
+          python -m build
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

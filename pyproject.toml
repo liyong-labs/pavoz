@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "stageflow"
-version = "0.5.1"
+version = "0.7.0"
 description = "Micro/in-process Python DAG workflow engine — stdlib only, zero runtime deps, in your process"
 authors = [{ name = "ebziw" }]
 readme = "README.md"
@@ -36,6 +36,9 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
 ]
+
+[project.scripts]
+stageflow = "stageflow.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["stageflow"]

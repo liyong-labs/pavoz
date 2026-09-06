@@ -2,6 +2,26 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [0.7.0] — 2026-09-06
+
+### Added
+
+- `Checkpoint.stage_ts`: stage 完成 epoch 时刻 (每 node 落盘, resume/fork 保留前缀) —
+  恢复侧内容过期 (TTL) gate 的判定依据 (ai_writer CP 迁移 Step 1 用)
+
+## [0.6.0] — 2026-09-06
+
+### Added (time-travel fork: 任意历史节点取输入 → 改 → 装回)
+
+- `Runtime.fork_run(dag, task_id, *, from_stage, overrides=None, run_id=None)`:
+  LangGraph fork 范式 — truncate 到 from_stage 前, initial + 保留 deltas +
+  overrides 重建 state, 新 run_id 落盘且 latest 指向 fork, 原 run cp 不动,
+  委托 `run(resume=True)` 从 from_stage 续跑 (前序 stage 结果复用不重跑)
+- `Checkpoint.state_stats()`: state 体积观测 (key top N + 构成), CLI `state --stats`
+- CLI: `export-input --task-id X --stage Y` (打印 stage 执行前输入 JSON, 可编辑)
+  + `fork-run ... --input file | --overrides JSON` (装回续跑)
+- 失败/中断的 stage 也可 fork (依赖已全完成) — 修输入重跑失败点
+
 ## [0.5.1] — 2026-09-05
 
 ### Added (M2 stage replay + M3 single-stage replay)
