@@ -135,3 +135,40 @@ async def test_fork_unknown_stage_and_missing_deps_rejected():
         assert False
     except KeyError:
         pass
+
+
+async def test_fork_overrides_add_new_key_visible_downstream():
+    """overrides 可注入前序未产生的新 key — 下游 stage 直接可见 (fork 输入扩展)."""
+    tid = "fork6"
+    store = _mk_storage(tid)
+    rt = Runtime(checkpoint_store=store)
+    trace: list = []
+    dag = _dag3(trace)
+    await rt.run(dag, tid)
+    r = await rt.fork_run(dag, tid, from_stage="s_c", overrides={"style": "严肃媒体"})
+    assert r.status == "done"
+    # s_c 重跑 — 新 key 进 state (producer <fork>); s_c 是最后 stage 无下游, 但
+    # rebuild_state_and_producers 应带出新 key (fork cp 重建时可见)
+    cp = store.load_latest(tid)
+    assert cp is not None and cp.state["style"] == "严肃媒体"
+    assert cp.state["topic"] == "orig"  # 前序产物保留
+
+
+async def test_fork_original_run_cp_untouched():
+    """fork 后原 run 的 checkpoint 文件仍在且 state 不变 (只 latest 指针移走)."""
+    tid = "fork7"
+    store = _mk_storage(tid)
+    rt = Runtime(checkpoint_store=store)
+    trace: list = []
+    dag = _dag3(trace)
+    await rt.run(dag, tid)
+    orig = store.load_latest(tid)
+    assert orig is not None
+    orig_run_id, orig_state = orig.run_id, orig.state
+
+    r = await rt.fork_run(dag, tid, from_stage="s_b", overrides={"topic": "edited"})
+    assert r.status == "done"
+    runs = store.list_runs(tid)
+    assert orig_run_id in runs, "原 run cp 必须保留 (可回溯)"
+    back = store.load(tid, orig_run_id)
+    assert back is not None and back.state == orig_state, "原 cp state 不被 fork 污染"

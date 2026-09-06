@@ -172,6 +172,9 @@ class Runtime:
         # v0.7: stage 完成 epoch ts — 恢复侧 TTL 判定 (内容过期 gate) 用
         stage_ts: dict[str, float] = {}
         initial_state_saved: dict = {}
+        # v0.8: fork overrides 随每次 save 携带 — fork_cp 首写外, resume 续跑
+        # 的每轮 _save_cp 都必须带上, 否则 overrides 只活到第一次 save 就被丢
+        _fork_overrides: dict = {}
 
         # ── resume: 恢复 checkpoint 状态 ──
         if cp is not None:
@@ -190,6 +193,7 @@ class Runtime:
             stage_deltas = dict(cp.stage_deltas)      # resume 续收集
             stage_ts = dict(cp.stage_ts)              # v0.7: resume 续记
             initial_state_saved = dict(cp.initial_state)
+            _fork_overrides = dict(cp.fork_overrides)  # fork 分支续保
             result.state = state
             logger.info(
                 "task=%s run=%s resume: 已完成 %d stages",
@@ -236,7 +240,8 @@ class Runtime:
                 result.status = "failed"
                 result.error = err
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
-                              producers, stage_deltas, initial_state_saved, stage_ts)
+                              producers, stage_deltas, initial_state_saved, stage_ts,
+                              _fork_overrides)
                 return result
 
             if delta:
@@ -244,7 +249,8 @@ class Runtime:
             stage_ts[name] = time.time()   # v0.7: 完成时刻 (内容过期 TTL 判定用)
             done_stages.append(name)
             self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
-                          producers, stage_deltas, initial_state_saved, stage_ts)
+                          producers, stage_deltas, initial_state_saved, stage_ts,
+                          _fork_overrides)
             logger.info(
                 "task=%s run=%s stage=%s done (len state=%d)",
                 task_id, run_id[:8], name, len(state),
@@ -535,7 +541,8 @@ class Runtime:
                  done_stages: list, statuses: dict, producers: dict | None = None,
                  stage_deltas: dict | None = None,
                  initial_state: dict | None = None,
-                 stage_ts: dict | None = None) -> None:
+                 stage_ts: dict | None = None,
+                 fork_overrides: dict | None = None) -> None:
         if self.checkpoint_store is None:
             return
         try:
@@ -550,6 +557,7 @@ class Runtime:
                 initial_state=dict(initial_state or {}),
                 stage_deltas=dict(stage_deltas or {}),
                 stage_ts=dict(stage_ts or {}),
+                fork_overrides=dict(fork_overrides or {}),
             )
             self.checkpoint_store.save(cp)
         except Exception:
