@@ -2,12 +2,14 @@
 
 🇬🇧 [English version](README.md)
 
-**stageflow — 零依赖的 Python DAG 工作流引擎**：在进程内编排 LLM 流水线、AI Agent 工作流与多阶段数据处理管线。
-声明式 `@dag.stage` DSL + 基于 checkpoint 的**持久化执行与断点续跑** + 自动重试 + 单节点 **replay 调试**（改 prompt 不重跑上游）。
-仅标准库, 无调度器/无服务端/无消息队列, 不绑定任何模型/搜索/存储服务。
+**进程内的 Python 工作流引擎 — 零运行时依赖, 每次运行都可 checkpoint、replay、fork。**
+
+无服务端 / 无调度器 / 无 YAML / 无厂商锁定。用 `@dag.stage` 声明 DAG, 在自己的进程里跑,
+白拿按 stage 的**断点续跑**、**单节点重放**与**时间旅行 fork**(任意历史节点取输入 → 改 → 装回)。
+仅标准库, 不绑定任何模型/搜索/存储服务。
 
 ```text
-Python 3.12+  |  MIT License  |  stdlib only  |  81 tests
+Python 3.12+  |  MIT License  |  stdlib only  |  92 tests
 ```
 
 stageflow 解决的是流程编排里最常用的一层: **声明式 DAG + 顺序执行 + 失败重试 +
@@ -64,12 +66,10 @@ async def s_save(ctx):
 ## 安装
 
 ```bash
-# 直接装
-pip install git+ssh://git@github.com/ebziw/stageflow.git
-
-# 开发模式
+# PyPI 上线后: pip install stageflow
+# 目前: git clone + 本地装
 git clone git@github.com:ebziw/stageflow.git
-pip install -e ".[dev]"
+cd stageflow && pip install -e ".[dev]"
 ```
 
 ## 存储后端 (配置驱动)
@@ -147,6 +147,38 @@ python -m stageflow state --task-id demo-1 --key saved
 换上新实现, prompt/参数秒级迭代。`run --resume` 续跑中断的 run (跳过已
 完成 stage, 复用同 run_id)。
 
+## 时间旅行调试 (v0.6)
+
+stageflow 为这个场景而生: **任何一次历史 run 都是可检视、可编辑、可 fork 的对象**。
+每个 checkpoint 存每 stage 的原始 delta (不只是合并终态) → 任意 stage 当时的输入
+可精确重建:
+
+```bash
+# 1. 某 stage 当时看到了什么? (完整输入 JSON, 人可编辑)
+stageflow export-input --task-id job-1 --stage s_compose > input.json
+
+# 2. 改完装回: 从该 stage 分支续跑 — 前序 stage 复用 (不重跑),
+#    该 stage 及后继用改后输入重跑。原 run 的 checkpoint 不动。
+stageflow fork-run pipeline.py --task-id job-1 --stage s_compose --input input.json
+```
+
+代码等价物:
+
+```python
+await rt.fork_run(dag, task_id="job-1", from_stage="s_compose",
+                  overrides={"items": ["x", "y"]})   # 前序复用, s_compose 起重跑
+```
+
+单 stage 重放 (改 prompt 调参迭代, 不起新 run):
+
+```bash
+stageflow replay pipeline.py --task-id job-1 --stage s_compose
+```
+
+每次 fork 是新 run_id 并成为该 task 的 latest; 原历史可反复 fork 出多分支。
+LLM stage 出错时, 从"当时输入是什么 → 改一句 → 只重跑那个 stage"只需几秒,
+而不是重跑整条 30 分钟管线。
+
 ## 核心概念
 
 - **DAG**: 静态声明、按拓扑顺序执行的有向无环图
@@ -171,6 +203,17 @@ cross-stage retry 原语, 原因相同。
 **不做的事 (YAGNI)**: scheduler/cron、UI/可视化、分布式执行、dynamic DAG、
 sub-DAG 嵌套、业务 wrapper 实现 (LLM/Search/Extract adapter)、业务表 schema。
 
+## 什么时候用它 — 什么时候不要
+
+**用**: 单进程内的顺序/有状态管线 — LLM 研究写作管线、需要持久状态的 agent 步骤、
+要 checkpoint 的 ETL, 阶段边界事先已知、想要重试+续跑+重放但不想因此引入一个平台。
+
+**不要用**:
+- **分布式规模调度** (cron/worker 集群/多租户队列) → Temporal / Prefect / Airflow, 那是它们的地盘
+- **动态图** (运行期改图形状、agent 递归 spawn) → LangGraph / Burr; stageflow 图是静态的,
+  动态控制流请写在 stage 内部的普通 Python 里
+- **Web UI / 可观测平台** → Temporal / Hatchet / Windmill; stageflow 给 CLI + JSON checkpoint 供你搭
+
 ## 文档
 
 | 文档 | 内容 |
@@ -188,7 +231,7 @@ sub-DAG 嵌套、业务 wrapper 实现 (LLM/Search/Extract adapter)、业务表 
 ## 测试
 
 ```bash
-pytest            # 81 tests
+pytest            # 92 tests
 ruff check .      # lint
 ```
 
