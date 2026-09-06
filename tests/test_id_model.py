@@ -42,7 +42,6 @@ def test_checkpoint_has_run_id_field():
         dag_name="d",
         workflow_hash=workflow_hash(dag),
         stage_statuses={},
-        state={},
         done_stages=[],
     )
     d = cp.to_dict()
@@ -133,11 +132,13 @@ def test_load_latest_uses_pointer_file(tmp_path):
     store = CheckpointStore(FileStorage(str(tmp_path)))
     store.save(Checkpoint(
         task_id="t-ptr", run_id="run-1", dag_name="d", workflow_hash=h,
-        stage_statuses={"s_x": "done"}, state={"v": 1}, done_stages=["s_x"],
+        stage_statuses={"s_x": "done"}, done_stages=["s_x"],
+        stage_deltas={"s_x": {"v": 1}},
     ))
     store.save(Checkpoint(
         task_id="t-ptr", run_id="run-2", dag_name="d", workflow_hash=h,
-        stage_statuses={"s_x": "done"}, state={"v": 2}, done_stages=["s_x"],
+        stage_statuses={"s_x": "done"}, done_stages=["s_x"],
+        stage_deltas={"s_x": {"v": 2}},
     ))
 
     latest = store.load_latest("t-ptr")

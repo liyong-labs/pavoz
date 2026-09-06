@@ -164,7 +164,6 @@ async def test_run_stage_legacy_cp_without_deltas_raises():
             dag_name="d",
             workflow_hash=workflow_hash(dag),
             stage_statuses={"s_a": "done", "s_b": "done", "s_c": "done"},
-            state={"seed": 0, "a": 1, "b": 2, "c": 3},
             done_stages=["s_a", "s_b", "s_c"],
         ))
         with pytest.raises(RuntimeError, match="stage_deltas"):

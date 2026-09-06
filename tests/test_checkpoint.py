@@ -66,8 +66,9 @@ async def test_resume_skips_done_stages(tmp_path):
 
     store.save(Checkpoint(
         task_id="t-cp", run_id="run-mid", dag_name="cp", workflow_hash=wh(dag),
-        stage_statuses={"s_a": "done"}, state={"a": 1}, done_stages=["s_a"],
+        stage_statuses={"s_a": "done"}, done_stages=["s_a"],
         producers={"a": "s_a"},
+        stage_deltas={"s_a": {"a": 1}},  # v0.8: state 不落盘, deltas 重建
     ))
     # 指针 runs/t-cp/latest → run-mid. resume 走 load_latest (指针): done_stages
     # 未全覆盖 → done guard 放行, 应只跑 s_b, 不重跑 s_a
@@ -89,8 +90,9 @@ async def test_resume_hash_mismatch_rejected(tmp_path):
 
     store.save(Checkpoint(
         task_id="t-mid", run_id="run-mid", dag_name="cp", workflow_hash=wh(dag1),
-        stage_statuses={"s_a": "done"}, state={"a": 1}, done_stages=["s_a"],
+        stage_statuses={"s_a": "done"}, done_stages=["s_a"],
         producers={"a": "s_a"},
+        stage_deltas={"s_a": {"a": 1}},  # v0.8: state 不落盘, deltas 重建
     ))
     dag2 = DAG("cp")
 

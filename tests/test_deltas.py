@@ -31,7 +31,6 @@ def _cp(dag, initial=None, deltas=None, done=None):
         dag_name=dag.name,
         workflow_hash=workflow_hash(dag),
         stage_statuses={"s_a": "done", "s_b": "done", "s_c": "done"},
-        state={"a": 99, "b": 2, "c": 3},  # 终态 (c 覆盖 a)
         done_stages=done or ["s_a", "s_b", "s_c"],
         producers={"a": "s_c", "b": "s_b", "c": "s_c"},  # a 的 producer 是最后写者 s_c
         initial_state=dict(initial or {}),

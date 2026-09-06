@@ -43,8 +43,10 @@ class CheckpointMismatchError(Exception):
 class Checkpoint:
     """一次 runtime.run() (一个 run_id) 的持久化状态.
 
-    stage_deltas + initial_state 合起来可重建任意 stage 前的 state
-    (M3 replay 用). 旧 cp (v0.5.0) 无这两个字段 → from_dict .get 默认 {}.
+    v0.8 (2026-09-06, user: 发布前向前看, 旧数据记录可弃): **state 不落盘** —
+    全量 state 是 stage_deltas + initial_state 的确定性函数 (_rebuild_state),
+    双份落盘 = 2x 体积 (ai_writer 真实 cp 2.8MB, state 冗余 ~1.4MB). 序列化层
+    只存增量 + 元数据; state 变 property (load 后惰性重建).
     """
 
     task_id: str
@@ -52,7 +54,6 @@ class Checkpoint:
     dag_name: str
     workflow_hash: str
     stage_statuses: dict[str, str]
-    state: dict[str, Any]
     done_stages: list[str]  # 按完成顺序
     # v0.1.1: state key → producer stage. 链式覆盖判定用.
     producers: dict[str, str] = field(default_factory=dict)
@@ -61,6 +62,18 @@ class Checkpoint:
     stage_deltas: dict[str, dict[str, Any]] = field(default_factory=dict)
     # v0.7: stage 完成 epoch ts — 恢复侧内容过期 (TTL) gate 判定用.
     stage_ts: dict[str, float] = field(default_factory=dict)
+    # v0.8: fork_run 的 overrides — fork cp 专用 (前序 keep 之上最后 merge).
+    # 曾靠全量 state 落盘持久化; state 不落盘后 overrides 必须显式存, 否则
+    # fork resume 时 rebuild 丢 overrides → 从 from_stage 重跑用旧输入 (bug).
+    fork_overrides: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def state(self) -> dict[str, Any]:
+        """全量 merge 后 state — 从 initial_state + stage_deltas 惰性重建.
+
+        不落盘 (v0.8 瘦身), 每次访问现算 (纯内存 dict merge, 2MB 级 ~10ms).
+        """
+        return self._rebuild_state()[0]
 
     def to_dict(self) -> dict:
         return {
@@ -69,12 +82,12 @@ class Checkpoint:
             "dag_name": self.dag_name,
             "workflow_hash": self.workflow_hash,
             "stage_statuses": self.stage_statuses,
-            "state": self.state,
             "done_stages": self.done_stages,
             "producers": self.producers,
             "initial_state": self.initial_state,
             "stage_deltas": self.stage_deltas,
             "stage_ts": self.stage_ts,
+            "fork_overrides": self.fork_overrides,
         }
 
     @classmethod
@@ -86,12 +99,12 @@ class Checkpoint:
             dag_name=d["dag_name"],
             workflow_hash=d["workflow_hash"],
             stage_statuses=d["stage_statuses"],
-            state=d["state"],
             done_stages=d["done_stages"],
             producers=dict(d.get("producers") or {}),
             initial_state=dict(d.get("initial_state") or {}),
             stage_deltas=dict(d.get("stage_deltas") or {}),
             stage_ts=dict(d.get("stage_ts") or {}),
+            fork_overrides=dict(d.get("fork_overrides") or {}),
         )
 
     def rebuild_state(self) -> dict[str, Any]:
@@ -156,6 +169,11 @@ class Checkpoint:
                 rebuilt.update(delta)
                 for k in delta:
                     producers[k] = done
+        # v0.8: fork overrides 最后 merge (覆盖前序 keep 产物; producer 标 <fork>)
+        if stop_at is None and self.fork_overrides:
+            rebuilt.update(self.fork_overrides)
+            for k in self.fork_overrides:
+                producers[k] = "<fork>"
         return rebuilt, producers
 
     def state_stats(self, top_n: int = 10) -> dict:

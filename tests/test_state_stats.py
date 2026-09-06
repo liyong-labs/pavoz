@@ -7,14 +7,13 @@ def _mk_cp() -> Checkpoint:
     return Checkpoint(
         task_id="t1", run_id="r1", dag_name="d", workflow_hash="h",
         stage_statuses={"s_a": "done", "s_b": "done"},
-        state={
-            "big_list": list(range(5000)),
-            "small": "x",
-            "article": "字" * 8000,
-        },
         done_stages=["s_a", "s_b"],
         initial_state={"seed": 0},
-        stage_deltas={"s_a": {"big_list": list(range(5000))}},
+        # v0.8: state 从 deltas 重建 — 终态 = initial + s_a + s_b
+        stage_deltas={
+            "s_a": {"big_list": list(range(5000))},
+            "s_b": {"article": "字" * 8000},
+        },
     )
 
 
@@ -40,7 +39,7 @@ def test_state_stats_top_n_caps_results():
 def test_state_stats_empty_state():
     cp = Checkpoint(
         task_id="t", run_id="r", dag_name="d", workflow_hash="h",
-        stage_statuses={}, state={}, done_stages=[])
+        stage_statuses={}, done_stages=[])
     st = cp.state_stats()
     assert st["state_total_bytes"] == 0
     assert st["top_keys"] == []

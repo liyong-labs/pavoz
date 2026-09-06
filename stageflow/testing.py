@@ -73,9 +73,10 @@ class TestPipe:
                 f"{cp.workflow_hash} ≠ 当前 DAG hash {cur_hash}. DAG 结构变了, "
                 f"不能 replay (只改 stage 函数体不影响 hash; 改依赖/retries/timeout 会)."
             )
-        if cp.done_stages and not cp.stage_deltas and not cp.initial_state and cp.state:
+        if cp.done_stages and not cp.stage_deltas:
+            # v0.8: state 不落盘, 不能依赖 cp.state (property 重建恒有值) — 只看 deltas
             raise RuntimeError(
-                "checkpoint 无 stage_deltas — v0.5.0 旧版产物, 请重新 run 一次再重放"
+                "checkpoint 无 stage_deltas — 旧版产物, 请重新 run 一次再重放"
             )
         pipe = cls(dag, initial_state=dict(cp.initial_state))
         for stage_name in cp.done_stages:

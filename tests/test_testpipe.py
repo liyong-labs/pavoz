@@ -140,7 +140,6 @@ async def test_replay_from_rejects_mismatched_and_legacy_cp():
             dag_name=dag.name,
             workflow_hash=workflow_hash(dag),
             stage_statuses={"s_fetch": "done", "s_process": "done"},
-            state={"items": [1], "fetched": [1], "processed": 1},
             done_stages=["s_fetch", "s_process"],
         ))
         legacy = store.load_latest("t-1")

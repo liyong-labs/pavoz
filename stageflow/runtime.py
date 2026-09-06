@@ -183,7 +183,7 @@ class Runtime:
                     f"DAG 结构变了, 不能 resume. "
                     f"如需强制重跑: 删 checkpoint 或 Runtime(..., resume=False)"
                 )
-            state = dict(cp.state)
+            state = cp.state  # property: 从 deltas 重建 (v0.8 不落盘)
             done_stages = list(cp.done_stages)
             stage_statuses = dict(cp.stage_statuses)
             producers = dict(cp.producers)
@@ -235,7 +235,7 @@ class Runtime:
             if status == "failed":
                 result.status = "failed"
                 result.error = err
-                self._save_cp(task_id, run_id, dag, state, done_stages, stage_statuses,
+                self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas, initial_state_saved, stage_ts)
                 return result
 
@@ -243,7 +243,7 @@ class Runtime:
                 stage_deltas[name] = delta  # 收集 (完成序)
             stage_ts[name] = time.time()   # v0.7: 完成时刻 (内容过期 TTL 判定用)
             done_stages.append(name)
-            self._save_cp(task_id, run_id, dag, state, done_stages, stage_statuses,
+            self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                           producers, stage_deltas, initial_state_saved, stage_ts)
             logger.info(
                 "task=%s run=%s stage=%s done (len state=%d)",
@@ -296,10 +296,11 @@ class Runtime:
         if stage is None:
             raise KeyError(f"stage '{stage_name}' 不在 DAG {dag.name} 里")
 
-        # pre-M2 (v0.5.0) cp 无 stage_deltas → rebuild 静默给出空输入 → 明确报错
-        if cp.done_stages and not cp.stage_deltas and not cp.initial_state and cp.state:
+        # 无 stage_deltas 的 cp (旧版产物 / 手工残缺) → rebuild 静默给出空输入 → 明确报错
+        # v0.8: state 不落盘, 检查不能依赖 cp.state (property 重建恒有值) — 只看 deltas
+        if cp.done_stages and not cp.stage_deltas:
             raise RuntimeError(
-                "checkpoint 无 stage_deltas — v0.5.0 旧版产物, 请重新 run 一次再重放"
+                "checkpoint 无 stage_deltas — 旧版产物, 请重新 run 一次再重放"
             )
 
         # 重建 stage 执行前 state + 执行时点 producers (覆盖判定用 — 不是终态
@@ -424,12 +425,12 @@ class Runtime:
             dag_name=cp.dag_name,
             workflow_hash=cur_hash,
             stage_statuses=statuses,
-            state=state,
             done_stages=keep,
             producers=producers,
             initial_state=dict(cp.initial_state),
             stage_deltas=kept_deltas,
             stage_ts={s: cp.stage_ts.get(s, 0.0) for s in keep},
+            fork_overrides=dict(overrides or {}),
         )
         self.checkpoint_store.save(fork_cp)  # save 同时把 latest 指针移到 fork
         logger.info(
@@ -530,7 +531,7 @@ class Runtime:
             raise TimeoutError(f"stage '{name}' 超时 ({timeout:.0f}s)") from None
 
     # ── checkpoint ──────────────────────────────────────
-    def _save_cp(self, task_id: str, run_id: str, dag: DAG, state: dict,
+    def _save_cp(self, task_id: str, run_id: str, dag: DAG,
                  done_stages: list, statuses: dict, producers: dict | None = None,
                  stage_deltas: dict | None = None,
                  initial_state: dict | None = None,
@@ -544,7 +545,6 @@ class Runtime:
                 dag_name=dag.name,
                 workflow_hash=workflow_hash(dag),
                 stage_statuses=dict(statuses),
-                state=state,
                 done_stages=list(done_stages),
                 producers=dict(producers or {}),
                 initial_state=dict(initial_state or {}),
