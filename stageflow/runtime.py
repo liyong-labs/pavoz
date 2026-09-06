@@ -410,6 +410,9 @@ class Runtime:
         if status == "failed":
             result.status = "failed"
             result.error = err
+        elif status == "cancelled":
+            result.status = "cancelled"
+            result.error = err
         else:
             result.status = "done"
         return result

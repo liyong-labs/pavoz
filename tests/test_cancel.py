@@ -6,9 +6,9 @@ resume 无缝续跑. stage 内长循环用 ctx.cancelled() 自行轮询自行退
 """
 
 from stageflow import (
+    DAG,
     CheckpointStore,
     Ctx,
-    DAG,
     FileStorage,
     ReadOnlyStateView,
     Runtime,
@@ -155,3 +155,35 @@ async def test_replay_emits_no_events():
         r2 = await rt.run_stage(dag, tid, "s_a")
         assert r2.status == "done"
     assert events == [], f"replay 不应发事件, 实际 {events}"
+
+
+async def test_run_stage_cancelled_passthrough():
+    """run_stage 重放已取消 task 的 stage → 透传 cancelled, 不误报 done."""
+    tid = "cxl7"
+    store = CheckpointStore(FileStorage(f"/tmp/stageflow-cancel-test-{tid}"))
+    box = {"cancel": False}
+    rt = Runtime(checkpoint_store=store, cancel_check=lambda t: box["cancel"])
+    ran: list[str] = []
+
+    dag = DAG("cxl7")
+
+    @dag.stage()
+    async def s_a(ctx):
+        ran.append("a")
+        box["cancel"] = True  # 模拟 run 中途外部取消
+        return {"a": 1}
+
+    @dag.stage(depends_on=["s_a"])
+    async def s_b(ctx):
+        ran.append("b")
+        return {"b": 2}
+
+    r1 = await rt.run(dag, tid)
+    assert r1.status == "cancelled"
+    assert ran == ["a"], f"s_b 应被拦截, 实际 ran={ran}"
+
+    r2 = await rt.run_stage(dag, tid, "s_b")
+    assert r2.status == "cancelled"
+    assert r2.error is not None
+    assert r2.stage_statuses.get("s_b") == "cancelled"
+    assert ran == ["a"], "取消态下 run_stage 不应真跑 stage"

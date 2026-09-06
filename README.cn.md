@@ -9,7 +9,7 @@
 仅标准库, 不绑定任何模型/搜索/存储服务。
 
 ```text
-Python 3.12+  |  MIT License  |  stdlib only  |  92 tests
+Python 3.12+  |  MIT License  |  stdlib only  |  110 tests
 ```
 
 stageflow 解决的是流程编排里最常用的一层: **声明式 DAG + 顺序执行 + 失败重试 +
@@ -233,7 +233,7 @@ sub-DAG 嵌套、业务 wrapper 实现 (LLM/Search/Extract adapter)、业务表 
 ## 测试
 
 ```bash
-pytest            # 92 tests
+pytest            # 110 tests
 ruff check .      # lint
 ```
 

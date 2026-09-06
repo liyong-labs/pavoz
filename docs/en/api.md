@@ -85,9 +85,9 @@ effect in seconds without re-running upstream stages.
 
 - `task_id`: caller-supplied or auto-generated UUID4
 - `run_id`: this run's UUID4 (or the reused original on resume)
-- `status`: `"running" | "done" | "failed"` (terminal: `done` / `failed`)
+- `status`: `"running" | "done" | "failed" | "cancelled"` (terminal: `done` / `failed` / `cancelled`)
 - `state`: final state
-- `stage_statuses`: each stage's `done` or `failed`
+- `stage_statuses`: each stage's `done`, `failed`, or `cancelled`
 - `error`: failure reason (exception converted to string)
 
 ### Failure semantics (no exception raised; returns `failed`)

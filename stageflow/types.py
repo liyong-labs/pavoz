@@ -34,9 +34,10 @@ class RunResult:
         stage_statuses: {stage_name: "done" | "failed" | "cancelled"} — only executed stages;
             resume-skipped stages are absent, never recorded as "skipped"
         stage_timings: {stage_name: wall-clock seconds} — executed stages only,
-            includes retry backoff sleeps
+            includes retry backoff sleeps; a cancelled-intercepted stage may
+            appear with ~0 duration
         status: "running" | "done" | "failed" | "cancelled"
-        error: error message if status == "failed"
+        error: error message if status in ("failed", "cancelled")
     """
 
     __slots__ = (

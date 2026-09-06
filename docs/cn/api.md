@@ -78,9 +78,9 @@ stage** — 调 prompt/参数秒级看效果, 不重跑前序 stage。
 
 - `task_id`: caller 提供或自动生成 UUID4
 - `run_id`: 本次 run 的 UUID4 (resume 时 = 复用的原 run_id)
-- `status`: `"running" | "done" | "failed"` (终态: `done` / `failed`)
+- `status`: `"running" | "done" | "failed" | "cancelled"` (终态: `done` / `failed` / `cancelled`)
 - `state`: 最终 state
-- `stage_statuses`: 每 stage 的 `done | failed`
+- `stage_statuses`: 每 stage 的 `done | failed | cancelled`
 - `error`: failed 原因 (异常转字符串)
 
 ### 失败语义 (不抛异常, 返回 failed)

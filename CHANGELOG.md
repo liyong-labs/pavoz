@@ -254,10 +254,6 @@ on disk — caller can clean up with their storage backend.
 - 0 行 core 修改 (除新增 storage_loader.py + 2 行 export)
 - reversal 是真实设计演化: v0.4 contrib 是反向教材, git history 保留以做记录
 
-## [Unreleased]
-
-- (规划) `replay --prompt-patch` (v0.2): checkpoint 加载 + 单 stage 重放
-
 ## [0.1.3] — 2026-09-05
 
 ### Fixed
