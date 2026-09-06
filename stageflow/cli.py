@@ -2,8 +2,9 @@
 
 用法:
     python -m stageflow run dags/demo.py --task-id abc [--input '{"name": "x"}']
-    python -m stageflow trace --task-id abc [--storage ./data]
+    python -m stageflow trace --task-id abc
     python -m stageflow state --task-id abc [--key k]
+    (存储目录: STAGEFLOW_STORAGE env, 默认 ~/.stageflow/data)
     python -m stageflow replay dags/demo.py --task-id abc --stage s_b [--patch patch.py]
 
 replay (--stage 单 stage 重放 + --patch 改 fn): v0.5.1 已 ship (2026-09-05).
@@ -35,6 +36,7 @@ def _load_dag(path: str):
     if not p.exists():
         raise SystemExit(f"dag 文件不存在: {p}")
     spec = importlib.util.spec_from_file_location("_stageflow_dag", p)
+    assert spec is not None and spec.loader is not None, f"无法加载 dag 文件: {p}"
     mod = importlib.util.module_from_spec(spec)
     sys.modules["_stageflow_dag"] = mod
     spec.loader.exec_module(mod)
@@ -43,7 +45,7 @@ def _load_dag(path: str):
         raise SystemExit(f"{p} 里没有 DAG 实例")
     if len(dags) > 1:
         # 挑名字匹配的; 没有则第一个 (文档建议每文件 1 个 DAG)
-        want = getattr(importlib.sys.modules["_stageflow_dag"], "DEFAULT_DAG", None)
+        want = getattr(sys.modules["_stageflow_dag"], "DEFAULT_DAG", None)
         for d in dags:
             if d.name == want:
                 return d
@@ -130,6 +132,7 @@ async def _cmd_replay(args) -> int:
             print(f"patch 文件不存在: {patch_path}")
             return 1
         spec = importlib.util.spec_from_file_location("_stageflow_patch", patch_path)
+        assert spec is not None and spec.loader is not None, f"无法加载 patch 文件: {patch_path}"
         mod = importlib.util.module_from_spec(spec)
         sys.modules["_stageflow_patch"] = mod
         spec.loader.exec_module(mod)

@@ -42,6 +42,14 @@ logger = logging.getLogger("stageflow")
 __all__ = ["CallMeta", "CallResult", "Ctx", "Runtime"]
 
 
+async def _noop_caller(kind: str, op: str, params: dict, meta: CallMeta) -> dict:
+    """默认 caller: no-op echo. 真调用由业务注入 (ai_writer adapter / TestPipe mock).
+
+    必须是 async — Ctx.call 恒 await caller (sync fn 会被 await 崩 TypeError).
+    """
+    return CallResult(kind=kind, op=op, params=params)
+
+
 class CallResult(dict):
     """ctx.call 的返回: 标准 dict, 业务 adapter 决定内容."""
 
@@ -74,7 +82,7 @@ class Ctx:
     stage_name: str
     state: ReadOnlyStateView
     caller: Callable[[str, str, dict, CallMeta], Awaitable[dict]] = field(
-        default=lambda kind, op, params, meta: CallResult(kind=kind, op=op, params=params)
+        default=_noop_caller
     )
     logger: logging.Logger = field(default_factory=lambda: logger)
     deadline: float | None = None  # absolute deadline (time.time()), 无 = 不限制
@@ -426,7 +434,7 @@ class Runtime:
         self.checkpoint_store.save(fork_cp)  # save 同时把 latest 指针移到 fork
         logger.info(
             "task=%s fork from_stage=%s overrides_keys=%s run=%s (原 run %s, 复用 %d 个前序 stage)",
-            task_id, from_stage, list((overrides or {}))[:8],
+            task_id, from_stage, list(overrides or {})[:8],
             fork_cp.run_id[:8], cp.run_id[:8], len(keep),
         )
         # 续跑: resume=True 读 latest (= fork cp), 跳过 keep, 从 from_stage 顺序执行
@@ -462,7 +470,7 @@ class Runtime:
                     dag=dag,
                     stage_name=name,
                     state=ReadOnlyStateView(snapshot(state)),
-                    caller=self.caller or _default_caller,
+                    caller=self.caller or _noop_caller,
                     deadline=stage_deadline,
                 )
                 delta = await self._with_timeout(fn, None, ctx, stage_deadline, name, task_id)
@@ -563,7 +571,3 @@ def _validate_task_id(task_id: str) -> None:
             f"(不含 '/', 防止 storage key 路径注入)"
         )
 
-
-async def _default_caller(kind: str, op: str, params: dict, meta: CallMeta) -> dict:
-    """默认 caller: no-op echo. 真调用由业务注入 (ai_writer adapter / TestPipe mock)."""
-    return CallResult(kind=kind, op=op, params=params)

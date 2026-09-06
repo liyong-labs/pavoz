@@ -18,7 +18,7 @@ from collections.abc import Awaitable, Callable
 
 from .checkpoint import Checkpoint, CheckpointMismatchError, workflow_hash
 from .dag import DAG
-from .runtime import Runtime, _default_caller
+from .runtime import Runtime, _noop_caller
 from .state import ReadOnlyStateView
 from .types import RunResult
 
@@ -43,7 +43,7 @@ class TestPipe:
         self.initial_state = initial_state or {}
         self._mocks: dict[str, MockFn] = {}
         self._recorded: list[dict] = []  # 每 stage 调用记录 (断言语料)
-        self._caller = caller or _default_caller
+        self._caller = caller or _noop_caller
 
     def mock(self, stage_name: str, fn: MockFn) -> TestPipe:
         """mock 指定 stage (跳过真实现). fn 收 ctx.state (ReadOnlyStateView)."""

@@ -10,7 +10,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-__all__ = ["ReadOnlyStateView", "StateConflictError", "merge_state", "validate_state"]
+__all__ = ["ReadOnlyStateView", "StateConflictError", "merge_state"]
 
 # json.dumps 能处理的类型白名单 (naobao 调研: set/datetime/Path/bytes 全要 raise)
 _JSON_TYPES = (str, int, float, bool, type(None), list, dict)
@@ -67,17 +67,6 @@ class ReadOnlyStateView:
 
     def __repr__(self) -> str:
         return f"<ReadOnlyState {self._data!r}>"
-
-
-def validate_state(state: Any) -> None:
-    """校验 state 可 json 序列化. 失败 raise TypeError (FatalError 上游处理)."""
-    # 快速路径: 整个 dict json.dumps 一次 (深度错误信息不完美, 但 v1 够)
-    try:
-        import json
-
-        json.dumps(state, ensure_ascii=False)
-    except (TypeError, ValueError) as e:
-        raise TypeError(f"state 必须 json-serializable, got: {e}") from e
 
 
 def _validate_value(key: str, value: Any, path: str = "") -> None:

@@ -3,17 +3,16 @@
 import pytest
 
 from stageflow import ReadOnlyStateView, StateConflictError
-from stageflow.state import deep_validate_state, merge_state, validate_state
+from stageflow.state import deep_validate_state, merge_state
 
 
 def test_validate_json_types_ok():
-    validate_state({"a": 1, "b": "x", "c": [1, 2], "d": {"e": True}, "f": None})
-    deep_validate_state({"a": 1, "c": [{"d": "x"}]})
+    deep_validate_state({"a": 1, "b": "x", "c": [1, 2], "d": {"e": True}, "f": None})
 
 
-def test_validate_rejects_set():
-    with pytest.raises(TypeError, match="json"):
-        validate_state({"a": {1, 2}})
+def test_deep_validate_rejects_set():
+    with pytest.raises(TypeError, match="json 序列化"):
+        deep_validate_state({"a": {1, 2}})
 
 
 def test_deep_validate_rejects_datetime():
