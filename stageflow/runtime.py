@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -508,7 +509,8 @@ class Runtime:
                 return "failed", state, str(e), producers, None
             except (RetryableError, TimeoutError) as e:
                 if attempt <= retries:
-                    backoff = min(2 ** (attempt - 1), 30)
+                    # v0.9: full jitter (AWS 惯例) — 多 task 同步重试防雷群
+                    backoff = random.uniform(0, min(2 ** (attempt - 1), 30))
                     logger.warning(
                         "task=%s run=%s stage=%s attempt=%d/%d %s, 退避 %ss: %s",
                         task_id, run_id[:8], name, attempt, retries + 1,
