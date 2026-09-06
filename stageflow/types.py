@@ -33,11 +33,16 @@ class RunResult:
         state: final merged state after all completed stages
         stage_statuses: {stage_name: "done" | "failed"} — only executed stages;
             resume-skipped stages are absent, never recorded as "skipped"
+        stage_timings: {stage_name: wall-clock seconds} — executed stages only,
+            includes retry backoff sleeps
         status: "running" | "done" | "failed"
         error: error message if status == "failed"
     """
 
-    __slots__ = ("dag_name", "error", "run_id", "stage_statuses", "state", "status", "task_id")
+    __slots__ = (
+        "dag_name", "error", "run_id", "stage_statuses", "stage_timings",
+        "state", "status", "task_id",
+    )
 
     def __init__(self, task_id: str, dag_name: str, run_id: str = ""):
         self.task_id = task_id
@@ -45,6 +50,7 @@ class RunResult:
         self.run_id = run_id
         self.state: dict = {}
         self.stage_statuses: dict[str, str] = {}
+        self.stage_timings: dict[str, float] = {}  # stage → 墙钟秒 (含 retry 退避)
         self.status: str = "running"
         self.error: str | None = None
 

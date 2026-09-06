@@ -110,6 +110,17 @@ class Runtime:
     checkpoint_store: CheckpointStore | None = None
     caller: Callable[[str, str, dict, CallMeta], Awaitable[dict]] | None = None
     default_timeout: float | None = None  # 整个 run 的 absolute deadline (秒)
+    on_event: Callable[[str, dict], None] | None = None  # v0.9: 生命周期事件钩子
+
+    # ── 事件 ────────────────────────────────────────────
+    def _emit(self, event: str, data: dict) -> None:
+        """生命周期事件 → on_event 回调. observer 异常隔离 (log + 忽略), 不影响 run."""
+        if self.on_event is None:
+            return
+        try:
+            self.on_event(event, data)
+        except Exception:
+            logger.exception("on_event 回调异常 (忽略) event=%s", event)
 
     # ── 主入口 ──────────────────────────────────────────
     async def run(
@@ -213,6 +224,9 @@ class Runtime:
 
         run_deadline = time.time() + self.default_timeout if self.default_timeout else None
 
+        self._emit("run_start", {"task_id": task_id, "run_id": run_id,
+                                 "dag": dag.name, "resume": cp is not None})
+
         order = dag.topo_order()
         for name in order:
             if name in done_stages:
@@ -228,10 +242,12 @@ class Runtime:
                     min(stage_deadline, run_deadline) if stage_deadline is not None else run_deadline
                 )
 
+            _st0 = time.time()
             status, new_state, err, producers, delta = await self._run_stage(
                 dag, stage.fn, name, task_id, run_id, state, stage.retries,
                 stage_deadline, producers,
             )
+            result.stage_timings[name] = time.time() - _st0
             state = new_state
             stage_statuses[name] = status
             result.stage_statuses = stage_statuses
@@ -243,6 +259,8 @@ class Runtime:
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas, initial_state_saved, stage_ts,
                               _fork_overrides)
+                self._emit("run_end", {"task_id": task_id, "run_id": run_id,
+                                       "dag": dag.name, "status": result.status})
                 return result
 
             if delta:
@@ -258,6 +276,8 @@ class Runtime:
             )
 
         result.status = "done"
+        self._emit("run_end", {"task_id": task_id, "run_id": run_id,
+                               "dag": dag.name, "status": result.status})
         return result
 
     # ── 单 stage 重放 (M3 调试) ─────────────────────────
@@ -341,7 +361,7 @@ class Runtime:
 
         status, new_state, err, _producers, _delta = await self._run_stage(
             dag, stage.fn, stage_name, task_id, run_id, state, stage.retries,
-            stage_deadline, producers,
+            stage_deadline, producers, emit=False,
         )
         result.state = new_state
         result.stage_statuses = {stage_name: status}
@@ -460,15 +480,21 @@ class Runtime:
         retries: int,
         stage_deadline: float | None,
         producers: dict[str, str],
+        emit: bool = True,
     ) -> tuple[str, dict, str | None, dict, dict | None]:
         """跑一个 stage (含 retry). 返 (status, new_state, error, producers, delta).
 
         delta = stage 的 return dict (成功, 可能 {}), 失败 = None.
         ctx.attempt = 1-based 当前尝试次数, RetryableError 重试时 +1.
+        emit=False → 不发生命周期事件 (单 stage 重放不是正式 run).
         """
         attempt = 0
+        _t0 = time.time()
         while True:
             attempt += 1
+            if emit:
+                self._emit("stage_start", {"task_id": task_id, "run_id": run_id,
+                                           "stage": name, "attempt": attempt})
             try:
                 # 每 attempt 深拷贝 state (防 stage 意外 mutate 污染后续重试)
                 ctx = Ctx(
@@ -498,6 +524,10 @@ class Runtime:
                 new_state = merge_state(state, delta, name, overwrite_keys=_ow)
                 for _k in delta:
                     producers[_k] = name
+                if emit:
+                    self._emit("stage_end", {"task_id": task_id, "run_id": run_id, "stage": name,
+                                             "attempt": attempt, "status": "done",
+                                             "duration": time.time() - _t0, "error": None})
                 return "done", new_state, None, producers, delta
 
             except (StageError, FatalError) as e:
@@ -506,6 +536,10 @@ class Runtime:
                     "task=%s run=%s stage=%s %s: %s",
                     task_id, run_id[:8], name, type(e).__name__, e,
                 )
+                if emit:
+                    self._emit("stage_end", {"task_id": task_id, "run_id": run_id, "stage": name,
+                                             "attempt": attempt, "status": "failed",
+                                             "duration": time.time() - _t0, "error": str(e)})
                 return "failed", state, str(e), producers, None
             except (RetryableError, TimeoutError) as e:
                 if attempt <= retries:
@@ -516,15 +550,27 @@ class Runtime:
                         task_id, run_id[:8], name, attempt, retries + 1,
                         type(e).__name__, backoff, e,
                     )
+                    if emit:
+                        self._emit("stage_retry", {"task_id": task_id, "run_id": run_id,
+                                                   "stage": name, "attempt": attempt,
+                                                   "backoff": backoff, "error": str(e)})
                     await asyncio.sleep(backoff)
                     continue
                 logger.warning(
                     "task=%s run=%s stage=%s retries 耗尽: %s",
                     task_id, run_id[:8], name, e,
                 )
+                if emit:
+                    self._emit("stage_end", {"task_id": task_id, "run_id": run_id, "stage": name,
+                                             "attempt": attempt, "status": "failed",
+                                             "duration": time.time() - _t0, "error": str(e)})
                 return "failed", state, str(e), producers, None
             except Exception as e:  # 未知异常 → FatalError 语义
                 logger.exception("task=%s run=%s stage=%s 未预期异常", task_id, run_id[:8], name)
+                if emit:
+                    self._emit("stage_end", {"task_id": task_id, "run_id": run_id, "stage": name,
+                                             "attempt": attempt, "status": "failed",
+                                             "duration": time.time() - _t0, "error": str(e)})
                 return "failed", state, f"FatalError: {e}", producers, None
 
     # ── timeout wrapper ─────────────────────────────────
