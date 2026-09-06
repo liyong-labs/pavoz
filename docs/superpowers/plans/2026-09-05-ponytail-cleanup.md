@@ -23,8 +23,8 @@
 ### Task 1: 删 trigger.py + 移除 TaskTrigger/TaskRef export
 
 **Files:**
-- Delete: `stageflow/stageflow/trigger.py` (53 行)
-- Modify: `stageflow/stageflow/__init__.py` (`from .trigger import TaskRef, TaskTrigger` 行 + `__all__` 列表的 `"TaskRef"`, `"TaskTrigger"`)
+- Delete: `stageflow/trigger.py` (53 行)
+- Modify: `stageflow/__init__.py` (`from .trigger import TaskRef, TaskTrigger` 行 + `__all__` 列表的 `"TaskRef"`, `"TaskTrigger"`)
 
 **Interfaces:**
 - Consumes: `TaskTrigger` / `TaskRef` 全无 import (ai_writer 也没用 — 它自己 poll DB)
@@ -59,7 +59,7 @@ Expected: ruff 0 violation; 38 tests PASS
 ### Task 2: 删 Ctx.log + Ctx.remaining_seconds (runtime.py:64-73)
 
 **Files:**
-- Modify: `stageflow/stageflow/runtime.py` (Ctx 类 log/remaining_seconds 方法删; logger 字段保留 — runtime 自身用; deadline 字段保留 — _with_timeout 用)
+- Modify: `stageflow/runtime.py` (Ctx 类 log/remaining_seconds 方法删; logger 字段保留 — runtime 自身用; deadline 字段保留 — _with_timeout 用)
 
 **Interfaces:**
 - Consumes: `ctx.log` / `ctx.remaining_seconds` 全无调用 (零调用确认)
@@ -108,7 +108,7 @@ Expected: ruff 0; 38 PASS
 ### Task 3: 删 Stage.metadata + @dag.stage 的 **metadata 参数 (dag.py:44, 65, 83)
 
 **Files:**
-- Modify: `stageflow/stageflow/dag.py` (Stage dataclass 删 metadata 字段; stage 装饰器删 **metadata)
+- Modify: `stageflow/dag.py` (Stage dataclass 删 metadata 字段; stage 装饰器删 **metadata)
 
 **Interfaces:**
 - Consumes: Stage.metadata 字段零调用 (Stage 实例外部从未读 .metadata)
@@ -141,7 +141,7 @@ Expected: 0/38
 ### Task 4: 删 DAG.entrypoints + DAG.depth_of (dag.py:96-98, 194-208)
 
 **Files:**
-- Modify: `stageflow/stageflow/dag.py` (删 entrypoints property + depth_of 方法)
+- Modify: `stageflow/dag.py` (删 entrypoints property + depth_of 方法)
 
 - [ ] **Step 1: 验证零调用**
 
@@ -169,12 +169,12 @@ Expected: 0/38
 ### Task 5: 删 CLI inspect 子命令 (cli.py:106-112, 135-138)
 
 **Files:**
-- Modify: `stageflow/stageflow/cli.py` (删 `_cmd_inspect` + subparser 注册)
+- Modify: `stageflow/cli.py` (删 `_cmd_inspect` + subparser 注册)
 
 - [ ] **Step 1: 验证零外部使用**
 
 ```bash
-grep -rn "stageflow inspect\|stageflow.*--call-id" <local-workspace> 2>/dev/null | head
+grep -rn "stageflow inspect\|stageflow.*--call-id" <local workspace> 2>/dev/null | head
 ```
 Expected: 0 hit (claude 仓 / docs / scripts 不调)
 
@@ -201,8 +201,8 @@ Expected: 0/38
 ### Task 6: 删 __main__.py (114 字节空壳)
 
 **Files:**
-- Delete: `stageflow/stageflow/__main__.py`
-- Modify: `stageflow/stageflow/__init__.py` (末尾加 `if __name__ == "__main__": from .cli import main; raise SystemExit(main())`)
+- Delete: `stageflow/__main__.py`
+- Modify: `stageflow/__init__.py` (末尾加 `if __name__ == "__main__": from .cli import main; raise SystemExit(main())`)
 
 - [ ] **Step 1: 验证 python -m stageflow 等价路径**
 

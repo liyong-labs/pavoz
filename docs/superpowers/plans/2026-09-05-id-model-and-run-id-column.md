@@ -727,7 +727,7 @@ Expected: 6 FAIL
 
 - [ ] **Step 3: Read existing runtime.py to plan the patch**
 
-Run: `wc -l stageflow/stageflow/runtime.py && grep -n "def run\|class Ctx\|class Runtime\|class CallResult\|new_id\|uuid" stageflow/stageflow/runtime.py`
+Run: `wc -l stageflow/runtime.py && grep -n "def run\|class Ctx\|class Runtime\|class CallResult\|new_id\|uuid" stageflow/stageflow/runtime.py`
 
 - [ ] **Step 4: Modify runtime.py**
 

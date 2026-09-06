@@ -44,9 +44,9 @@
 
 ## 项目结构
 
-- 源码: `stageflow/stageflow/` (git 跟踪)
+- 源码: `stageflow/` (git 跟踪)
 - 部署: N/A — stageflow 是 library, 跟 caller 一起 ship
-- 运行时测试: `<local-test>/` (如果有 ai_writer 集成 demo)
+- 集成测试: 由 caller 项目承接 (library 无独立部署)
 
 ## 开发铁律
 
