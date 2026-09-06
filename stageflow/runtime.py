@@ -87,6 +87,7 @@ class Ctx:
     )
     logger: logging.Logger = field(default_factory=lambda: logger)
     deadline: float | None = None  # absolute deadline (time.time()), 无 = 不限制
+    cancel_check: Callable[[], bool] | None = None  # v0.9: bound 到本 task 的取消检查
 
     async def call(self, kind: str, op: str, params: dict | None = None) -> dict:
         """Outbound call entry point. `kind` is opaque (caller-defined: 'llm', 'search', 'http', ...).
@@ -102,6 +103,14 @@ class Ctx:
         )
         return await self.caller(kind, op, params or {}, meta)
 
+    def cancelled(self) -> bool:
+        """协作式取消轮询: True = caller 要求取消本 task.
+
+        stage 内长循环 (批量 LLM 调用等) 自行决定轮询频率与退出方式 —
+        runtime 只在 stage 边界强制拦截.
+        """
+        return bool(self.cancel_check and self.cancel_check())
+
 
 @dataclass
 class Runtime:
@@ -111,6 +120,7 @@ class Runtime:
     caller: Callable[[str, str, dict, CallMeta], Awaitable[dict]] | None = None
     default_timeout: float | None = None  # 整个 run 的 absolute deadline (秒)
     on_event: Callable[[str, dict], None] | None = None  # v0.9: 生命周期事件钩子
+    cancel_check: Callable[[str], bool] | None = None  # v0.9: task_id → 已取消?
 
     # ── 事件 ────────────────────────────────────────────
     def _emit(self, event: str, data: dict) -> None:
@@ -121,6 +131,16 @@ class Runtime:
             self.on_event(event, data)
         except Exception:
             logger.exception("on_event 回调异常 (忽略) event=%s", event)
+
+    def _is_cancelled(self, task_id: str) -> bool:
+        """查取消状态. checker 异常 → 视为未取消 (fail-open, 检查器 bug 不杀业务 run)."""
+        if self.cancel_check is None:
+            return False
+        try:
+            return bool(self.cancel_check(task_id))
+        except Exception:
+            logger.exception("cancel_check 异常 (视为未取消) task=%s", task_id)
+            return False
 
     # ── 主入口 ──────────────────────────────────────────
     async def run(
@@ -252,6 +272,18 @@ class Runtime:
             stage_statuses[name] = status
             result.stage_statuses = stage_statuses
             result.state = state
+
+            if status == "cancelled":
+                result.status = "cancelled"
+                result.error = err
+                result.stage_statuses[name] = "cancelled"
+                self._emit("run_end", {"task_id": task_id, "run_id": run_id,
+                                       "dag": dag.name, "status": "cancelled"})
+                logger.warning(
+                    "task=%s run=%s cancelled at stage=%s (已完成 %d stages 已落 cp, resume 可续跑)",
+                    task_id, run_id[:8], name, len(done_stages),
+                )
+                return result
 
             if status == "failed":
                 result.status = "failed"
@@ -491,6 +523,16 @@ class Runtime:
         attempt = 0
         _t0 = time.time()
         while True:
+            if self._is_cancelled(task_id):
+                logger.warning("task=%s run=%s stage=%s 取消拦截 (attempt 前)",
+                               task_id, run_id[:8], name)
+                if emit:
+                    self._emit("stage_end", {"task_id": task_id, "run_id": run_id,
+                                             "stage": name, "attempt": attempt,
+                                             "status": "cancelled",
+                                             "duration": time.time() - _t0,
+                                             "error": "cancelled by caller"})
+                return "cancelled", state, "stage 已取消 (cancelled by caller)", producers, None
             attempt += 1
             if emit:
                 self._emit("stage_start", {"task_id": task_id, "run_id": run_id,
@@ -506,6 +548,7 @@ class Runtime:
                     state=ReadOnlyStateView(snapshot(state)),
                     caller=self.caller or _noop_caller,
                     deadline=stage_deadline,
+                    cancel_check=(lambda: self._is_cancelled(task_id)) if self.cancel_check else None,
                 )
                 delta = await self._with_timeout(fn, None, ctx, stage_deadline, name, task_id)
                 if delta is None:
