@@ -5,15 +5,17 @@
 > **This is stageflow's first business integration, presented as a reference implementation** — it demonstrates how a real business system expresses a "search → download → filter → synthesize → review → save" pipeline with stageflow.
 > stageflow itself has no coupling to ai_writer or the models/services it uses.
 
-## Integration outcome (shipped 2026-09-05)
+## Integration outcome (shipped 2026-09-05, fully migrated 2026-09-06)
 
 - 8-node DAG (first compose): `s_plan → s_search → s_download → s_filter → s_compress → s_compose → s_audit → s_save`
-- Revise (iterative refinement) is a **single super-node** (`s_revise`) wrapping the business's own iteration loop — a textbook example of "loops stay in business code": the loop carries its own save-per-iter + DB resume; stageflow only provides the unified entry point + exception contract + timeout
-- Checkpoints persist to the business's own object storage (via a `StorageBackend` adapter under an isolated prefix)
-- Resume: subprocess interrupted → restart the same task → runtime resumes completed nodes
-- End-to-end verification: first compose + revise both produce output normally; resume after interruption works
+- Revise (iterative refinement) is a **single super-node** (`s_revise`) wrapping the business's own iteration loop — a textbook example of "loops stay in business code": the loop carries its own save-per-iter and lands final state in the DB; stageflow only provides the unified entry point + exception contract + timeout (revise runs attach no checkpoint store, so stageflow checkpoints exist only for first-compose runs)
+- **Execution path unified (2026-09-06)**: the business's legacy first-compose phase machine (`_run_research_pipeline_impl` + `_impl_run_pipeline_phases`) and its single-slot checkpoint system (MinIO single-slot CP / hash-skip / resume slots) are deleted — subprocess → `integration/runner.run_pipeline` → stageflow Runtime runs the DAG. "Checkpoint" now means only the stageflow checkpoint (`initial_state` + `stage_deltas`)
+- Checkpoints persist under the business's own MinIO prefix `research/task_cp/stageflow/` via the `MinioStorage` adapter (`sf_storage.py`), at `runs/{task_id}/{run_id}/checkpoint` + a latest pointer — isolated from business artifacts (`research/{task_id}/v{v}/`) in the same bucket
+- Interrupted-run recovery: the production path **always runs `resume=False`** (restart creates a fresh run_id) — after restarting the same task, stage bodies read the previous run's checkpoint holding the relevant deltas (`sf_restore.py`) and skip the completed search/download/compress segments when the business-side gates hit (TTL freshness for the search pool, use-time checks for the download/compress pools); repeated LLM costs are absorbed by the business's external cache. A DB reset + rerun is never polluted by a stale checkpoint either
+- Debug replay: the business exposes `/api/research/replay-stage` → `Runtime.run_stage` single-stage replay (writes no checkpoint, leaves the latest pointer untouched)
+- End-to-end verification: after the full migration, first compose + revise both produce output normally; interrupted-run restarts recover correctly
 
-Code location (business side, not in this repo): `backend/integration/` — `research_pipeline_dag.py` (two DAGs) + `runner.py` (setup/route/exception boundary) + `sf_storage.py` (`StorageBackend` → object storage).
+Code location (business side, not in this repo): `backend/integration/` — `research_pipeline_dag.py` (two DAGs) + `runner.py` (setup/route/exception boundary) + `sf_storage.py` (`StorageBackend` → object storage) + `sf_restore.py` (previous-run checkpoints → business restore gates).
 
 ## Boundary (what belongs to whom)
 
@@ -21,7 +23,7 @@ Code location (business side, not in this repo): `backend/integration/` — `res
 |---|---|---|
 | DAG definition | — | Business-side file (8 nodes / `s_revise`) |
 | External calls | `ctx.call(kind, op, params)` Protocol | Business caller (reuses its own LLM/cache/billing) |
-| Checkpoint storage | `StorageBackend` Protocol | Business adapter (object storage / DB / file) |
+| Checkpoint | `StorageBackend` Protocol + cp format (`initial_state` + `stage_deltas` + `stage_ts`) | Business adapter (object storage / DB / file) under its own key prefix |
 | Loops (audit cascade) | — | Python `for`/`while` inside the stage |
 | Logging | Handled inside the stage | Plugs into existing business logs / SSE |
 
@@ -32,7 +34,7 @@ Code location (business side, not in this repo): `backend/integration/` — `res
 ```toml
 # Business pyproject.toml
 [tool.poetry.dependencies]  # or pip / uv
-stageflow = { git = "ssh://git@github.com/ebziw/stageflow.git", tag = "v0.5.0" }
+stageflow = { git = "ssh://git@github.com/ebziw/stageflow.git", tag = "v0.8.0" }
 ```
 
 ### 2. Define the DAG (pure graph; stage functions carry business logic)
@@ -81,29 +83,47 @@ rt = Runtime(
     checkpoint_store=CheckpointStore(ObjectStoreStorage(task_id)),  # per-task isolation
     default_timeout=4 * 3600,   # absolute deadline for the whole run
 )
-# First run / routine rerun: resume=False (default) — fresh run_id; repeat LLM
-# costs are absorbed by the business's external cache, so a full rerun is cheap.
-result = asyncio.run(rt.run(dag, task_id=task_id, initial_state={...}))
+# Production path always runs resume=False — every restart gets a fresh run_id.
+# Interrupted-run recovery reads the previous run's checkpoint and skips
+# completed segments when the business-side gates hit (TTL freshness for the
+# search pool, use-time checks for download/compress); repeat LLM costs are
+# absorbed by the business's external cache.
+# (Business read-side: sf_restore.py pulls search/download/compress artifacts
+# out of the previous run's stage_deltas.)
+result = asyncio.run(rt.run(
+    dag, task_id=task_id,
+    initial_state={...},
+    resume=False,
+))
 if result.status != "done":
     raise RuntimeError(result.error or "run failed")
-
-# Genuine continuation (restart after interruption, checkpoint exists):
-# resume=True — skips completed nodes and reuses the original run_id.
-# No checkpoint, or the run already completed → RuntimeError (done guard);
-# fall back to resume=False (new run_id).
-result = asyncio.run(rt.run(dag, task_id=task_id, resume=True))
 ```
 
-Key points (v0.5 ID model):
+The engine's generic continuation APIs remain available to other adopters:
+`resume=True` (continue the latest run, reusing its run_id and skipping
+completed nodes; no checkpoint, or the run already finished → `RuntimeError`
+done guard) and `fork_run` (branch from any historical stage with edited
+inputs). ai_writer's production path does not use them today — its debug
+replay goes through `Runtime.run_stage` (single stage, no checkpoint written,
+latest pointer untouched).
+
+Key points (v0.8; the ID model landed in v0.5):
 - `task_id` = business task id (opaque key; the stable idempotency key)
 - `run_id`: auto-generated UUID4 per `run()` — checkpoints are isolated by
   `runs/{task_id}/{run_id}/checkpoint` (+ a `runs/{task_id}/latest` pointer).
-  This prefix is isolated from business artifacts (`research/{task_id}/v{v}/`)
-  when both live in the same object store — no interference
-- Recovery modes: default is "restart from scratch + external LLM cache"
-  (`resume=False`); stageflow `resume=True` is reserved for real continuation
-  (interrupted-run restart). Single-writer per task is assumed — the business
-  worker's own lease/heartbeat guards concurrent runs
+  ai_writer's `MinioStorage` adapter maps these keys under its own MinIO prefix
+  `research/task_cp/stageflow/`, isolated from business artifacts
+  (`research/{task_id}/v{v}/`) when both live in the same bucket
+- Checkpoint contents = `initial_state` + `stage_deltas` (each node's raw
+  return, in completion order) + `stage_ts` (v0.7+, stage completion epoch);
+  full state is rebuilt from `initial_state` + `stage_deltas` — no redundant
+  state is written to disk since v0.8
+- Recovery modes: the production path always runs `resume=False` (restart from
+  scratch + external LLM cache); interrupted-run recovery reads the previous
+  run's checkpoint behind business gates (TTL freshness / use-time checks).
+  `resume=True` / `fork_run` are generic engine capabilities not exercised by
+  ai_writer today (debugging uses `run_stage`). Single-writer per task is
+  assumed — the business worker's own lease/heartbeat guards concurrent runs
 - Editing a stage's function body does not affect resume (`workflow_hash` only covers structure); changing dependencies/retries → refuse to resume
 - `Ctx.run_id` / `Ctx.attempt` and the caller's 4th `CallMeta` arg give business
   callers the execution context (task/run/stage/attempt) for trace recording
