@@ -108,8 +108,18 @@ class Ctx:
 
         stage 内长循环 (批量 LLM 调用等) 自行决定轮询频率与退出方式 —
         runtime 只在 stage 边界强制拦截.
+        checker 异常 → 视为未取消 (fail-open, 与 Runtime._is_cancelled 同语义).
         """
-        return bool(self.cancel_check and self.cancel_check())
+        if self.cancel_check is None:
+            return False
+        try:
+            return bool(self.cancel_check())
+        except Exception:
+            self.logger.exception(
+                "cancel_check 异常 (视为未取消) task=%s stage=%s",
+                self.task_id, self.stage_name,
+            )
+            return False
 
 
 @dataclass

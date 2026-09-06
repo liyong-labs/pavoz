@@ -5,7 +5,14 @@ resume 无缝续跑. stage 内长循环用 ctx.cancelled() 自行轮询自行退
 (循环留业务层原则).
 """
 
-from stageflow import CheckpointStore, DAG, FileStorage, Runtime
+from stageflow import (
+    CheckpointStore,
+    Ctx,
+    DAG,
+    FileStorage,
+    ReadOnlyStateView,
+    Runtime,
+)
 
 
 async def test_cancel_between_stages_then_resume():
@@ -79,6 +86,49 @@ async def test_cancel_check_exception_treated_as_not_cancelled():
 
     r = await Runtime(cancel_check=bad).run(dag, "cxl3")
     assert r.status == "done"
+
+
+async def test_ctx_cancelled_exception_treated_as_not_cancelled():
+    """stage 内 ctx.cancelled() 轮询遇 checker 异常 → 视为未取消 (fail-open), run 正常 done."""
+    calls = {"n": 0}
+    seen: dict = {}
+    dag = DAG("cxl5")
+
+    @dag.stage()
+    async def s_poll(ctx):
+        for _i in range(3):
+            calls["n"] += 1
+            if ctx.cancelled():
+                seen["stopped"] = True
+                return {"stopped": True}
+        seen["finished"] = True
+        return {"ok": 1}
+
+    def bad(task_id):
+        raise RuntimeError("checker db down")
+
+    r = await Runtime(cancel_check=bad).run(dag, "cxl5")
+    assert r.status == "done"
+    assert seen.get("finished") is True, "checker 异常应视为未取消, 循环正常跑完"
+    assert calls["n"] == 3, "每次轮询异常都不应终止 stage"
+    assert "stopped" not in seen
+
+
+def test_ctx_cancelled_direct_raising_checker_fail_open():
+    """直接构造 Ctx (公开 API) + raising checker → cancelled() 返 False 不抛 (fail-open)."""
+    def bad():
+        raise RuntimeError("checker db down")
+
+    ctx = Ctx(
+        task_id="cxl6",
+        run_id="run-cxl6",
+        attempt=1,
+        dag=DAG("cxl6"),
+        stage_name="s_x",
+        state=ReadOnlyStateView({}),
+        cancel_check=bad,
+    )
+    assert ctx.cancelled() is False
 
 
 async def test_replay_emits_no_events():
