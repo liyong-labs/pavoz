@@ -81,7 +81,7 @@ stage** — 调 prompt/参数秒级看效果, 不重跑前序 stage。
 - `status`: `"running" | "done" | "failed" | "cancelled"` (终态: `done` / `failed` / `cancelled`)
 - `state`: 最终 state
 - `stage_statuses`: 每 stage 的 `done | failed | cancelled`
-- `error`: failed 原因 (异常转字符串)
+- `error`: failed/cancelled 原因 (异常转字符串)
 
 ### 失败语义 (不抛异常, 返回 failed)
 

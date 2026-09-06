@@ -88,7 +88,7 @@ effect in seconds without re-running upstream stages.
 - `status`: `"running" | "done" | "failed" | "cancelled"` (terminal: `done` / `failed` / `cancelled`)
 - `state`: final state
 - `stage_statuses`: each stage's `done`, `failed`, or `cancelled`
-- `error`: failure reason (exception converted to string)
+- `error`: failure or cancellation reason (exception converted to string)
 
 ### Failure semantics (no exception raised; returns `failed`)
 
