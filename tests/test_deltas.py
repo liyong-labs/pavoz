@@ -1,8 +1,8 @@
 """M2: stage_deltas 存储 + rebuild_state_before 重建任意 stage 前 state."""
 import pytest
 
-from stageflow.checkpoint import Checkpoint, workflow_hash
-from stageflow.dag import DAG
+from pavoz.checkpoint import Checkpoint, workflow_hash
+from pavoz.dag import DAG
 
 
 def _dag():

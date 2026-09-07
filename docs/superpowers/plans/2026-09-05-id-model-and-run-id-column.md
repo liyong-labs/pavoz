@@ -1,13 +1,13 @@
-# stageflow ID Model (v0.5.0)
+# pavoz ID Model (v0.5.0)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal**: Adopt the industry-standard ID model (task_id + run_id + attempt) so stageflow callers have unambiguous execution tracing. UUID4 default for both task_id and run_id. Resume reuses the same run_id. Storage key includes run_id so multiple runs per task don't overwrite each other. Version bumps to v0.5.0 (breaking storage key change).
+**Goal**: Adopt the industry-standard ID model (task_id + run_id + attempt) so pavoz callers have unambiguous execution tracing. UUID4 default for both task_id and run_id. Resume reuses the same run_id. Storage key includes run_id so multiple runs per task don't overwrite each other. Version bumps to v0.5.0 (breaking storage key change).
 
 **Architecture**:
 - `task_id`: caller-supplied string (or auto-UUID4 if omitted). Stable across retries/resumes — the idempotency key (Temporal WorkflowId / DBOS SetWorkflowID pattern).
-- `run_id`: stageflow auto-generates UUID4 per `runtime.run()` invocation. Resume reuses the existing run_id (Temporal Continue-As-New / Airflow same run_id pattern).
-- `attempt`: stageflow auto-injects int (1-based) into Ctx. Increments on per-stage retries (Airflow try_number / Celery retries pattern).
+- `run_id`: pavoz auto-generates UUID4 per `runtime.run()` invocation. Resume reuses the existing run_id (Temporal Continue-As-New / Airflow same run_id pattern).
+- `attempt`: pavoz auto-injects int (1-based) into Ctx. Increments on per-stage retries (Airflow try_number / Celery retries pattern).
 - **call_id**: NOT in this plan. Caller's dispatcher is responsible for assigning call_id if it wants correlation between ctx.log and CallRecorder.
 
 **Tech Stack**: Python 3.12+, stdlib only (`uuid.uuid4`), pytest, ruff.
@@ -27,7 +27,7 @@
 - **No backward compatibility** — old `runs/{task_id}/checkpoint` keys are orphaned (hard cut)
 - **No ai_writer changes in this plan** — schema migration deferred to #37 plan
 - **49 existing tests must still pass** — no test removal/rename; existing Checkpoint constructors need `run_id` arg added
-- **ruff clean** — `ruff check stageflow/ tests/` returns 0 violations
+- **ruff clean** — `ruff check pavoz/ tests/` returns 0 violations
 
 ## Grill-Me Decisions (locked)
 
@@ -121,7 +121,7 @@ Runtime.run 入口第一行调用. 校验失败 → 立即 ValueError (不是中
 
 显式 run_id 参数 **推迟到 M3** (三维审查 2026-09-05 拍板: ai_writer 单写者 +
 pointer 无歧义; 加可选参数未来不 breaking, 真需要再加). API 纪律留文档:
-run_id 只由 stageflow 生成, caller 不传.
+run_id 只由 pavoz 生成, caller 不传.
 
 ```python
 async def run(
@@ -165,12 +165,12 @@ async def run(
 
 ### A6: 文档补充 (Task 3 增补)
 
-- 恢复模式说明: stageflow resume = "从 checkpoint 续跑" (真续跑场景);
+- 恢复模式说明: pavoz resume = "从 checkpoint 续跑" (真续跑场景);
   ai_writer 首版默认 "从头重跑 + external_cache 免单" (resume=False),
-  stageflow resume 留给未来真要续跑的场景
-- 并发: stageflow 假定 "每 task 单写者" (业务 lease/epoch 防并发);
+  pavoz resume 留给未来真要续跑的场景
+- 并发: pavoz 假定 "每 task 单写者" (业务 lease/epoch 防并发);
   同 (task_id, run_id) 双写 = 最后写者赢, 不做锁
-- cancel: stageflow 不感知 (in-process; worker 死 = run 死); 业务侧 kill + 重启
+- cancel: pavoz 不感知 (in-process; worker 死 = run 死); 业务侧 kill + 重启
 - MinIO 互操作: checkpoint 落 runs/{task_id}/{run_id}/checkpoint,
   与 ai_writer 既有 research/{task_id}/v{v}/ 结构隔离 (不同 bucket/前缀)
 - **M3 replay 不落 checkpoint** (防 pointer 污染: replay 是临时实验, 产出给开发
@@ -202,11 +202,11 @@ async def run(
 
 | File | Action | Responsibility |
 |---|---|---|
-| `stageflow/_id.py` | Create | `new_id()` helper using `uuid.uuid4()` |
-| `stageflow/types.py` | Modify | Add `run_id` to `RunResult` |
-| `stageflow/checkpoint.py` | Modify | Add `run_id` to `Checkpoint`; storage key includes run_id; `list_runs` + `load_latest` helpers |
-| `stageflow/runtime.py` | Modify | Ctx: add `run_id` + `attempt`; Runtime.run: auto-generate UUID4; Resume: reuse existing run_id |
-| `stageflow/__init__.py` | Modify | Export nothing new (RunResult/Checkpoint already exported) |
+| `pavoz/_id.py` | Create | `new_id()` helper using `uuid.uuid4()` |
+| `pavoz/types.py` | Modify | Add `run_id` to `RunResult` |
+| `pavoz/checkpoint.py` | Modify | Add `run_id` to `Checkpoint`; storage key includes run_id; `list_runs` + `load_latest` helpers |
+| `pavoz/runtime.py` | Modify | Ctx: add `run_id` + `attempt`; Runtime.run: auto-generate UUID4; Resume: reuse existing run_id |
+| `pavoz/__init__.py` | Modify | Export nothing new (RunResult/Checkpoint already exported) |
 | `tests/test_id_model.py` | Create | 10 tests: ID generation, resume reuse, attempt increment, storage key, list_runs |
 | `tests/test_id_model_legacy.py` | Modify | None — but EXISTING tests that construct Checkpoint need `run_id` arg added (one-time search/replace) |
 | `pyproject.toml` | Modify | Bump version 0.4.1 → 0.5.0 |
@@ -217,24 +217,24 @@ async def run(
 
 ---
 
-### Task 1: stageflow ID helpers + types + checkpoint schema
+### Task 1: pavoz ID helpers + types + checkpoint schema
 
 **Files:**
-- Create: `stageflow/_id.py`
-- Modify: `stageflow/types.py`
-- Modify: `stageflow/checkpoint.py`
+- Create: `pavoz/_id.py`
+- Modify: `pavoz/types.py`
+- Modify: `pavoz/checkpoint.py`
 - Test: `tests/test_id_model.py` (partial — 4 tests for this task)
 
 **Interfaces:**
 - Consumes: nothing
 - Produces: `new_id() -> str`, `RunResult.run_id`, `Checkpoint.run_id`, `_key(task_id, run_id) -> str`
 
-- [ ] **Step 1: Create `stageflow/_id.py`**
+- [ ] **Step 1: Create `pavoz/_id.py`**
 
 ```python
 """ID generation helpers.
 
-stageflow requires Python 3.12+ where uuid.uuid4 is the canonical
+pavoz requires Python 3.12+ where uuid.uuid4 is the canonical
 UUID generator. uuid.uuid7 is 3.14+; we use uuid4 to keep the
 3.12 floor. Uniqueness is the requirement — time-ordering is not.
 """
@@ -255,15 +255,15 @@ def new_id() -> str:
 Create `tests/test_id_model.py`:
 
 ```python
-"""stageflow ID model: task_id (caller) + run_id (auto) + attempt (auto int).
+"""pavoz ID model: task_id (caller) + run_id (auto) + attempt (auto int).
 
 Resumes reuse run_id. Storage key includes run_id so multiple runs of
 the same task don't overwrite each other.
 """
-from stageflow.checkpoint import CheckpointStore, workflow_hash
-from stageflow.dag import DAG
-from stageflow.storage import FileStorage
-from stageflow.types import RunResult
+from pavoz.checkpoint import CheckpointStore, workflow_hash
+from pavoz.dag import DAG
+from pavoz.storage import FileStorage
+from pavoz.types import RunResult
 
 
 # ── RunResult ──────────────────────────────────────────────
@@ -314,15 +314,15 @@ def test_checkpoint_storage_key_includes_run_id():
 
 - [ ] **Step 3: Run tests to verify they fail**
 
-Run: `cd stageflow && python3 -m pytest tests/test_id_model.py -v`
+Run: `cd pavoz && python3 -m pytest tests/test_id_model.py -v`
 Expected: FAIL — `TypeError: __init__() got an unexpected keyword argument 'run_id'` and similar.
 
 - [ ] **Step 4: Add `run_id` to `RunResult`**
 
-Modify `stageflow/types.py`:
+Modify `pavoz/types.py`:
 
 ```python
-"""stageflow 基础类型: 异常契约 + 运行结果."""
+"""pavoz 基础类型: 异常契约 + 运行结果."""
 
 __all__ = ["FatalError", "RetryableError", "RunResult", "StageError"]
 
@@ -353,7 +353,7 @@ class RunResult:
 
     Attributes:
         task_id: caller-supplied (or auto UUID4), stable across retries/resumes
-        run_id: stageflow auto UUID4 per runtime.run() — distinguishes runs
+        run_id: pavoz auto UUID4 per runtime.run() — distinguishes runs
         state: final merged state after all completed stages
         stage_statuses: {stage_name: "done" | "failed" | "skipped"}
         status: "running" | "done" | "failed"
@@ -378,7 +378,7 @@ class RunResult:
 
 - [ ] **Step 5: Add `run_id` to `Checkpoint` + new storage key format**
 
-Modify `stageflow/checkpoint.py` — replace the entire file content with:
+Modify `pavoz/checkpoint.py` — replace the entire file content with:
 
 ```python
 """Checkpoint: per-run persistence + workflow hash + mismatch reject.
@@ -549,7 +549,7 @@ Expected: Some FAIL with `TypeError: __init__() missing 1 required positional ar
 
 - [ ] **Step 8: Find and fix existing Checkpoint constructor calls**
 
-Run: `grep -rln "Checkpoint(" stageflow/tests/`
+Run: `grep -rln "Checkpoint(" pavoz/tests/`
 
 For each file that constructs Checkpoint, add `run_id="test-run"` (or a unique UUID) to the constructor. Pattern:
 
@@ -572,13 +572,13 @@ Expected: 50 passed (46 existing + 4 new)
 
 - [ ] **Step 10: ruff check**
 
-Run: `ruff check stageflow/ tests/`
+Run: `ruff check pavoz/ tests/`
 Expected: All checks passed
 
 - [ ] **Step 11: Commit**
 
 ```bash
-cd stageflow && git add stageflow/_id.py stageflow/types.py stageflow/checkpoint.py tests/ && git commit -m "feat(id-model): add run_id to RunResult + Checkpoint + storage key
+cd pavoz && git add pavoz/_id.py pavoz/types.py pavoz/checkpoint.py tests/ && git commit -m "feat(id-model): add run_id to RunResult + Checkpoint + storage key
 
 Adopt Temporal/DBOS/Airflow composite-ID pattern: task_id stable across
 runs (idempotency key), run_id auto-generated per runtime.run().
@@ -592,10 +592,10 @@ Hard cut — no legacy loader.
 
 ---
 
-### Task 2: stageflow Runtime — auto-generate task_id / run_id / attempt
+### Task 2: pavoz Runtime — auto-generate task_id / run_id / attempt
 
 **Files:**
-- Modify: `stageflow/runtime.py`
+- Modify: `pavoz/runtime.py`
 - Modify: `tests/test_id_model.py` (add 6 tests)
 
 **Interfaces:**
@@ -608,11 +608,11 @@ Append to `tests/test_id_model.py`:
 
 ```python
 import pytest
-from stageflow import Runtime
+from pavoz import Runtime
 
 
 async def test_runtime_auto_generates_task_id_when_omitted():
-    """No task_id → stageflow auto-generates UUID4 (36 chars)."""
+    """No task_id → pavoz auto-generates UUID4 (36 chars)."""
     dag = DAG("d")
 
     @dag.stage()
@@ -656,7 +656,7 @@ async def test_ctx_has_run_id_and_attempt():
 
 async def test_attempt_increments_on_stage_retry():
     """Stage that fails first attempt → attempt 2 on retry."""
-    from stageflow import RetryableError
+    from pavoz import RetryableError
 
     dag = DAG("d")
     attempts_seen: list[int] = []
@@ -727,11 +727,11 @@ Expected: 6 FAIL
 
 - [ ] **Step 3: Read existing runtime.py to plan the patch**
 
-Run: `wc -l stageflow/runtime.py && grep -n "def run\|class Ctx\|class Runtime\|class CallResult\|new_id\|uuid" stageflow/stageflow/runtime.py`
+Run: `wc -l pavoz/runtime.py && grep -n "def run\|class Ctx\|class Runtime\|class CallResult\|new_id\|uuid" pavoz/pavoz/runtime.py`
 
 - [ ] **Step 4: Modify runtime.py**
 
-Make these edits to `stageflow/runtime.py`:
+Make these edits to `pavoz/runtime.py`:
 
 **Edit 1**: top of file, add import:
 
@@ -949,13 +949,13 @@ Expected: 56 passed (46 existing + 10 new)
 
 - [ ] **Step 7: ruff check**
 
-Run: `ruff check stageflow/ tests/`
+Run: `ruff check pavoz/ tests/`
 Expected: All checks passed
 
 - [ ] **Step 8: Commit**
 
 ```bash
-cd stageflow && git add stageflow/runtime.py tests/test_id_model.py && git commit -m "feat(runtime): auto-generate task_id (UUID4 default) + run_id per run
+cd pavoz && git add pavoz/runtime.py tests/test_id_model.py && git commit -m "feat(runtime): auto-generate task_id (UUID4 default) + run_id per run
 
 Adopt Temporal/DBOS industry pattern:
 - task_id: caller-supplied (or UUID4 default) — stable idempotency key
@@ -1003,7 +1003,7 @@ Prepend (above [0.4.1]) a new entry:
 
 ### Added (industry-standard ID model)
 
-- `task_id` parameter to `Runtime.run()` is now optional; stageflow auto-generates UUID4 if omitted. Stable across retries/resumes — the idempotency key.
+- `task_id` parameter to `Runtime.run()` is now optional; pavoz auto-generates UUID4 if omitted. Stable across retries/resumes — the idempotency key.
 - `run_id` auto-generated per `Runtime.run()` invocation (UUID4). Distinguishes original / resume / replay runs of the same task.
 - `Ctx.run_id` and `Ctx.attempt` (1-based int) injected automatically.
 - `CheckpointStore.list_runs(task_id)` and `load_latest(task_id)` helpers.
@@ -1048,9 +1048,9 @@ Find sections describing `RunResult` and `Checkpoint` types. Add `run_id` field 
 
 Run:
 ```bash
-cd stageflow && python3 -m pytest tests/ -q && \
-    python3 -m ruff check stageflow/ tests/ && \
-    python3 -c "import stageflow; print(stageflow.__version__)"
+cd pavoz && python3 -m pytest tests/ -q && \
+    python3 -m ruff check pavoz/ tests/ && \
+    python3 -c "import pavoz; print(pavoz.__version__)"
 ```
 
 Expected: `56 passed`, `All checks passed!`, `0.5.0`.
@@ -1058,16 +1058,16 @@ Expected: `56 passed`, `All checks passed!`, `0.5.0`.
 - [ ] **Step 9: Commit + tag**
 
 ```bash
-cd stageflow && git add pyproject.toml CHANGELOG.md README.md docs/ && \
+cd pavoz && git add pyproject.toml CHANGELOG.md README.md docs/ && \
     git commit -m "docs: v0.5.0 ID model release notes + API/runbook updates
 
 Storage key format changed to runs/{task_id}/{run_id}/checkpoint (BREAKING).
 task_id now optional (auto UUID4 default). run_id and Ctx.attempt added.
 56 tests pass; ruff clean."
 
-git -C stageflow tag -d v0.4.1 2>/dev/null  # in case stale
-git -C stageflow tag v0.5.0
-git -C stageflow tag --list | grep v0.5
+git -C pavoz tag -d v0.4.1 2>/dev/null  # in case stale
+git -C pavoz tag v0.5.0
+git -C pavoz tag --list | grep v0.5
 ```
 
 Expected: tag `v0.5.0` exists locally. **DO NOT push — push is user's call.**
@@ -1100,7 +1100,7 @@ No type drift.
 
 ## Execution
 
-Plan complete and saved to `stageflow/docs/superpowers/plans/2026-09-05-id-model-and-run-id-column.md`.
+Plan complete and saved to `pavoz/docs/superpowers/plans/2026-09-05-id-model-and-run-id-column.md`.
 
 3 tasks, ~1 day:
 1. **Task 1** — types + checkpoint schema (~30 min)

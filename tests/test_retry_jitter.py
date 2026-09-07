@@ -3,12 +3,12 @@
 雷群防护 (AWS 惯例): 多 task 同时失败时退避随机化, 不再整秒对齐.
 """
 
-from stageflow import DAG, RetryableError, Runtime
+from pavoz import DAG, RetryableError, Runtime
 
 
 async def test_backoff_full_jitter(monkeypatch):
     """第一次重试 (attempt=1) 的退避 = uniform(0, 2^0=1)."""
-    import stageflow.runtime as rt_mod
+    import pavoz.runtime as rt_mod
 
     captured: dict = {}
     monkeypatch.setattr(

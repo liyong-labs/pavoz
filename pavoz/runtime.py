@@ -38,7 +38,7 @@ from .dag import DAG
 from .state import ReadOnlyStateView, deep_validate_state, merge_state, snapshot
 from .types import FatalError, RetryableError, RunResult, StageError
 
-logger = logging.getLogger("stageflow")
+logger = logging.getLogger("pavoz")
 
 __all__ = ["CallMeta", "CallResult", "Ctx", "Runtime"]
 
@@ -435,9 +435,9 @@ class Runtime:
         (与 checkpoint state 同为 json-serializable dict).
 
         调试闭环 (user 2026-09-06 拍板 "任意过去节点取输入改一改装回去"):
-            stageflow export-input --task-id X --from-stage s_b > in.json
+            pavoz export-input --task-id X --from-stage s_b > in.json
             # 人编辑 in.json (改几个 key)
-            stageflow fork-run --task-id X --from-stage s_b --input in.json
+            pavoz fork-run --task-id X --from-stage s_b --input in.json
         from_stage 可以是: ① 已完成的 stage (截断重跑) ② 失败/未完成的 stage
         (其依赖已完成 — 修输入重跑失败点, 等价注入式 resume).
 

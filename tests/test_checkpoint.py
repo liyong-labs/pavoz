@@ -2,9 +2,9 @@
 
 import pytest
 
-from stageflow import DAG, CheckpointMismatchError, CheckpointStore, Runtime
-from stageflow.checkpoint import workflow_hash
-from stageflow.storage import FileStorage
+from pavoz import DAG, CheckpointMismatchError, CheckpointStore, Runtime
+from pavoz.checkpoint import workflow_hash
+from pavoz.storage import FileStorage
 
 
 def _dag():
@@ -61,8 +61,8 @@ async def test_resume_skips_done_stages(tmp_path):
     rt = Runtime(checkpoint_store=store)
 
     # 手动构造 mid-run checkpoint: a done, b 没跑 (模拟 a 后进程断)
-    from stageflow import Checkpoint
-    from stageflow.checkpoint import workflow_hash as wh
+    from pavoz import Checkpoint
+    from pavoz.checkpoint import workflow_hash as wh
 
     store.save(Checkpoint(
         task_id="t-cp", run_id="run-mid", dag_name="cp", workflow_hash=wh(dag),
@@ -85,8 +85,8 @@ async def test_resume_hash_mismatch_rejected(tmp_path):
     rt = Runtime(checkpoint_store=store)
 
     # 构造一个中途 cp, 然后改 DAG 结构 (retries) → mismatch
-    from stageflow import Checkpoint
-    from stageflow.checkpoint import workflow_hash as wh
+    from pavoz import Checkpoint
+    from pavoz.checkpoint import workflow_hash as wh
 
     store.save(Checkpoint(
         task_id="t-mid", run_id="run-mid", dag_name="cp", workflow_hash=wh(dag1),

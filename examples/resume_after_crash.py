@@ -11,7 +11,7 @@ Run:  python examples/resume_after_crash.py          # crashes at stage 2
 import asyncio
 import sys
 
-from stageflow import CheckpointStore, DAG, FileStorage, Runtime
+from pavoz import CheckpointStore, DAG, FileStorage, Runtime
 
 dag = DAG("resume")
 

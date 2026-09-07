@@ -1,9 +1,9 @@
 # 贡献指南
 
-stageflow 是通用流程编排库 — 贡献前请先读 [`docs/architecture.md`](docs/architecture.md),
+pavoz 是通用流程编排库 — 贡献前请先读 [`docs/architecture.md`](docs/architecture.md),
 理解三个不变量:
 
-1. **core 零依赖**: `stageflow/` 不 import 任何第三方库 (stdlib only)。
+1. **core 零依赖**: `pavoz/` 不 import 任何第三方库 (stdlib only)。
    存储/外部调用/任务表全部走 Protocol, 由业务侧注入。
 2. **循环留在业务层**: 框架只有 DAG + per-node retries + checkpoint 三种能力。
    审计循环、收敛 gate 等是 stage 函数内的普通 Python — 不要给框架加
@@ -14,8 +14,8 @@ stageflow 是通用流程编排库 — 贡献前请先读 [`docs/architecture.md
 ## 开发环境
 
 ```bash
-git clone git@github.com:ebziw/stageflow.git
-cd stageflow
+git clone git@github.com:liyong-labs/pavoz.git
+cd pavoz
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 ```
@@ -23,7 +23,7 @@ pip install -e ".[dev]"
 ## 质量门槛 (PR 前必须全过)
 
 ```bash
-ruff check stageflow/ tests/    # lint
+ruff check pavoz/ tests/    # lint
 pytest                           # 38+ tests
 ```
 

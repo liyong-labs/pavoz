@@ -5,7 +5,7 @@ resume 无缝续跑. stage 内长循环用 ctx.cancelled() 自行轮询自行退
 (循环留业务层原则).
 """
 
-from stageflow import (
+from pavoz import (
     DAG,
     CheckpointStore,
     Ctx,
@@ -18,7 +18,7 @@ from stageflow import (
 async def test_cancel_between_stages_then_resume():
     """s_a 完成后取消 → cancelled (s_b 未跑); 解除取消 → resume 续跑到 done."""
     tid = "cxl1"
-    store = CheckpointStore(FileStorage(f"/tmp/stageflow-cancel-test-{tid}"))
+    store = CheckpointStore(FileStorage(f"/tmp/pavoz-cancel-test-{tid}"))
     box = {"cancel": False}
     rt = Runtime(checkpoint_store=store, cancel_check=lambda t: box["cancel"])
     ran: list[str] = []
@@ -135,7 +135,7 @@ async def test_replay_emits_no_events():
     """run_stage (单 stage 重放) 全程 0 事件 — replay 不是正式 run (Task 2 契约回归)."""
     import tempfile
 
-    from stageflow import CheckpointStore, FileStorage
+    from pavoz import CheckpointStore, FileStorage
 
     events: list[tuple[str, dict]] = []
     tid = "cxl4"
@@ -160,7 +160,7 @@ async def test_replay_emits_no_events():
 async def test_run_stage_cancelled_passthrough():
     """run_stage 重放已取消 task 的 stage → 透传 cancelled, 不误报 done."""
     tid = "cxl7"
-    store = CheckpointStore(FileStorage(f"/tmp/stageflow-cancel-test-{tid}"))
+    store = CheckpointStore(FileStorage(f"/tmp/pavoz-cancel-test-{tid}"))
     box = {"cancel": False}
     rt = Runtime(checkpoint_store=store, cancel_check=lambda t: box["cancel"])
     ran: list[str] = []

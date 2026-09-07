@@ -1,15 +1,15 @@
-"""stageflow ID model: task_id (caller) + run_id (auto) + attempt (auto int).
+"""pavoz ID model: task_id (caller) + run_id (auto) + attempt (auto int).
 
 Resumes reuse run_id. Storage key includes run_id so multiple runs of
 the same task don't overwrite each other.
 """
 import pytest
 
-from stageflow import RetryableError, Runtime, StageError
-from stageflow.checkpoint import Checkpoint, CheckpointStore, workflow_hash
-from stageflow.dag import DAG
-from stageflow.storage import FileStorage
-from stageflow.types import RunResult
+from pavoz import RetryableError, Runtime, StageError
+from pavoz.checkpoint import Checkpoint, CheckpointStore, workflow_hash
+from pavoz.dag import DAG
+from pavoz.storage import FileStorage
+from pavoz.types import RunResult
 
 # ── RunResult ──────────────────────────────────────────────
 
@@ -59,7 +59,7 @@ def test_checkpoint_storage_key_includes_run_id():
 # ── Runtime: task_id / run_id / attempt 自动生成 ─────────
 
 async def test_runtime_auto_generates_task_id_when_omitted():
-    """No task_id → stageflow auto-generates UUID4 (36 chars)."""
+    """No task_id → pavoz auto-generates UUID4 (36 chars)."""
     dag = DAG("d")
 
     @dag.stage()
@@ -260,7 +260,7 @@ async def test_task_id_rejects_unicode():
 
 async def test_caller_receives_call_meta():
     """caller 第 4 参 CallMeta: task_id/run_id/stage/attempt, frozen."""
-    from stageflow.runtime import CallMeta
+    from pavoz.runtime import CallMeta
 
     dag = DAG("d")
     metas: list = []

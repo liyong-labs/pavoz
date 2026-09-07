@@ -6,7 +6,7 @@
 
 ```python
 # dags/my_pipeline.py
-from stageflow import DAG
+from pavoz import DAG
 
 dag = DAG("my_pipeline")
 
@@ -28,27 +28,27 @@ async def s_save(ctx):
 ## 2. 跑 (CLI)
 
 ```bash
-python -m stageflow run dags/my_pipeline.py
+python -m pavoz run dags/my_pipeline.py
 # 输出 JSON: {task_id, dag, status, stage_statuses, state}
 ```
 
 带初始 state + checkpoint (resume):
 
 ```bash
-STAGEFLOW_STORAGE=/data/sf \
-python -m stageflow run dags/my_pipeline.py \
+PAVOZ_STORAGE=/data/sf \
+python -m pavoz run dags/my_pipeline.py \
   --task-id task-1 --input '{"query": "北方华创"}'
 # 中途断了再跑 (--resume): 已完成 stage 跳过
-STAGEFLOW_STORAGE=/data/sf \
-python -m stageflow run dags/my_pipeline.py --task-id task-1 --resume
+PAVOZ_STORAGE=/data/sf \
+python -m pavoz run dags/my_pipeline.py --task-id task-1 --resume
 ```
 
 ## 3. 跑 (代码)
 
 ```python
 import asyncio
-from stageflow import Runtime, CheckpointStore
-from stageflow.storage import FileStorage
+from pavoz import Runtime, CheckpointStore
+from pavoz.storage import FileStorage
 from dags.my_pipeline import dag
 
 async def main():
@@ -83,7 +83,7 @@ rt = Runtime(caller=my_business_caller)  # async (kind, op, params) -> dict
 
 ```python
 import pytest
-from stageflow import TestPipe
+from pavoz import TestPipe
 from dags.my_pipeline import dag
 
 @pytest.mark.asyncio
@@ -109,7 +109,7 @@ async def test_pipeline_with_mocked_search():
 重放示例 — 改完某个 stage 的 prompt/参数后, 只重跑 `s_process`:
 
 ```bash
-python -m stageflow replay dags/my_pipeline.py --task-id task-1 --stage s_process
+python -m pavoz replay dags/my_pipeline.py --task-id task-1 --stage s_process
 ```
 
 更多参考:

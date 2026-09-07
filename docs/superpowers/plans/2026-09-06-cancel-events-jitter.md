@@ -1,8 +1,8 @@
-# stageflow 协作式取消 + 事件钩子 + full-jitter 退避 Implementation Plan
+# pavoz 协作式取消 + 事件钩子 + full-jitter 退避 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 给 stageflow 补齐对标成熟编排组件的功能缺口三件套：协作式取消（Runtime.cancel_check / Ctx.cancelled）、生命周期事件钩子（Runtime.on_event + RunResult.stage_timings）、重试退避 full-jitter。
+**Goal:** 给 pavoz 补齐对标成熟编排组件的功能缺口三件套：协作式取消（Runtime.cancel_check / Ctx.cancelled）、生命周期事件钩子（Runtime.on_event + RunResult.stage_timings）、重试退避 full-jitter。
 
 **Architecture:** 全部挂在既有 `Runtime` dataclass 属性上（可选回调，默认 None = 零行为变化）。取消 = 检查点拦截（stage 循环顶 + 重试循环顶），已完成 stage 照常落 cp → resume 天然续跑，不新增控制流原语（"循环留业务层"原则不变）。事件 = 同步回调 fire-and-forget，observer 异常隔离（fail-open）；cancel_check 异常视为未取消（fail-open）。
 
@@ -17,7 +17,7 @@
 - 不破坏现有 99 tests；每 task 收尾跑全量 `python -m pytest tests/ -q` 必须 99+新增 全绿；pyflakes 0 报错
 - 新异常路径一律 fail-open：on_event 回调异常 → log + 吞掉；cancel_check 异常 → 视为未取消。禁止让 observer/检查器的 bug 杀死业务 run
 - 状态机扩展：`RunResult.status` 新增唯一值 `"cancelled"`（与 "running"|"done"|"failed" 并列）；`stage_statuses` 值域同步加 "cancelled"
-- 仓库：stageflow repo；改前先 Read 目标区域拿精确文本（行号会漂移）；1 逻辑单元 = 1 commit；禁止 git reset
+- 仓库：pavoz repo；改前先 Read 目标区域拿精确文本（行号会漂移）；1 逻辑单元 = 1 commit；禁止 git reset
 - 本 plan 不 bump `__version__`（release wave 做）；CHANGELOG 写在 `## [Unreleased]` 下
 
 ---
@@ -25,7 +25,7 @@
 ### Task 1: 重试退避 full-jitter
 
 **Files:**
-- Modify: `stageflow/runtime.py`（顶部 import 区 ~line 22；`_run_stage` 内 Retryable 分支 backoff 行 ~line 514）
+- Modify: `pavoz/runtime.py`（顶部 import 区 ~line 22；`_run_stage` 内 Retryable 分支 backoff 行 ~line 514）
 - Create: `tests/test_retry_jitter.py`
 
 **Interfaces:**
@@ -42,12 +42,12 @@
 雷群防护 (AWS 惯例): 多 task 同时失败时退避随机化, 不再整秒对齐.
 """
 
-from stageflow import DAG, RetryableError, Runtime
+from pavoz import DAG, RetryableError, Runtime
 
 
 async def test_backoff_full_jitter(monkeypatch):
     """第一次重试 (attempt=1) 的退避 = uniform(0, 2^0=1)."""
-    import stageflow.runtime as rt_mod
+    import pavoz.runtime as rt_mod
 
     captured: dict = {}
     monkeypatch.setattr(
@@ -72,14 +72,14 @@ async def test_backoff_full_jitter(monkeypatch):
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-cd stageflow && python -m pytest tests/test_retry_jitter.py -q
+cd pavoz && python -m pytest tests/test_retry_jitter.py -q
 ```
 
-Expected: FAIL — `AttributeError: module 'stageflow.runtime' has no attribute 'random'`（旧实现用 `min(2**(attempt-1), 30)` 定值，不经过 random.uniform；monkeypatch 目标不存在即报错）。
+Expected: FAIL — `AttributeError: module 'pavoz.runtime' has no attribute 'random'`（旧实现用 `min(2**(attempt-1), 30)` 定值，不经过 random.uniform；monkeypatch 目标不存在即报错）。
 
 - [ ] **Step 3: Implement**
 
-`stageflow/runtime.py` 顶部 import 区（`import asyncio` 附近）加一行：
+`pavoz/runtime.py` 顶部 import 区（`import asyncio` 附近）加一行：
 
 ```python
 import random
@@ -99,12 +99,12 @@ import random
 python -m pytest tests/test_retry_jitter.py tests/ -q
 ```
 
-Expected: 新测试 PASS，全量 99 passed。`python -m pyflakes stageflow tests` 0 报错。
+Expected: 新测试 PASS，全量 99 passed。`python -m pyflakes pavoz tests` 0 报错。
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add stageflow/runtime.py tests/test_retry_jitter.py
+git add pavoz/runtime.py tests/test_retry_jitter.py
 git commit -m "feat(runtime): 重试退避 full-jitter — uniform(0, cap) 防雷群"
 ```
 
@@ -113,8 +113,8 @@ git commit -m "feat(runtime): 重试退避 full-jitter — uniform(0, cap) 防�
 ### Task 2: 生命周期事件钩子 + RunResult.stage_timings
 
 **Files:**
-- Modify: `stageflow/runtime.py`（Runtime 属性区 ~106-110；run() 主循环 ~180-263；_run_stage ~451-528）
-- Modify: `stageflow/types.py`（RunResult `__slots__` / `__init__` / docstring）
+- Modify: `pavoz/runtime.py`（Runtime 属性区 ~106-110；run() 主循环 ~180-263；_run_stage ~451-528）
+- Modify: `pavoz/types.py`（RunResult `__slots__` / `__init__` / docstring）
 - Create: `tests/test_events.py`
 
 **Interfaces:**
@@ -131,7 +131,7 @@ git commit -m "feat(runtime): 重试退避 full-jitter — uniform(0, cap) 防�
 观察者模式最小实现: 同步回调, observer 异常隔离 (fail-open), 不引依赖.
 """
 
-from stageflow import DAG, RetryableError, Runtime
+from pavoz import DAG, RetryableError, Runtime
 
 
 async def test_events_lifecycle_order():
@@ -315,7 +315,7 @@ Retryable 分支 `await asyncio.sleep(backoff)` 前加：
 - [ ] **Step 5: Run tests + 全量回归**
 
 ```bash
-python -m pytest tests/test_events.py tests/ -q && python -m pyflakes stageflow tests
+python -m pytest tests/test_events.py tests/ -q && python -m pyflakes pavoz tests
 ```
 
 Expected: 4 个新测试 PASS，全量 103 passed，pyflakes 0。
@@ -323,7 +323,7 @@ Expected: 4 个新测试 PASS，全量 103 passed，pyflakes 0。
 - [ ] **Step 6: Commit**
 
 ```bash
-git add stageflow/runtime.py stageflow/types.py tests/test_events.py
+git add pavoz/runtime.py pavoz/types.py tests/test_events.py
 git commit -m "feat(runtime): 生命周期事件钩子 on_event + RunResult.stage_timings"
 ```
 
@@ -332,8 +332,8 @@ git commit -m "feat(runtime): 生命周期事件钩子 on_event + RunResult.stag
 ### Task 3: 协作式取消
 
 **Files:**
-- Modify: `stageflow/runtime.py`（Runtime 属性区；新 `_is_cancelled` 方法；Ctx dataclass ~71-103；Ctx 构造点 ~473（唯一）；_run_stage 循环顶；run() 主循环 failed 分支前）
-- Modify: `stageflow/types.py`（RunResult docstring status 值域）
+- Modify: `pavoz/runtime.py`（Runtime 属性区；新 `_is_cancelled` 方法；Ctx dataclass ~71-103；Ctx 构造点 ~473（唯一）；_run_stage 循环顶；run() 主循环 failed 分支前）
+- Modify: `pavoz/types.py`（RunResult docstring status 值域）
 - Create: `tests/test_cancel.py`
 
 **Interfaces:**
@@ -352,13 +352,13 @@ resume 无缝续跑. stage 内长循环用 ctx.cancelled() 自行轮询自行退
 (循环留业务层原则).
 """
 
-from stageflow import CheckpointStore, DAG, FileStorage, Runtime
+from pavoz import CheckpointStore, DAG, FileStorage, Runtime
 
 
 async def test_cancel_between_stages_then_resume():
     """s_a 完成后取消 → cancelled (s_b 未跑); 解除取消 → resume 续跑到 done."""
     tid = "cxl1"
-    store = CheckpointStore(FileStorage(f"/tmp/stageflow-cancel-test-{tid}"))
+    store = CheckpointStore(FileStorage(f"/tmp/pavoz-cancel-test-{tid}"))
     box = {"cancel": False}
     rt = Runtime(checkpoint_store=store, cancel_check=lambda t: box["cancel"])
     ran: list[str] = []
@@ -474,7 +474,7 @@ Expected: 3 FAIL — `Runtime.__init__` 收到未知 kwarg `cancel_check`。
         return bool(self.cancel_check and self.cancel_check())
 ```
 
-(d) Ctx 构造点（全库唯一, `stageflow/runtime.py:473` 附近, `_run_stage` 内）加 kwarg：
+(d) Ctx 构造点（全库唯一, `pavoz/runtime.py:473` 附近, `_run_stage` 内）加 kwarg：
 
 ```python
                     cancel_check=(lambda: self._is_cancelled(task_id)) if self.cancel_check else None,
@@ -512,7 +512,7 @@ Expected: 3 FAIL — `Runtime.__init__` 收到未知 kwarg `cancel_check`。
 
 注意必须 `return result` 而非 `break` —— for 循环尾部有 `result.status = "done"`，break 会覆盖取消态。
 
-(g) `stageflow/types.py` RunResult docstring 的 status 行改为：
+(g) `pavoz/types.py` RunResult docstring 的 status 行改为：
 
 ```
         status: "running" | "done" | "failed" | "cancelled"
@@ -523,7 +523,7 @@ Expected: 3 FAIL — `Runtime.__init__` 收到未知 kwarg `cancel_check`。
 - [ ] **Step 4: Run tests + 全量回归**
 
 ```bash
-python -m pytest tests/test_cancel.py tests/test_events.py tests/ -q && python -m pyflakes stageflow tests
+python -m pytest tests/test_cancel.py tests/test_events.py tests/ -q && python -m pyflakes pavoz tests
 ```
 
 Expected: 3 个新测试 PASS，全量 106 passed，pyflakes 0。特别确认既有 resume 测试（test_checkpoint.py / test_fork.py）不受影响。
@@ -531,7 +531,7 @@ Expected: 3 个新测试 PASS，全量 106 passed，pyflakes 0。特别确认既
 - [ ] **Step 5: Commit**
 
 ```bash
-git add stageflow/runtime.py stageflow/types.py tests/test_cancel.py
+git add pavoz/runtime.py pavoz/types.py tests/test_cancel.py
 git commit -m "feat(runtime): 协作式取消 — cancel_check 检查点拦截 + ctx.cancelled() 轮询"
 ```
 
@@ -540,9 +540,9 @@ git commit -m "feat(runtime): 协作式取消 — cancel_check 检查点拦截 +
 ### Task 4: 文档同步 (README ×2 + CHANGELOG)
 
 **Files:**
-- Modify: `stageflow/README.cn.md`（§特性 表 ~53-64；§快速开始 或 §核心概念 若有 Runtime 构造示例可补一行）
-- Modify: `stageflow/README.md`（英文版同表）
-- Modify: `stageflow/CHANGELOG.md`（顶部）
+- Modify: `pavoz/README.cn.md`（§特性 表 ~53-64；§快速开始 或 §核心概念 若有 Runtime 构造示例可补一行）
+- Modify: `pavoz/README.md`（英文版同表）
+- Modify: `pavoz/CHANGELOG.md`（顶部）
 
 **Interfaces:**
 - Consumes: Task 1-3 的最终行为描述

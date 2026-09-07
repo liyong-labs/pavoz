@@ -1,4 +1,4 @@
-"""stageflow — 通用流程编排库 (micro/in-process workflow engine).
+"""pavoz — 通用流程编排库 (micro/in-process workflow engine).
 
 独立于任何业务系统与模型/存储服务: DAG (静态声明) + Runtime (顺序执行 +
 per-node retry + absolute deadline) + Checkpoint (断点续跑) + TestPipe (回归).
@@ -22,7 +22,7 @@ from .dag import DAG, CycleError, Stage, UnknownDepError
 from .runtime import CallResult, Ctx, Runtime
 from .state import ReadOnlyStateView, StateConflictError
 from .storage import FileStorage, StorageBackend
-from .storage_loader import StageflowStorageError, load_storage
+from .storage_loader import PavozStorageError, load_storage
 from .testing import TestPipe
 from .types import FatalError, RetryableError, RunResult, StageError
 
@@ -44,7 +44,7 @@ __all__ = [
     "Runtime",
     "Stage",
     "StageError",
-    "StageflowStorageError",
+    "PavozStorageError",
     "StateConflictError",
     "StorageBackend",
     "TestPipe",

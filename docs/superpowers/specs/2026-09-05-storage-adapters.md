@@ -1,10 +1,10 @@
-# stageflow Storage Adapters v0.4 Spec
+# pavoz Storage Adapters v0.4 Spec
 
 > v0.4 计划 (2026-09-05 brainstorm 定稿): core stdlib-only 不变; 加 contrib 子包 + 4 个 StorageBackend adapter 作为可选 extras.
 
 ## 背景
 
-stageflow core (12 模块) 仍是 stdlib-only + 零依赖. v0.3 之前 ai_writer 自己写 MinIOStorage adapter, 业务侧重复造轮子.
+pavoz core (12 模块) 仍是 stdlib-only + 零依赖. v0.3 之前 ai_writer 自己写 MinIOStorage adapter, 业务侧重复造轮子.
 v0.4 提供 contrib 子包 + 4 个 adapter (Postgres / Redis / MinIO / SQLite) 作为**可选 extras**:
 - core 永远干净, 不腐坏
 - 业务侧不写重复 adapter
@@ -15,7 +15,7 @@ v0.4 提供 contrib 子包 + 4 个 adapter (Postgres / Redis / MinIO / SQLite) �
 ### 包结构
 
 ```
-stageflow/
+pavoz/
   __init__.py
   ...                  # core 12 模块 (零变化)
   contrib/
@@ -67,17 +67,17 @@ try:
     import psycopg
 except ImportError as e:
     raise ImportError(
-        "PostgresStorage 需要 psycopg. 安装: pip install 'stageflow[postgres]'"
+        "PostgresStorage 需要 psycopg. 安装: pip install 'pavoz[postgres]'"
     ) from e
 ```
 
-`stageflow.contrib` 顶层 import 不强依赖任一 driver. 用户用哪个就装哪个.
+`pavoz.contrib` 顶层 import 不强依赖任一 driver. 用户用哪个就装哪个.
 
 ### Key sanitize
 
 4 个 adapter 共享的 key 字符限制 (Postgres/Redis 不允许任意字符):
 - 用现有 `FileStorage._path` 同样的 `[a-zA-Z0-9_-/]+` 白名单 + raise ValueError
-- 移到 `stageflow/contrib/storage/_base.py`
+- 移到 `pavoz/contrib/storage/_base.py`
 
 ### 各 adapter 细节
 
@@ -105,11 +105,11 @@ zero change: core 12 模块签名/语义不动. `StorageBackend` Protocol 4 方�
 
 ## 验收
 
-- `pip install stageflow` — core 可装, 不带任何 driver
-- `pip install stageflow[postgres]` — 可 import `stageflow.contrib.storage.PostgresStorage`
-- `pip install stageflow[mysql]` — 可 import `stageflow.contrib.storage.MySQLStorage`
-- `pip install stageflow[all]` — 5 个 adapter 全部可 import
-- `pip install stageflow[redis]` + 不装 minio — `stageflow.contrib.storage.MinioStorage` 抛 ImportError (with install hint)
+- `pip install pavoz` — core 可装, 不带任何 driver
+- `pip install pavoz[postgres]` — 可 import `pavoz.contrib.storage.PostgresStorage`
+- `pip install pavoz[mysql]` — 可 import `pavoz.contrib.storage.MySQLStorage`
+- `pip install pavoz[all]` — 5 个 adapter 全部可 import
+- `pip install pavoz[redis]` + 不装 minio — `pavoz.contrib.storage.MinioStorage` 抛 ImportError (with install hint)
 - tests: 5 个 adapter 各有 put/get/list/delete + key sanitize + round-trip 集成测
 - moto[s3] 用于 MinioStorage 测试 (本地 s3 mock)
 - fakeredis 用于 RedisStorage 测试 (本地 redis mock)
@@ -120,13 +120,13 @@ zero change: core 12 模块签名/语义不动. `StorageBackend` Protocol 4 方�
 
 ### 互操作验收 (ai_writer 协同底线, 2026-09-05)
 
-stageflow 与 ai_writer 相互不依赖 + 必须能协同工作. v0.4 验证:
+pavoz 与 ai_writer 相互不依赖 + 必须能协同工作. v0.4 验证:
 
 - **MinioStorage 行为等价**: 必须复刻 ai_writer 现有 `backend/integration/sf_storage.py` 行为:
   - put / get (返回 None 当不存在) / list_keys / delete
   - delete 抛 `botocore.exceptions.ClientError` NoSuchKey 时静默 (ai_writer 现有容忍)
-  - 前缀 `research/task_cp/stageflow/{task_id}/checkpoint` (与 ai_writer 现有路径一致)
-  - integration test: 替换 ai_writer 的 MinioStorage 在真 task 上跑 (如华创 6000 字 stageflow 全链测试), checkpoint 序列化/反序列化完全兼容
+  - 前缀 `research/task_cp/pavoz/{task_id}/checkpoint` (与 ai_writer 现有路径一致)
+  - integration test: 替换 ai_writer 的 MinioStorage 在真 task 上跑 (如华创 6000 字 pavoz 全链测试), checkpoint 序列化/反序列化完全兼容
 - **PostgresStorage / MySQLStorage**: ai_writer 不使用, 但提供标准 SQL + JSON 序列化以供未来多环境部署
 - **SqliteStorage**: ai_writer 不使用, 但提供本地测试 fallback
 - **RedisStorage**: ai_writer 不使用, 但提供轻量替代选项 (比 PG/MySQL 简单)

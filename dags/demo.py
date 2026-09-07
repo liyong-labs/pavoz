@@ -1,9 +1,9 @@
 """demo DAG: 模拟 research pipeline 的形状 (纯 mock, 不依赖真 LLM/SE).
 
-    python -m stageflow run dags/demo.py --input '{"query": "北方华创"}'
+    python -m pavoz run dags/demo.py --input '{"query": "北方华创"}'
 """
 
-from stageflow import DAG
+from pavoz import DAG
 
 dag = DAG("demo")
 

@@ -9,8 +9,8 @@ import json
 
 import pytest
 
-from stageflow import DAG
-from stageflow.checkpoint import Checkpoint, workflow_hash
+from pavoz import DAG
+from pavoz.checkpoint import Checkpoint, workflow_hash
 
 
 def _dag() -> DAG:

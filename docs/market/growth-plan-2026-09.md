@@ -1,4 +1,4 @@
-# stageflow 市场与增长计划 (2026-09-06, user 拍板: 打造成高星热门项目)
+# pavoz 市场与增长计划 (2026-09-06, user 拍板: 打造成高星热门项目)
 
 > 依据: 3 路调研 agent (README 拆解 8 头部库 / 0→1k 增长打法实证 / 市场格局 — 后补) +
 > 本仓库工程现状. 目标: 公开后首年几百 star 为成功基线, 1k+ 需 ≥1 轮 HN 病毒或生态内容破圈.
@@ -9,7 +9,7 @@
 - 千级参照: Hamilton/Burr ~2.5k (数年 + Apache/公司光环); ControlFlow 1.4k 已归档;
   langgraph 40k 但有 LangChain 品牌 + 2025 agent 浪潮
 - 刷星/刷下载无因果作用 (田野实验) — 只做真实分发 + 真实价值
-- stageflow 可比参照 = Burr (dependency-free, low-abstraction 同族)
+- pavoz 可比参照 = Burr (dependency-free, low-abstraction 同族)
 
 ## 定位 (为什么是我们)
 
@@ -29,7 +29,7 @@
    PyPI publish workflow (Trusted Publishing, tag v*) / console script / v0.7.0 版本同步 /
    CHANGELOG / LICENSE / CONTRIBUTING / docs (en+cn quickstart/architecture/api/use-cases)
 ⏳ 待公开后: GitHub topics + description 关键词 (见下) / GitHub Discussions 开启 /
-   MkDocs Material 站 + llms.txt (2-4 周内) / PyPI 发布 (占名 stageflow, long_description=README,
+   MkDocs Material 站 + llms.txt (2-4 周内) / PyPI 发布 (占名 pavoz, long_description=README,
    twine check, project.urls 官方键) / 徽章 (PyPI 后补 version/downloads; CI 现可加)
 
 ## Launch 计划
@@ -41,7 +41,7 @@
 4. 补 docs 站 (非阻塞, 公开后 2-4 周)
 
 ### Launch 窗口 (选周二-周四, 北京 20:00-23:00 = HN 12-15 UTC 黄金窗)
-- Show HN 标题草案: "Show HN: stageflow — a zero-dependency in-process workflow engine with time-travel debugging for LLM pipelines" (具体差异化, 不用 best/awesome)
+- Show HN 标题草案: "Show HN: pavoz — a zero-dependency in-process workflow engine with time-travel debugging for LLM pipelines" (具体差异化, 不用 best/awesome)
 - 首条评论 5 要素: ① 一句话技术版: 静态 @dag.stage DSL + per-node checkpoint/resume/replay/fork, core stdlib only ② 个人动机: 给 1500 行 LLM 管线编排 god-function 找出口, 不想要 scheduler/server ③ 独特取舍: 循环留在业务层 (无框架 loop DSL); ctx.call seam 不绑模型; 每 stage 存原始 delta → 任意历史输入可重建可 fork ④ 一条诚实局限: 单进程, 不做分布式/动态图/UI — 那是 Temporal/LangGraph 的地盘 ⑤ 请求反馈: 想听"什么场景你会需要一个不绑平台的可续跑编排层"
 - 驻场 3-4 小时, 前 2 小时 15 分钟内回每条实质评论; 首条评论在 15 分钟内自回技术细节
 - 次日 r/Python Showcase (四段模板: What My Project Does / Target Audience / Comparison / Disclosure), 不跨版不贴 HN 链接
@@ -62,7 +62,7 @@
 
 | 时点 | 目标 | 判定 |
 |---|---|---|
-| 公开 + PyPI | repo public + pip install stageflow 可用 | 用户操作 (翻转 repo / PyPI 注册) |
+| 公开 + PyPI | repo public + pip install pavoz 可用 | 用户操作 (翻转 repo / PyPI 注册) |
 | 首轮 launch (2 周内) | HN 首页或 r/Python 上榜 → 50-300 stars | 24h/48h 数据记录 |
 | 月 1 | 100+ stars + 首个外部 issue/star | 真实使用证据 |
 | 月 3 | 300-500 stars + awesome niche 收录 | pypistats 下载趋势 |

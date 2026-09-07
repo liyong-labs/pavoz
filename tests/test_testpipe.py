@@ -4,9 +4,9 @@ import tempfile
 
 import pytest
 
-from stageflow import DAG, Checkpoint, CheckpointMismatchError, Runtime, TestPipe, workflow_hash
-from stageflow.checkpoint import CheckpointStore
-from stageflow.storage import FileStorage
+from pavoz import DAG, Checkpoint, CheckpointMismatchError, Runtime, TestPipe, workflow_hash
+from pavoz.checkpoint import CheckpointStore
+from pavoz.storage import FileStorage
 
 
 def _dag():

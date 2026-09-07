@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "stageflow"
+name = "pavoz"
 version = "0.8.0"
 description = "Micro/in-process Python DAG workflow engine — stdlib only, zero runtime deps, in your process"
 authors = [{ name = "ebziw" }]
@@ -13,7 +13,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 keywords = [
     "dag", "workflow", "orchestration", "pipeline", "llm",
-    "checkpoint", "resume", "durable-execution", "stageflow",
+    "checkpoint", "resume", "durable-execution", "pavoz",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -27,9 +27,9 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/ebziw/stageflow"
-Repository = "https://github.com/ebziw/stageflow"
-Changelog = "https://github.com/ebziw/stageflow/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/liyong-labs/pavoz"
+Repository = "https://github.com/liyong-labs/pavoz"
+Changelog = "https://github.com/liyong-labs/pavoz/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
@@ -38,10 +38,10 @@ dev = [
 ]
 
 [project.scripts]
-stageflow = "stageflow.cli:main"
+pavoz = "pavoz.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["stageflow"]
+packages = ["pavoz"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

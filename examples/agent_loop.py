@@ -1,6 +1,6 @@
 """Example 2 — an agent-style convergence loop, expressed as business code.
 
-stageflow has no framework-level "retry_budget" or loop DSL: a review →
+pavoz has no framework-level "retry_budget" or loop DSL: a review →
 fix → re-review loop is just a Python `while` inside one stage. The loop is
 checkpointed at the node boundary — kill the process mid-loop and
 `resume=True` restarts it, not from scratch, but from the review step.
@@ -8,8 +8,8 @@ checkpointed at the node boundary — kill the process mid-loop and
 It also shows the debugging payoff: after this run you can fork it from
 s_agent and re-run the *whole loop* on edited input without touching s_fetch:
 
-    stageflow export-input examples/agent_loop.py --task-id agent-1 --stage s_agent
-    stageflow fork-run      examples/agent_loop.py --task-id agent-1 --stage s_agent \\
+    pavoz export-input examples/agent_loop.py --task-id agent-1 --stage s_agent
+    pavoz fork-run      examples/agent_loop.py --task-id agent-1 --stage s_agent \\
         --overrides '{"topic": "new topic"}'
 
 Run:  python examples/agent_loop.py
@@ -17,7 +17,7 @@ Run:  python examples/agent_loop.py
 
 import asyncio
 
-from stageflow import DAG, Runtime, StageError
+from pavoz import DAG, Runtime, StageError
 
 dag = DAG("agent")
 

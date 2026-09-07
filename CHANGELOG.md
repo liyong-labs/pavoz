@@ -84,7 +84,7 @@
 ### Changed
 
 - CLI `run` 不再只在 `--resume` 时 attach CheckpointStore — 单跑也写
-  `~/.stageflow/data` (`STAGEFLOW_STORAGE` 可覆盖)。行为: 单次 run 即
+  `~/.pavoz/data` (`PAVOZ_STORAGE` 可覆盖)。行为: 单次 run 即
   落盘, replay/trace/state 对 CLI 产物直接可用
 
 ### Compatibility
@@ -102,7 +102,7 @@
 
 ### Added (industry-standard ID model)
 
-- `task_id` 参数可选: 省略 → stageflow 自动生成 UUID4。跨 retry/resume 稳定 —
+- `task_id` 参数可选: 省略 → pavoz 自动生成 UUID4。跨 retry/resume 稳定 —
   幂等键 (Temporal WorkflowId / DBOS workflow_id 模式)。入口校验: 非空、
   ≤128、字符集 `[A-Za-z0-9_.-]` (禁 `/`, 防 storage key 路径注入)
 - `run_id`: 每次 `Runtime.run()` 自动生成 UUID4, 返回在 `RunResult.run_id`。
@@ -211,7 +211,7 @@ on disk — caller can clean up with their storage backend.
 
 ## [0.4.0] — 2026-09-05
 
-### Added (stageflow.contrib.storage)
+### Added (pavoz.contrib.storage)
 
 - **PostgresStorage** (psycopg3 + JSONB, upsert via ON CONFLICT)
 - **MySQLStorage** (PyMySQL + LONGTEXT, upsert via ON DUPLICATE KEY)
@@ -223,7 +223,7 @@ on disk — caller can clean up with their storage backend.
 ### Internal
 
 - core 12 模块 + `StorageBackend` Protocol 零变化 (API 冻结); 0 行 core 功能修改 (fix1 仅同步 manifest 版本号)
-- contrib 是独立 subpackage (`stageflow.contrib.storage`); core 不引入任何 driver
+- contrib 是独立 subpackage (`pavoz.contrib.storage`); core 不引入任何 driver
 - pyproject extras 分组: `[postgres]` / `[mysql]` / `[redis]` / `[minio]` / `[sqlite]` (空) / `[contrib]` (4 个) / `[all]`
 - 缺 driver 时 adapter 模块顶 try/except ImportError + 安装提示
 
@@ -236,16 +236,16 @@ on disk — caller can clean up with their storage backend.
 
 ### Removed (reversal of v0.4 contrib approach)
 
-- `stageflow.contrib.storage` 5 个 vendor adapter (SqliteStorage / PostgresStorage / MySQLStorage / RedisStorage / MinioStorage) — over-engineering, user 自管 deps + 自写 adapter 更合适
-- `stageflow.contrib` subpackage 完全移除
+- `pavoz.contrib.storage` 5 个 vendor adapter (SqliteStorage / PostgresStorage / MySQLStorage / RedisStorage / MinioStorage) — over-engineering, user 自管 deps + 自写 adapter 更合适
+- `pavoz.contrib` subpackage 完全移除
 - pyproject.toml extras (`postgres` / `mysql` / `redis` / `minio` / `sqlite` / `contrib` / `all`) 移除 — 用户自己装自己要的
 - 相关 tests (tests/contrib/) 移除
 
 ### Added
 
-- `stageflow.storage_loader.load_storage(spec: str, **kwargs) -> StorageBackend` — 按 `"pkg.module:ClassName"` 字符串 importlib 加载
-- `stageflow.StageflowStorageError` — 友好错误 (module 未装 / class 名错 / kwargs 错 / 类型错 5 类)
-- 用户可自己写 adapter, stageflow 不带 driver, 通过 `pip install` 自管 deps
+- `pavoz.storage_loader.load_storage(spec: str, **kwargs) -> StorageBackend` — 按 `"pkg.module:ClassName"` 字符串 importlib 加载
+- `pavoz.PavozStorageError` — 友好错误 (module 未装 / class 名错 / kwargs 错 / 类型错 5 类)
+- 用户可自己写 adapter, pavoz 不带 driver, 通过 `pip install` 自管 deps
 - ai_writer 兼容: `load_storage("backend.integration.sf_storage.MinioStorage", ...)` 直接可用
 
 ### Internal
@@ -258,5 +258,5 @@ on disk — caller can clean up with their storage backend.
 
 ### Fixed
 
-- `pyproject.toml` version + `stageflow/__init__.py` `__version__` 与 tag 同步 (0.1.1 → 0.1.3)。final-review B1: 之前 `pip install -e .` / `import stageflow; stageflow.__version__` 返 0.1.1,与 v0.1.2 tag 不符。
+- `pyproject.toml` version + `pavoz/__init__.py` `__version__` 与 tag 同步 (0.1.1 → 0.1.3)。final-review B1: 之前 `pip install -e .` / `import pavoz; pavoz.__version__` 返 0.1.1,与 v0.1.2 tag 不符。
 - 不 amend v0.1.2 (keep git history honest) — 走新 patch tag v0.1.3

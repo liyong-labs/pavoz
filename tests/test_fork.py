@@ -2,17 +2,17 @@
 
 竞品定位 (2026-09-06 调研): LangGraph time-travel fork = update_state 分支 +
 invoke(None) 续跑, 原历史不动; Prefect 无"从任务 X 改参续跑"内置 (官方建议
-copy+缓存复用). stageflow fork_run: 前序 stage 结果复用, from_stage 及其后继
+copy+缓存复用). pavoz fork_run: 前序 stage 结果复用, from_stage 及其后继
 用 overrides 重跑, 原 run cp 不动, fork cp (新 run_id) 成为 latest.
 """
 
 import json
 
-from stageflow import CheckpointStore, DAG, FileStorage, Runtime
+from pavoz import CheckpointStore, DAG, FileStorage, Runtime
 
 
 def _mk_storage(task_id):
-    return CheckpointStore(FileStorage(f"/tmp/stageflow-fork-test-{task_id}"))
+    return CheckpointStore(FileStorage(f"/tmp/pavoz-fork-test-{task_id}"))
 
 
 def _dag3(trace: list):

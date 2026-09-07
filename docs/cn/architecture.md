@@ -1,4 +1,4 @@
-# stageflow 架构
+# pavoz 架构
 
 🇬🇧 [English version](../en/architecture.md)
 
@@ -18,7 +18,7 @@
                │ ctx.call(kind, op, params)
                ▼
 ┌─────────────────────────────────────────────┐
-│ stageflow core (本仓库)                     │
+│ pavoz core (本仓库)                     │
 │   DAG (静态) + Runtime + State + Checkpoint │
 │   零依赖: 不 import 任何第三方库             │
 └──────────────┬──────────────────────────────┘
@@ -108,26 +108,26 @@ Airflow `dag_id + task_id + run_id + try_number`):
 - `task_id` — caller 提供 (或自动 UUID4)。跨 retry/resume 的稳定幂等键。
   入口校验: 非空、≤128、字符集仅 `[A-Za-z0-9_.-]` (禁 `/` — 直接进 storage
   key 路径)
-- `run_id` — 每次 `run()` stageflow 自动生成 UUID4。resume 复用 checkpoint
+- `run_id` — 每次 `run()` pavoz 自动生成 UUID4。resume 复用 checkpoint
   的 run_id (Continue-As-New); 重跑 (`resume=False`) 起新 run_id
-- `attempt` — stageflow 注入 Ctx 的 1-based int; stage 每 retry +1
+- `attempt` — pavoz 注入 Ctx 的 1-based int; stage 每 retry +1
   (Airflow try_number / Celery retries 模式)
 
-恢复模式: stageflow `resume` 是**从 checkpoint 真续跑** (恢复 state、跳过
+恢复模式: pavoz `resume` 是**从 checkpoint 真续跑** (恢复 state、跳过
 已完成节点、复用 run_id)。"从头重跑 + external cache 免单" (`resume=False`)
 是首批接入方的日常默认 — 重复成本由业务 cache 吸收 — `resume` 留给真续跑
 场景 (中断后重启)。
 
 运行假设 (刻意不在 core 强制, 归业务层):
 
-- **每 task 单写者** — stageflow 假定同 task 同时只有一个活跃 writer;
+- **每 task 单写者** — pavoz 假定同 task 同时只有一个活跃 writer;
   并发由业务层防 (lease/epoch)。同 `(task_id, run_id)` 双写 = last-writer-wins,
   core 不做锁
-- **不感知 cancel** — stageflow in-process: worker 死 = run 死 (checkpoint 存到
+- **不感知 cancel** — pavoz in-process: worker 死 = run 死 (checkpoint 存到
   最后一个完成节点)。cancel = 业务侧 kill + 重启 + `resume=True`
 - **存储命名空间** — checkpoint 落在 `runs/` 前缀下
   (`runs/{task_id}/{run_id}/checkpoint` + `runs/{task_id}/latest`)。业务与
-  stageflow 共用对象存储时前缀隔离 (如业务产物放 `research/{task_id}/v{v}/`)
+  pavoz 共用对象存储时前缀隔离 (如业务产物放 `research/{task_id}/v{v}/`)
 
 ### 8. Replay 语义 (v0.5.1, M2/M3)
 

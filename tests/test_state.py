@@ -2,8 +2,8 @@
 
 import pytest
 
-from stageflow import ReadOnlyStateView, StateConflictError
-from stageflow.state import deep_validate_state, merge_state
+from pavoz import ReadOnlyStateView, StateConflictError
+from pavoz.state import deep_validate_state, merge_state
 
 
 def test_validate_json_types_ok():

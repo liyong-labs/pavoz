@@ -3,7 +3,7 @@
 观察者模式最小实现: 同步回调, observer 异常隔离 (fail-open), 不引依赖.
 """
 
-from stageflow import DAG, RetryableError, Runtime
+from pavoz import DAG, RetryableError, Runtime
 
 
 async def test_events_lifecycle_order():

@@ -1,4 +1,4 @@
-# stageflow architecture
+# pavoz architecture
 
 🇨🇳 [简体中文](../cn/architecture.md)
 
@@ -18,7 +18,7 @@ Does only: graph execution + state passing + failure retry + checkpoint recovery
                │ ctx.call(kind, op, params)
                ▼
 ┌─────────────────────────────────────────────┐
-│ stageflow core (this repo)                  │
+│ pavoz core (this repo)                  │
 │   DAG (static) + Runtime + State + Checkpoint│
 │   zero deps: imports no third-party libs    │
 └──────────────┬──────────────────────────────┘
@@ -100,12 +100,12 @@ DBOS workflow_id, Airflow `dag_id + task_id + run_id + try_number`):
 - `task_id` — caller-supplied (or auto UUID4). The stable idempotency key across
   retries/resumes. Validated at entry: non-empty, ≤ 128 chars,
   `[A-Za-z0-9_.-]` only (no `/` — it is embedded in the storage key path)
-- `run_id` — stageflow-generated UUID4 per `run()` invocation. Resume reuses the
+- `run_id` — pavoz-generated UUID4 per `run()` invocation. Resume reuses the
   checkpoint's run_id (Continue-As-New); a rerun (`resume=False`) starts a new one
-- `attempt` — stageflow-injected 1-based int into `Ctx`; +1 per stage retry
+- `attempt` — pavoz-injected 1-based int into `Ctx`; +1 per stage retry
   (Airflow try_number / Celery retries)
 
-Recovery modes: stageflow `resume` is **real continuation** from the last
+Recovery modes: pavoz `resume` is **real continuation** from the last
 checkpoint (state restored, completed nodes skipped, same run_id). "Restart from
 scratch + external cache" (`resume=False`) is the default the first integrations
 use for routine reruns — the caller's cache absorbs repeat costs — and `resume`
@@ -113,15 +113,15 @@ is reserved for genuine continuation scenarios (interrupted run restart).
 
 Operational assumptions (deliberately not enforced in core):
 
-- **Single writer per task** — stageflow assumes one active writer per
+- **Single writer per task** — pavoz assumes one active writer per
   `(task_id)`; concurrent writers are the business layer's concern (lease /
   epoch). Two writers on the same `(task_id, run_id)` = last-writer-wins, no locking
-- **No cancellation sense** — stageflow is in-process: if the worker dies the run
+- **No cancellation sense** — pavoz is in-process: if the worker dies the run
   dies (checkpoint up to the last completed node). Cancellation = business-side
   kill + restart + `resume=True`
 - **Storage namespace** — checkpoints live under a `runs/` prefix
   (`runs/{task_id}/{run_id}/checkpoint` + `runs/{task_id}/latest`). Callers
-  sharing an object store between stageflow checkpoints and business artifacts
+  sharing an object store between pavoz checkpoints and business artifacts
   keep the prefixes isolated (e.g. business artifacts under
   `research/{task_id}/v{v}/`)
 

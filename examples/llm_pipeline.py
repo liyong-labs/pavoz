@@ -1,9 +1,9 @@
 """Example 1 — LLM research pipeline with a pluggable caller.
 
-Shows the three ideas that make stageflow different:
+Shows the three ideas that make pavoz different:
 1. Graph execution is extracted from business code (@dag.stage).
 2. External calls (LLM/search/...) go through ctx.call — the *caller*
-   is injected by you, so stageflow never binds a model vendor.
+   is injected by you, so pavoz never binds a model vendor.
 3. Every stage is checkpointed; a crash never repeats upstream work.
 
 Run:  python examples/llm_pipeline.py
@@ -12,10 +12,10 @@ Run:  python examples/llm_pipeline.py
 
 import asyncio
 
-from stageflow import CheckpointStore, DAG, FileStorage, Runtime
+from pavoz import CheckpointStore, DAG, FileStorage, Runtime
 
-# ── Your caller: the only place stageflow touches the outside world ──────
-# Implement any ops your stages need ("llm", "search", ...). stageflow does
+# ── Your caller: the only place pavoz touches the outside world ──────
+# Implement any ops your stages need ("llm", "search", ...). pavoz does
 # not know what an op means — that is your business layer.
 async def my_caller(kind: str, op: str, params: dict, meta: dict | None = None) -> dict:
     if kind == "search":
@@ -58,7 +58,7 @@ async def main() -> None:
     result = await rt.run(dag, task_id="pipeline-1", initial_state={"query": "durable execution"})
     assert result.status == "done"
     print("saved report:\n", result.state["report"])
-    print("\nnext: stageflow replay examples/llm_pipeline.py --task-id pipeline-1 --stage s_analyze")
+    print("\nnext: pavoz replay examples/llm_pipeline.py --task-id pipeline-1 --stage s_analyze")
 
 
 if __name__ == "__main__":

@@ -2,11 +2,11 @@
 
 import time
 
-from stageflow import CheckpointStore, DAG, FileStorage, Runtime
+from pavoz import CheckpointStore, DAG, FileStorage, Runtime
 
 
 def _mk(tid):
-    return CheckpointStore(FileStorage(f"/tmp/stageflow-stagets-{tid}"))
+    return CheckpointStore(FileStorage(f"/tmp/pavoz-stagets-{tid}"))
 
 
 async def test_stage_ts_recorded_and_persisted():
@@ -30,7 +30,7 @@ async def test_stage_ts_recorded_and_persisted():
     assert cp.stage_ts["s_a"] <= cp.stage_ts["s_b"]
     assert abs(cp.stage_ts["s_a"] - time.time()) < 60
     # 序列化 roundtrip
-    from stageflow.checkpoint import Checkpoint
+    from pavoz.checkpoint import Checkpoint
     cp3 = Checkpoint.from_dict(cp.to_dict())
     assert cp3.stage_ts == cp.stage_ts
 

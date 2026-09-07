@@ -2,7 +2,7 @@
 
 🇨🇳 [简体中文](../cn/api.md)
 
-The public surface is `__all__` in `stageflow/__init__.py`. The core has zero third-party dependencies.
+The public surface is `__all__` in `pavoz/__init__.py`. The core has zero third-party dependencies.
 
 ## DAG
 
@@ -38,7 +38,7 @@ result: RunResult = await rt.run(
 )
 ```
 
-- `task_id` is optional. If omitted, stageflow auto-generates a UUID4 (36 chars).
+- `task_id` is optional. If omitted, pavoz auto-generates a UUID4 (36 chars).
   If supplied, it is validated at entry: non-empty, ≤ 128 chars, charset
   `[A-Za-z0-9_.-]` only (`/` rejected — the task_id is embedded in the storage
   key path). Stable across retries/resumes — the idempotency key. Resume needs
@@ -115,7 +115,7 @@ await ctx.call(kind: str, op: str, params: dict | None = None) -> dict
 - The injected caller receives a 4th argument: `meta: CallMeta` (`task_id` /
   `run_id` / `stage` / `attempt`) — callers that record traces/`llm_calls` can
   correlate the execution context without extra plumbing. `CallMeta` lives in
-  `stageflow.runtime`. Stage functions are unaffected (`async def fn(ctx) -> dict`).
+  `pavoz.runtime`. Stage functions are unaffected (`async def fn(ctx) -> dict`).
 - `ctx.logger`: `logging.Logger` (with the stage name already injected)
 
 ## State
@@ -181,15 +181,15 @@ Built-in: `FileStorage(dir)` — local filesystem implementation (tests / single
 
 ## Storage loader
 
-stageflow core ships **only** the `StorageBackend` Protocol + `FileStorage`. Drivers
+pavoz core ships **only** the `StorageBackend` Protocol + `FileStorage`. Drivers
 (psycopg / redis / boto3 / etc.) are the user's responsibility — install what you
 need, write (or vendor) an adapter that implements the Protocol, then load it by
 config string.
 
 ```python
-from stageflow import load_storage
+from pavoz import load_storage
 
-storage = load_storage("stageflow.storage.FileStorage", root_dir="/data/cp")
+storage = load_storage("pavoz.storage.FileStorage", root_dir="/data/cp")
 # or:
 storage = load_storage(
     "backend.integration.sf_storage.MinioStorage",
@@ -204,7 +204,7 @@ cp_store = CheckpointStore(storage)
   - `"pkg.module:ClassName"` (canonical, explicit separator)
   - `"pkg.module.path.ClassName"` (dotted, last segment = class name)
 - `**kwargs` — forwarded to `ClassName.__init__`
-- Raises `StageflowStorageError` (subclass of `ImportError`) with friendly messages
+- Raises `PavozStorageError` (subclass of `ImportError`) with friendly messages
   for 5 failure modes: format error / module not installed / wrong class name /
   wrong kwargs / non-`StorageBackend` instance.
 
@@ -235,14 +235,14 @@ assert result2.state == cp.state       # same stage outputs in → same graph be
 ## CLI
 
 ```bash
-python -m stageflow run <dag.py> [--task-id X] [--input '{"k": "v"}'] [--resume]
-python -m stageflow trace --task-id X
-python -m stageflow state --task-id X [--key K]
-python -m stageflow replay <dag.py> --task-id X --stage Y [--patch P.py]   # v0.5.1
+python -m pavoz run <dag.py> [--task-id X] [--input '{"k": "v"}'] [--resume]
+python -m pavoz trace --task-id X
+python -m pavoz state --task-id X [--key K]
+python -m pavoz replay <dag.py> --task-id X --stage Y [--patch P.py]   # v0.5.1
 ```
 
 - `run`: runs a DAG file (the module must expose a `dag` variable);
-  `STAGEFLOW_STORAGE` env var points at the `FileStorage` directory — every
+  `PAVOZ_STORAGE` env var points at the `FileStorage` directory — every
   run persists per-stage checkpoints there (single runs included, v0.5.1 R5
   fix), so `--resume` / replay / trace / state work on CLI runs
 - `trace`/`state`: read checkpoints from `FileStorage`

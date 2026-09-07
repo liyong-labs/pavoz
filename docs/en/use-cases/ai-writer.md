@@ -2,15 +2,15 @@
 
 🇨🇳 [简体中文](../../cn/use-cases/ai-writer.md)
 
-> **This is stageflow's first business integration, presented as a reference implementation** — it demonstrates how a real business system expresses a "search → download → filter → synthesize → review → save" pipeline with stageflow.
-> stageflow itself has no coupling to ai_writer or the models/services it uses.
+> **This is pavoz's first business integration, presented as a reference implementation** — it demonstrates how a real business system expresses a "search → download → filter → synthesize → review → save" pipeline with pavoz.
+> pavoz itself has no coupling to ai_writer or the models/services it uses.
 
 ## Integration outcome (shipped 2026-09-05, fully migrated 2026-09-06)
 
 - 8-node DAG (first compose): `s_plan → s_search → s_download → s_filter → s_compress → s_compose → s_audit → s_save`
-- Revise (iterative refinement) is a **single super-node** (`s_revise`) wrapping the business's own iteration loop — a textbook example of "loops stay in business code": the loop carries its own save-per-iter and lands final state in the DB; stageflow only provides the unified entry point + exception contract + timeout (revise runs attach no checkpoint store, so stageflow checkpoints exist only for first-compose runs)
-- **Execution path unified (2026-09-06)**: the business's legacy first-compose phase machine (`_run_research_pipeline_impl` + `_impl_run_pipeline_phases`) and its single-slot checkpoint system (MinIO single-slot CP / hash-skip / resume slots) are deleted — subprocess → `integration/runner.run_pipeline` → stageflow Runtime runs the DAG. "Checkpoint" now means only the stageflow checkpoint (`initial_state` + `stage_deltas`)
-- Checkpoints persist under the business's own MinIO prefix `research/task_cp/stageflow/` via the `MinioStorage` adapter (`sf_storage.py`), at `runs/{task_id}/{run_id}/checkpoint` + a latest pointer — isolated from business artifacts (`research/{task_id}/v{v}/`) in the same bucket
+- Revise (iterative refinement) is a **single super-node** (`s_revise`) wrapping the business's own iteration loop — a textbook example of "loops stay in business code": the loop carries its own save-per-iter and lands final state in the DB; pavoz only provides the unified entry point + exception contract + timeout (revise runs attach no checkpoint store, so pavoz checkpoints exist only for first-compose runs)
+- **Execution path unified (2026-09-06)**: the business's legacy first-compose phase machine (`_run_research_pipeline_impl` + `_impl_run_pipeline_phases`) and its single-slot checkpoint system (MinIO single-slot CP / hash-skip / resume slots) are deleted — subprocess → `integration/runner.run_pipeline` → pavoz Runtime runs the DAG. "Checkpoint" now means only the pavoz checkpoint (`initial_state` + `stage_deltas`)
+- Checkpoints persist under the business's own MinIO prefix `research/task_cp/pavoz/` via the `MinioStorage` adapter (`sf_storage.py`), at `runs/{task_id}/{run_id}/checkpoint` + a latest pointer — isolated from business artifacts (`research/{task_id}/v{v}/`) in the same bucket
 - Interrupted-run recovery: the production path **always runs `resume=False`** (restart creates a fresh run_id) — after restarting the same task, stage bodies read the previous run's checkpoint holding the relevant deltas (`sf_restore.py`) and skip the completed search/download/compress segments when the business-side gates hit (TTL freshness for the search pool, use-time checks for the download/compress pools); repeated LLM costs are absorbed by the business's external cache. A DB reset + rerun is never polluted by a stale checkpoint either
 - Debug replay: the business exposes `/api/research/replay-stage` → `Runtime.run_stage` single-stage replay (writes no checkpoint, leaves the latest pointer untouched)
 - End-to-end verification: after the full migration, first compose + revise both produce output normally; interrupted-run restarts recover correctly
@@ -19,7 +19,7 @@ Code location (business side, not in this repo): `backend/integration/` — `res
 
 ## Boundary (what belongs to whom)
 
-| | stageflow (generic) | Business (ai_writer) |
+| | pavoz (generic) | Business (ai_writer) |
 |---|---|---|
 | DAG definition | — | Business-side file (8 nodes / `s_revise`) |
 | External calls | `ctx.call(kind, op, params)` Protocol | Business caller (reuses its own LLM/cache/billing) |
@@ -34,13 +34,13 @@ Code location (business side, not in this repo): `backend/integration/` — `res
 ```toml
 # Business pyproject.toml
 [tool.poetry.dependencies]  # or pip / uv
-stageflow = { git = "ssh://git@github.com/ebziw/stageflow.git", tag = "v0.8.0" }
+pavoz = { git = "ssh://git@github.com/liyong-labs/pavoz.git", tag = "v0.8.0" }
 ```
 
 ### 2. Define the DAG (pure graph; stage functions carry business logic)
 
 ```python
-from stageflow import DAG
+from pavoz import DAG
 
 dag = DAG("research_pipeline")
 
@@ -77,7 +77,7 @@ class ObjectStoreStorage(StorageBackend):
 ### 4. Entry point (inside your business worker / subprocess)
 
 ```python
-from stageflow import Runtime, CheckpointStore
+from pavoz import Runtime, CheckpointStore
 
 rt = Runtime(
     checkpoint_store=CheckpointStore(ObjectStoreStorage(task_id)),  # per-task isolation
@@ -112,7 +112,7 @@ Key points (v0.8; the ID model landed in v0.5):
 - `run_id`: auto-generated UUID4 per `run()` — checkpoints are isolated by
   `runs/{task_id}/{run_id}/checkpoint` (+ a `runs/{task_id}/latest` pointer).
   ai_writer's `MinioStorage` adapter maps these keys under its own MinIO prefix
-  `research/task_cp/stageflow/`, isolated from business artifacts
+  `research/task_cp/pavoz/`, isolated from business artifacts
   (`research/{task_id}/v{v}/`) when both live in the same bucket
 - Checkpoint contents = `initial_state` + `stage_deltas` (each node's raw
   return, in completion order) + `stage_ts` (v0.7+, stage completion epoch);
@@ -131,7 +131,7 @@ Key points (v0.8; the ID model landed in v0.5):
 ### 5. Regression
 
 ```python
-from stageflow import TestPipe
+from pavoz import TestPipe
 
 pipe = TestPipe(dag)
 pipe.mock("s_search", lambda state: {...})   # mock expensive / external segments
@@ -142,7 +142,7 @@ assert result.state == {...}
 ## Known caveats
 
 1. Module-level globals on the business side (`contextvar` / caches) are the easiest thing to miss when porting — make cross-stage dependencies explicit via `ctx.state` while moving functions
-2. Subprocess heartbeat / lease (if any) belongs to the business worker, not stageflow — leave it as-is
+2. Subprocess heartbeat / lease (if any) belongs to the business worker, not pavoz — leave it as-is
 3. `ctx.state` values must be json-serializable (`str` / `int` / `float` / `bool` / `None` / `list` / `dict`)
 
 ## Related documents

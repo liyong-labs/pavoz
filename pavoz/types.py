@@ -1,4 +1,4 @@
-"""stageflow 基础类型: 异常契约 + 运行结果."""
+"""pavoz 基础类型: 异常契约 + 运行结果."""
 
 __all__ = ["FatalError", "RetryableError", "RunResult", "StageError"]
 
@@ -29,7 +29,7 @@ class RunResult:
 
     Attributes:
         task_id: caller-supplied (or auto UUID4), stable across retries/resumes
-        run_id: stageflow auto UUID4 per runtime.run() — distinguishes runs
+        run_id: pavoz auto UUID4 per runtime.run() — distinguishes runs
         state: final merged state after all completed stages
         stage_statuses: {stage_name: "done" | "failed" | "cancelled"} — only executed stages;
             resume-skipped stages are absent, never recorded as "skipped"

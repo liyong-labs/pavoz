@@ -2,9 +2,9 @@
 
 🇬🇧 [English version](../../en/use-cases/ai-writer.md)
 
-> **这是 stageflow 的第 1 个业务接入, 作参考实现** — 展示一个真实业务如何用
-> stageflow 表达"搜索 → 下载 → 过滤 → 合成 → 审阅 → 保存"类管线。
-> stageflow 本身与 ai_writer 及其使用的模型/服务无关。
+> **这是 pavoz 的第 1 个业务接入, 作参考实现** — 展示一个真实业务如何用
+> pavoz 表达"搜索 → 下载 → 过滤 → 合成 → 审阅 → 保存"类管线。
+> pavoz 本身与 ai_writer 及其使用的模型/服务无关。
 
 ## 接入结果 (2026-09-05 接入 → 2026-09-06 全量迁移)
 
@@ -12,15 +12,15 @@
   s_compress → s_compose → s_audit → s_save`
 - revise (迭代修订) 是**单 super-node** (`s_revise`) 包住业务自己的迭代循环 —
   循环留在业务层的典型示范: 业务循环自带 save-per-iter + 终态落 DB,
-  stageflow 只提供统一入口 + 异常契约 + 超时 (revise run 不挂 cp store —
-  stageflow cp 只来自 first-compose run)
+  pavoz 只提供统一入口 + 异常契约 + 超时 (revise run 不挂 cp store —
+  pavoz cp 只来自 first-compose run)
 - **执行路径已唯一化 (2026-09-06)**: 业务旧 first-compose 阶段机
   (`_run_research_pipeline_impl` + `_impl_run_pipeline_phases`) 与单槽 checkpoint
   体系 (MinIO 单槽 CP / hash-skip / resume 槽) 全删 — subproc →
-  `integration/runner.run_pipeline` → stageflow Runtime 跑 DAG; checkpoint 概念
-  只剩 stageflow cp (`initial_state` + `stage_deltas`)
+  `integration/runner.run_pipeline` → pavoz Runtime 跑 DAG; checkpoint 概念
+  只剩 pavoz cp (`initial_state` + `stage_deltas`)
 - cp 经 `MinioStorage` adapter (`sf_storage.py`) 落业务 MinIO 独立前缀
-  `research/task_cp/stageflow/` 下 (`runs/{task_id}/{run_id}/checkpoint` +
+  `research/task_cp/pavoz/` 下 (`runs/{task_id}/{run_id}/checkpoint` +
   latest 指针), 与业务产物 (`research/{task_id}/v{v}/`) 同桶互不干扰
 - 中断恢复: 生产路径**恒 `resume=False`** (重启起新 run_id) — 重启同 task 后
   stage 函数体从最近含对应 delta 的上一 run cp 读回 search/download/compress
@@ -38,7 +38,7 @@
 
 ## 边界 (什么归谁)
 
-| | stageflow (通用) | 业务 (ai_writer) |
+| | pavoz (通用) | 业务 (ai_writer) |
 |---|---|---|
 | DAG 定义 | — | 业务侧文件 (8 节点 / s_revise) |
 | 外部调用 | `ctx.call(kind, op, params)` Protocol | 业务 caller (复用自有 LLM/cache/计费) |
@@ -53,13 +53,13 @@
 ```toml
 # 业务 pyproject.toml
 [tool.poetry.dependencies]  # 或 pip / uv
-stageflow = { git = "ssh://git@github.com/ebziw/stageflow.git", tag = "v0.8.0" }
+pavoz = { git = "ssh://git@github.com/liyong-labs/pavoz.git", tag = "v0.8.0" }
 ```
 
 ### 2. 定义 DAG (纯图, 阶段函数搬业务逻辑)
 
 ```python
-from stageflow import DAG
+from pavoz import DAG
 
 dag = DAG("research_pipeline")
 
@@ -96,7 +96,7 @@ class ObjectStoreStorage(StorageBackend):
 ### 4. 入口 (业务 worker / subproc 内)
 
 ```python
-from stageflow import Runtime, CheckpointStore
+from pavoz import Runtime, CheckpointStore
 
 rt = Runtime(
     checkpoint_store=CheckpointStore(ObjectStoreStorage(task_id)),  # 每 task 隔离
@@ -124,7 +124,7 @@ if result.status != "done":
 - `task_id` = 业务 task id (opaque key, 稳定幂等键)
 - `run_id`: 每次 run() 自动 UUID4 — cp 按 `runs/{task_id}/{run_id}/checkpoint`
   隔离 (+ `runs/{task_id}/latest` 指针)。ai_writer 的 `MinioStorage` adapter
-  把 key 映射到自有 MinIO 前缀 `research/task_cp/stageflow/`, 与业务产物
+  把 key 映射到自有 MinIO 前缀 `research/task_cp/pavoz/`, 与业务产物
   (`research/{task_id}/v{v}/`) 同桶互不干扰
 - cp 内容 = `initial_state` + `stage_deltas` (每 node 原始 return, 按完成序)
   + `stage_ts` (v0.7+, stage 完成 epoch); 完整 state 由 `initial_state` +
@@ -140,7 +140,7 @@ if result.status != "done":
 ### 5. 回归
 
 ```python
-from stageflow import TestPipe
+from pavoz import TestPipe
 
 pipe = TestPipe(dag)
 pipe.mock("s_search", lambda state: {...})   # mock 昂贵/外部段
@@ -152,7 +152,7 @@ assert result.state == {...}
 
 1. 业务侧模块级全局 (contextvar/缓存) 是迁移时最容易漏的点 — 搬函数时把跨阶段
    依赖显式化为 ctx.state
-2. 子进程心跳/租约 (若有) 是业务 worker 的事, 与 stageflow 无关, 保留
+2. 子进程心跳/租约 (若有) 是业务 worker 的事, 与 pavoz 无关, 保留
 3. ctx.state 值必须 json-serializable (str/int/float/bool/None/list/dict)
 
 ## 相关文档

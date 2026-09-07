@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship v0.4 — 5 个 StorageBackend adapter (Postgres / MySQL / Redis / MinIO / SQLite) 在 `stageflow.contrib.storage` 下, core 不变, 行为必须兼容 ai_writer 既有 MinioStorage 用法.
+**Goal:** Ship v0.4 — 5 个 StorageBackend adapter (Postgres / MySQL / Redis / MinIO / SQLite) 在 `pavoz.contrib.storage` 下, core 不变, 行为必须兼容 ai_writer 既有 MinioStorage 用法.
 
 **Architecture:** core stdlib-only 不变; 5 个独立 adapter 模块, 每个顶层 try/except 懒导入 driver (友好 ImportError 提示); SQLite 无 dep 入口; PostgresStorage 行为参考 ai_writer 的 MinioStorage adapter (delete 容忍 NoSuchKey, list_keys 友好过滤).
 
@@ -24,16 +24,16 @@
 ### Task 1: contrib 子包骨架 + _base.py (key sanitize + 公共 helpers)
 
 **Files:**
-- Create: `stageflow/contrib/__init__.py`
-- Create: `stageflow/contrib/storage/__init__.py`
-- Create: `stageflow/contrib/storage/_base.py`
-- Modify: `stageflow/__init__.py` (无变化 — contrib 不进 core 导出)
+- Create: `pavoz/contrib/__init__.py`
+- Create: `pavoz/contrib/storage/__init__.py`
+- Create: `pavoz/contrib/storage/_base.py`
+- Modify: `pavoz/__init__.py` (无变化 — contrib 不进 core 导出)
 - Test: `tests/contrib/__init__.py` (空 — subpackage test 发现)
 - Test: `tests/contrib/test_base.py`
 
 **Interfaces:**
 - Consumes: `StorageBackend` (现有 core Protocol)
-- Produces: `stageflow.contrib.storage` subpackage; `_validate_key(key: str) -> None` helper; `_encode_payload(data: dict) -> bytes` + `_decode_payload(raw: bytes) -> dict | None` JSON serializer (UTF-8 + json.dumps/loads, ensure_ascii=False)
+- Produces: `pavoz.contrib.storage` subpackage; `_validate_key(key: str) -> None` helper; `_encode_payload(data: dict) -> bytes` + `_decode_payload(raw: bytes) -> dict | None` JSON serializer (UTF-8 + json.dumps/loads, ensure_ascii=False)
 
 - [ ] **Step 1: 写测试**
 
@@ -43,7 +43,7 @@
 """contrib 公共 helpers 测试."""
 import pytest
 
-from stageflow.contrib.storage._base import _validate_key, _encode_payload, _decode_payload
+from pavoz.contrib.storage._base import _validate_key, _encode_payload, _decode_payload
 
 
 def test_validate_key_accepts_safe_chars():
@@ -86,18 +86,18 @@ def test_decode_returns_none_on_empty():
 - [ ] **Step 2: 跑测试确认 FAIL**
 
 ```bash
-cd stageflow && python -m pytest tests/contrib/test_base.py -v
+cd pavoz && python -m pytest tests/contrib/test_base.py -v
 ```
-Expected: FAIL (`stageflow.contrib.storage._base` 不存在)
+Expected: FAIL (`pavoz.contrib.storage._base` 不存在)
 
 - [ ] **Step 3: 实现 _base.py**
 
-新建 `stageflow/contrib/storage/_base.py`:
+新建 `pavoz/contrib/storage/_base.py`:
 
 ```python
 """contrib Storage adapter 公共 helpers.
 
-stageflow.contrib.storage 全部 adapter 共享:
+pavoz.contrib.storage 全部 adapter 共享:
 - _validate_key: 路径安全 (只允许 [a-zA-Z0-9_-/]+)
 - _encode_payload / _decode_payload: dict <-> bytes JSON 序列化
   (与 ai_writer MinioStorage 行为对齐: ensure_ascii=False + None 表示缺失)
@@ -108,7 +108,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-# 与 stageflow/storage.py FileStorage._path 一致: 路径注入防御
+# 与 pavoz/storage.py FileStorage._path 一致: 路径注入防御
 _SAFE_KEY_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_/.")
 
 
@@ -127,7 +127,7 @@ def _encode_payload(data: dict) -> bytes:
 
 
 def _decode_payload(raw: bytes) -> dict | None:
-    """bytes -> dict. 解析失败 (包括空) 返 None — 与 stageflow.core 同语义."""
+    """bytes -> dict. 解析失败 (包括空) 返 None — 与 pavoz.core 同语义."""
     if not raw:
         return None
     try:
@@ -138,10 +138,10 @@ def _decode_payload(raw: bytes) -> dict | None:
 
 - [ ] **Step 4: 实现 contrib 包骨架**
 
-新建 `stageflow/contrib/__init__.py`:
+新建 `pavoz/contrib/__init__.py`:
 
 ```python
-"""stageflow.contrib — 可选 extras 子包.
+"""pavoz.contrib — 可选 extras 子包.
 
 adapter 在此命名空间; core 不依赖 contrib. 装哪个 extras 就有哪个 adapter.
 LLM vendor / 业务 SDK 禁入 (deps 政策).
@@ -152,7 +152,7 @@ from __future__ import annotations
 __version__ = "0.4.0.dev0"
 ```
 
-新建 `stageflow/contrib/storage/__init__.py`:
+新建 `pavoz/contrib/storage/__init__.py`:
 
 ```python
 """StorageBackend adapter 可选实现.
@@ -163,7 +163,7 @@ __version__ = "0.4.0.dev0"
 from __future__ import annotations
 
 # 不强导入任何 adapter — 让用户按需 import:
-#   from stageflow.contrib.storage import PostgresStorage
+#   from pavoz.contrib.storage import PostgresStorage
 # 这才触发对应 adapter 的 driver 检查。
 
 __all__: list[str] = []
@@ -172,20 +172,20 @@ __all__: list[str] = []
 - [ ] **Step 5: 跑测试确认 PASS**
 
 ```bash
-cd stageflow && python -m pytest tests/contrib/test_base.py -v
-cd stageflow && python -m pytest tests/ -q
-cd stageflow && python -m ruff check stageflow/ tests/
+cd pavoz && python -m pytest tests/contrib/test_base.py -v
+cd pavoz && python -m pytest tests/ -q
+cd pavoz && python -m ruff check pavoz/ tests/
 ```
 Expected: 7 contrib tests PASS; 38 core tests PASS; ruff 0 violation
 
 - [ ] **Step 6: commit**
 
 ```bash
-cd stageflow
-git add stageflow/contrib/ tests/contrib/
+cd pavoz
+git add pavoz/contrib/ tests/contrib/
 git commit -m "feat(contrib): skeleton + _base key sanitize/JSON helpers
 
-- stageflow/contrib/ subpackage (extras, 不进 core __init__.py)
+- pavoz/contrib/ subpackage (extras, 不进 core __init__.py)
 - _base.py: _validate_key (path safety) + _encode/decode_payload (UTF-8 JSON)
 - 7 unit tests pass; 38 core tests still pass
 
@@ -197,13 +197,13 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 ### Task 2: SqliteStorage (stdlib, 唯一无第三方依赖 — 优先做, 不阻塞其他)
 
 **Files:**
-- Create: `stageflow/contrib/storage/sqlite.py`
-- Modify: `stageflow/contrib/storage/__init__.py` (加 export)
+- Create: `pavoz/contrib/storage/sqlite.py`
+- Modify: `pavoz/contrib/storage/__init__.py` (加 export)
 - Test: `tests/contrib/test_sqlite.py`
 
 **Interfaces:**
 - Consumes: `StorageBackend` Protocol; `_base._validate_key` / `_encode_payload` / `_decode_payload`
-- Produces: `SqliteStorage(path: str | Path, *, table: str = "stageflow_kv")` — 单文件 SQLite db
+- Produces: `SqliteStorage(path: str | Path, *, table: str = "pavoz_kv")` — 单文件 SQLite db
 
 - [ ] **Step 1: 写测试**
 
@@ -216,7 +216,7 @@ import sqlite3
 import pytest
 from pathlib import Path
 
-from stageflow.contrib.storage.sqlite import SqliteStorage
+from pavoz.contrib.storage.sqlite import SqliteStorage
 
 
 @pytest.fixture
@@ -246,7 +246,7 @@ def test_delete_existing(store: SqliteStorage):
 
 
 def test_delete_missing_is_silent(store: SqliteStorage):
-    # 不抛异常 (与 stageflow.core FileStorage.delete 一致)
+    # 不抛异常 (与 pavoz.core FileStorage.delete 一致)
     store.delete("never-existed")
 
 
@@ -288,18 +288,18 @@ def test_unicode_safe(store: SqliteStorage):
 - [ ] **Step 2: 跑测试确认 FAIL**
 
 ```bash
-cd stageflow && python -m pytest tests/contrib/test_sqlite.py -v
+cd pavoz && python -m pytest tests/contrib/test_sqlite.py -v
 ```
 Expected: FAIL
 
 - [ ] **Step 3: 实现 SqliteStorage**
 
-新建 `stageflow/contrib/storage/sqlite.py`:
+新建 `pavoz/contrib/storage/sqlite.py`:
 
 ```python
 """SqliteStorage — stdlib sqlite3, 无第三方依赖.
 
-单文件 DB; 默认表 stageflow_kv. 适合本地测试 + 单进程部署.
+单文件 DB; 默认表 pavoz_kv. 适合本地测试 + 单进程部署.
 """
 
 from __future__ import annotations
@@ -307,7 +307,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from stageflow.storage import StorageBackend
+from pavoz.storage import StorageBackend
 
 from ._base import _decode_payload, _encode_payload, _validate_key
 
@@ -317,7 +317,7 @@ __all__ = ["SqliteStorage"]
 class SqliteStorage(StorageBackend):
     """SQLite-backed StorageBackend. 单文件 DB, auto-creates table on init."""
 
-    def __init__(self, path: str | Path, *, table: str = "stageflow_kv"):
+    def __init__(self, path: str | Path, *, table: str = "pavoz_kv"):
         self.path = str(path)
         self.table = table
         self._conn = sqlite3.connect(self.path)
@@ -366,7 +366,7 @@ class SqliteStorage(StorageBackend):
 
 - [ ] **Step 4: 注册到 storage __init__**
 
-修改 `stageflow/contrib/storage/__init__.py` —— 加 lazy import 列表 (不强导入, 触发时检查):
+修改 `pavoz/contrib/storage/__init__.py` —— 加 lazy import 列表 (不强导入, 触发时检查):
 
 ```python
 """StorageBackend adapter 可选实现.
@@ -377,7 +377,7 @@ class SqliteStorage(StorageBackend):
 from __future__ import annotations
 
 # 不强导入任何 adapter — 让用户按需 import:
-#   from stageflow.contrib.storage import PostgresStorage
+#   from pavoz.contrib.storage import PostgresStorage
 # 这才触发对应 adapter 的 driver 检查。
 
 __all__: list[str] = ["SqliteStorage", "PostgresStorage", "MySQLStorage",
@@ -394,7 +394,7 @@ def __getattr__(name: str):
         "MinioStorage": (".minio", "MinioStorage", "boto3"),
     }
     if name not in _ADAPTERS:
-        raise AttributeError(f"module 'stageflow.contrib.storage' has no attribute {name!r}")
+        raise AttributeError(f"module 'pavoz.contrib.storage' has no attribute {name!r}")
     mod_path, cls_name, dep = _ADAPTERS[name]
     import importlib
     mod = importlib.import_module(mod_path, package=__name__)
@@ -407,17 +407,17 @@ def __getattr__(name: str):
 - [ ] **Step 5: 跑测试确认 PASS**
 
 ```bash
-cd stageflow && python -m pytest tests/contrib/test_sqlite.py -v
-cd stageflow && python -m pytest tests/ -q
-cd stageflow && python -m ruff check stageflow/ tests/
+cd pavoz && python -m pytest tests/contrib/test_sqlite.py -v
+cd pavoz && python -m pytest tests/ -q
+cd pavoz && python -m ruff check pavoz/ tests/
 ```
 Expected: 10 sqlite tests PASS; 38 core + 7 base + 10 sqlite = 55 PASS; ruff 0
 
 - [ ] **Step 6: commit**
 
 ```bash
-cd stageflow
-git add stageflow/contrib/ tests/
+cd pavoz
+git add pavoz/contrib/ tests/
 git commit -m "feat(contrib.storage): SqliteStorage (stdlib sqlite3)
 
 - 单文件 SQLite DB; auto schema; ORM-style put/get/list/delete
@@ -433,12 +433,12 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 ### Task 3: PostgresStorage (psycopg3, SQL template)
 
 **Files:**
-- Create: `stageflow/contrib/storage/postgres.py`
+- Create: `pavoz/contrib/storage/postgres.py`
 - Test: `tests/contrib/test_postgres.py`
 
 **Interfaces:**
 - Consumes: `_base._validate_key/_encode_payload/_decode_payload`
-- Produces: `PostgresStorage(dsn: str, *, table: str = "stageflow_kv")` — DSN connection string
+- Produces: `PostgresStorage(dsn: str, *, table: str = "pavoz_kv")` — DSN connection string
 
 - [ ] **Step 1: 写测试**
 
@@ -451,10 +451,10 @@ import uuid
 
 import pytest
 
-from stageflow.contrib.storage.postgres import PostgresStorage
+from pavoz.contrib.storage.postgres import PostgresStorage
 
-# 默认 DSN — 本地 postgres 用户可覆盖 env STAGEFLOW_TEST_PG_DSN
-PG_DSN = os.environ.get("STAGEFLOW_TEST_PG_DSN", "postgresql://postgres:postgres@localhost:5432/postgres")
+# 默认 DSN — 本地 postgres 用户可覆盖 env PAVOZ_TEST_PG_DSN
+PG_DSN = os.environ.get("PAVOZ_TEST_PG_DSN", "postgresql://postgres:postgres@localhost:5432/postgres")
 
 
 @pytest.fixture
@@ -507,25 +507,25 @@ def test_import_error_when_psycopg_missing(monkeypatch):
     """当 psycopg 没装, import 应该友好错误 (而非 ModuleNotFoundError)."""
     # 不真删 psycopg, 只验证 error message 逻辑存在
     # (集成测: 实际跑需 uninstall)
-    from stageflow.contrib.storage import postgres as pg_mod
+    from pavoz.contrib.storage import postgres as pg_mod
     assert hasattr(pg_mod, "PostgresStorage")
 ```
 
 - [ ] **Step 2: 跑测试确认 FAIL (unmarked 部分)**
 
 ```bash
-cd stageflow && python -m pytest tests/contrib/test_postgres.py -v -m "not integration"
+cd pavoz && python -m pytest tests/contrib/test_postgres.py -v -m "not integration"
 ```
 Expected: 1 PASS (import test), 6 skip (integration 无 docker)
 
 - [ ] **Step 3: 实现 PostgresStorage**
 
-新建 `stageflow/contrib/storage/postgres.py`:
+新建 `pavoz/contrib/storage/postgres.py`:
 
 ```python
 """PostgresStorage — psycopg3 v3 sync driver.
 
-DSN 连接字符串; 默认表 stageflow_kv. JSONB 字段存 dict.
+DSN 连接字符串; 默认表 pavoz_kv. JSONB 字段存 dict.
 """
 
 from __future__ import annotations
@@ -535,10 +535,10 @@ try:
     import psycopg.rows
 except ImportError as _e:
     raise ImportError(
-        "PostgresStorage 需要 psycopg. 安装: pip install 'stageflow[postgres]'"
+        "PostgresStorage 需要 psycopg. 安装: pip install 'pavoz[postgres]'"
     ) from _e
 
-from stageflow.storage import StorageBackend
+from pavoz.storage import StorageBackend
 
 from ._base import _decode_payload, _encode_payload, _validate_key
 
@@ -548,7 +548,7 @@ __all__ = ["PostgresStorage"]
 class PostgresStorage(StorageBackend):
     """PostgreSQL-backed StorageBackend. 用 JSONB 字段存 dict (psycopg3 自动 dict<->jsonb)."""
 
-    def __init__(self, dsn: str, *, table: str = "stageflow_kv", schema: str = "public"):
+    def __init__(self, dsn: str, *, table: str = "pavoz_kv", schema: str = "public"):
         self._dsn = dsn
         self.table = table
         self.schema = schema
@@ -612,23 +612,23 @@ class PostgresStorage(StorageBackend):
 - [ ] **Step 4: 跑测试确认 PASS (非集成)**
 
 ```bash
-cd stageflow && python -m pytest tests/contrib/test_postgres.py -v -m "not integration"
-cd stageflow && python -m pytest tests/ -q -m "not integration"
-cd stageflow && python -m ruff check stageflow/ tests/
+cd pavoz && python -m pytest tests/contrib/test_postgres.py -v -m "not integration"
+cd pavoz && python -m pytest tests/ -q -m "not integration"
+cd pavoz && python -m ruff check pavoz/ tests/
 ```
 Expected: 1 postgres + 55 others = 56 PASS; ruff 0
 
 - [ ] **Step 5: commit**
 
 ```bash
-cd stageflow
-git add stageflow/contrib/storage/postgres.py tests/contrib/test_postgres.py
+cd pavoz
+git add pavoz/contrib/storage/postgres.py tests/contrib/test_postgres.py
 git commit -m "feat(contrib.storage): PostgresStorage (psycopg3 JSONB)
 
 - DSN connection string; auto schema+table create
 - INSERT ... ON CONFLICT DO UPDATE (upsert)
 - 1 non-integration test (import smoke) + 5 @pytest.mark.integration
-- 默认本地 DSN; STAGEFLOW_TEST_PG_DSN env override
+- 默认本地 DSN; PAVOZ_TEST_PG_DSN env override
 
 Co-Authored-By: Claude Code <noreply@anthropic.com>"
 ```
@@ -638,7 +638,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 ### Task 4: MySQLStorage (PyMySQL)
 
 **Files:**
-- Create: `stageflow/contrib/storage/mysql.py`
+- Create: `pavoz/contrib/storage/mysql.py`
 - Test: `tests/contrib/test_mysql.py`
 
 **Interfaces:** 与 PostgresStorage 同形 (类似 4 方法 + table).
@@ -654,9 +654,9 @@ import uuid
 
 import pytest
 
-from stageflow.contrib.storage.mysql import MySQLStorage
+from pavoz.contrib.storage.mysql import MySQLStorage
 
-MYSQL_DSN = os.environ.get("STAGEFLOW_TEST_MYSQL_DSN",
+MYSQL_DSN = os.environ.get("PAVOZ_TEST_MYSQL_DSN",
     "mysql+pymysql://root:root@localhost:3306/test")
 
 
@@ -709,25 +709,25 @@ def test_list_keys_prefix(mysql_store: MySQLStorage):
 
 
 def test_import_error_when_pymysql_missing():
-    from stageflow.contrib.storage import mysql as m_mod
+    from pavoz.contrib.storage import mysql as m_mod
     assert hasattr(m_mod, "MySQLStorage")
 ```
 
 - [ ] **Step 2: 跑测试确认 FAIL**
 
 ```bash
-cd stageflow && python -m pytest tests/contrib/test_mysql.py -v -m "not integration"
+cd pavoz && python -m pytest tests/contrib/test_mysql.py -v -m "not integration"
 ```
 Expected: 1 PASS (import test)
 
 - [ ] **Step 3: 实现 MySQLStorage**
 
-新建 `stageflow/contrib/storage/mysql.py`:
+新建 `pavoz/contrib/storage/mysql.py`:
 
 ```python
 """MySQLStorage — PyMySQL (纯 Python MySQL driver).
 
-DSN 连接字符串; 默认表 stageflow_kv. LONGTEXT 字段存 JSON.
+DSN 连接字符串; 默认表 pavoz_kv. LONGTEXT 字段存 JSON.
 """
 
 from __future__ import annotations
@@ -736,10 +736,10 @@ try:
     import pymysql
 except ImportError as _e:
     raise ImportError(
-        "MySQLStorage 需要 pymysql. 安装: pip install 'stageflow[mysql]'"
+        "MySQLStorage 需要 pymysql. 安装: pip install 'pavoz[mysql]'"
     ) from _e
 
-from stageflow.storage import StorageBackend
+from pavoz.storage import StorageBackend
 
 from ._base import _decode_payload, _encode_payload, _validate_key
 
@@ -764,7 +764,7 @@ def _parse_dsn(dsn: str) -> dict:
 class MySQLStorage(StorageBackend):
     """MySQL-backed StorageBackend. LONGTEXT 存 dict (PyMySQL 不自动 JSON, 显式 encode/decode)."""
 
-    def __init__(self, dsn: str, *, table: str = "stageflow_kv"):
+    def __init__(self, dsn: str, *, table: str = "pavoz_kv"):
         cfg = _parse_dsn(dsn)
         self.table = table
         self._conn = pymysql.connect(
@@ -819,23 +819,23 @@ class MySQLStorage(StorageBackend):
 - [ ] **Step 4: 跑测试确认 PASS**
 
 ```bash
-cd stageflow && python -m pytest tests/contrib/test_mysql.py -v -m "not integration"
-cd stageflow && python -m pytest tests/ -q -m "not integration"
-cd stageflow && python -m ruff check stageflow/ tests/
+cd pavoz && python -m pytest tests/contrib/test_mysql.py -v -m "not integration"
+cd pavoz && python -m pytest tests/ -q -m "not integration"
+cd pavoz && python -m ruff check pavoz/ tests/
 ```
 Expected: 1 mysql + 56 others = 57 PASS
 
 - [ ] **Step 5: commit**
 
 ```bash
-cd stageflow
-git add stageflow/contrib/storage/mysql.py tests/contrib/test_mysql.py
+cd pavoz
+git add pavoz/contrib/storage/mysql.py tests/contrib/test_mysql.py
 git commit -m "feat(contrib.storage): MySQLStorage (PyMySQL LONGTEXT)
 
 - SQLAlchemy 风格 DSN 'mysql+pymysql://user:pwd@host:port/db'
 - LONGTEXT 字段存 JSON (PyMySQL 不自动 dict<->json, 显式 _encode/decode)
 - 1 non-integration test + 5 @pytest.mark.integration
-- STAGEFLOW_TEST_MYSQL_DSN env override
+- PAVOZ_TEST_MYSQL_DSN env override
 
 Co-Authored-By: Claude Code <noreply@anthropic.com>"
 ```
@@ -845,12 +845,12 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 ### Task 5: RedisStorage (redis-py + fakeredis test)
 
 **Files:**
-- Create: `stageflow/contrib/storage/redis.py`
+- Create: `pavoz/contrib/storage/redis.py`
 - Test: `tests/contrib/test_redis.py`
 
 **Interfaces:**
 - Consumes: `_base` helpers
-- Produces: `RedisStorage(url: str = "redis://localhost:6379/0", *, prefix: str = "stageflow:")`
+- Produces: `RedisStorage(url: str = "redis://localhost:6379/0", *, prefix: str = "pavoz:")`
 
 - [ ] **Step 1: 写测试**
 
@@ -860,7 +860,7 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 """RedisStorage 测试 (用 fakeredis mock, 无 docker 依赖)."""
 import pytest
 
-from stageflow.contrib.storage.redis import RedisStorage
+from pavoz.contrib.storage.redis import RedisStorage
 
 
 @pytest.fixture
@@ -920,18 +920,18 @@ def test_unicode_safe(store: RedisStorage):
 - [ ] **Step 2: 跑测试确认 FAIL**
 
 ```bash
-cd stageflow && python -m pytest tests/contrib/test_redis.py -v
+cd pavoz && python -m pytest tests/contrib/test_redis.py -v
 ```
 Expected: FAIL (fakeredis 装后 import OK 但 RedisStorage 不存在)
 
 - [ ] **Step 3: 实现 RedisStorage**
 
-新建 `stageflow/contrib/storage/redis.py`:
+新建 `pavoz/contrib/storage/redis.py`:
 
 ```python
 """RedisStorage — redis-py sync driver.
 
-URL 连接字符串; prefix 防止 key 冲突 (多 stageflow 实例共享 Redis).
+URL 连接字符串; prefix 防止 key 冲突 (多 pavoz 实例共享 Redis).
 """
 
 from __future__ import annotations
@@ -940,10 +940,10 @@ try:
     import redis
 except ImportError as _e:
     raise ImportError(
-        "RedisStorage 需要 redis. 安装: pip install 'stageflow[redis]'"
+        "RedisStorage 需要 redis. 安装: pip install 'pavoz[redis]'"
     ) from _e
 
-from stageflow.storage import StorageBackend
+from pavoz.storage import StorageBackend
 
 from ._base import _decode_payload, _encode_payload, _validate_key
 
@@ -953,7 +953,7 @@ __all__ = ["RedisStorage"]
 class RedisStorage(StorageBackend):
     """Redis-backed StorageBackend. value 存为 JSON bytes, prefix 隔离."""
 
-    def __init__(self, url: str = "redis://localhost:6379/0", *, prefix: str = "stageflow:"):
+    def __init__(self, url: str = "redis://localhost:6379/0", *, prefix: str = "pavoz:"):
         self._client = redis.Redis.from_url(url)
         self.prefix = prefix
 
@@ -992,20 +992,20 @@ class RedisStorage(StorageBackend):
 - [ ] **Step 4: 跑测试确认 PASS**
 
 ```bash
-cd stageflow && python -m pytest tests/contrib/test_redis.py -v
-cd stageflow && python -m pytest tests/ -q
-cd stageflow && python -m ruff check stageflow/ tests/
+cd pavoz && python -m pytest tests/contrib/test_redis.py -v
+cd pavoz && python -m pytest tests/ -q
+cd pavoz && python -m ruff check pavoz/ tests/
 ```
 Expected: 7 redis + 50 others = 57 PASS; ruff 0
 
 - [ ] **Step 5: commit**
 
 ```bash
-cd stageflow
-git add stageflow/contrib/storage/redis.py tests/contrib/test_redis.py
+cd pavoz
+git add pavoz/contrib/storage/redis.py tests/contrib/test_redis.py
 git commit -m "feat(contrib.storage): RedisStorage (redis-py + fakeredis test)
 
-- URL connection; prefix 隔离 (多 stageflow 实例安全共享 Redis)
+- URL connection; prefix 隔离 (多 pavoz 实例安全共享 Redis)
 - SCAN-based list_keys (避免 KEYS 全扫)
 - 7 tests pass via fakeredis mock (无 docker 依赖)
 
@@ -1017,12 +1017,12 @@ Co-Authored-By: Claude Code <noreply@anthropic.com>"
 ### Task 6: MinioStorage (boto3, 行为对齐 ai_writer 现有)
 
 **Files:**
-- Create: `stageflow/contrib/storage/minio.py`
+- Create: `pavoz/contrib/storage/minio.py`
 - Test: `tests/contrib/test_minio.py`
 
 **Interfaces:**
 - Consumes: `_base` helpers; ai_writer 现有 `backend/integration/sf_storage.py` 行为约定
-- Produces: `MinioStorage(endpoint_url, *, access_key, secret_key, bucket: str, prefix: str = "stageflow:")` 或同等 kwargs 风格
+- Produces: `MinioStorage(endpoint_url, *, access_key, secret_key, bucket: str, prefix: str = "pavoz:")` 或同等 kwargs 风格
 
 - [ ] **Step 1: 写测试 (用 moto[s3] mock)**
 
@@ -1034,7 +1034,7 @@ import os
 import pytest
 
 # moto 提供 mock AWS S3 = 同样 MinIO 用的 S3 API
-from stageflow.contrib.storage.minio import MinioStorage
+from pavoz.contrib.storage.minio import MinioStorage
 
 
 @pytest.fixture
@@ -1117,13 +1117,13 @@ def test_deletes_noop_when_storage_layer_raises_404(store: MinioStorage):
 - [ ] **Step 2: 跑测试确认 FAIL**
 
 ```bash
-cd stageflow && python -m pytest tests/contrib/test_minio.py -v
+cd pavoz && python -m pytest tests/contrib/test_minio.py -v
 ```
 Expected: FAIL (moto 已装但 MinioStorage 不存在)
 
 - [ ] **Step 3: 实现 MinioStorage**
 
-新建 `stageflow/contrib/storage/minio.py`:
+新建 `pavoz/contrib/storage/minio.py`:
 
 ```python
 """MinioStorage — boto3 S3 client (兼容 AWS S3 + MinIO).
@@ -1141,10 +1141,10 @@ try:
     from botocore.exceptions import ClientError
 except ImportError as _e:
     raise ImportError(
-        "MinioStorage 需要 boto3. 安装: pip install 'stageflow[minio]'"
+        "MinioStorage 需要 boto3. 安装: pip install 'pavoz[minio]'"
     ) from _e
 
-from stageflow.storage import StorageBackend
+from pavoz.storage import StorageBackend
 
 from ._base import _decode_payload, _encode_payload, _validate_key
 
@@ -1166,7 +1166,7 @@ class MinioStorage(StorageBackend):
         self,
         *,
         bucket: str,
-        prefix: str = "stageflow:",
+        prefix: str = "pavoz:",
         endpoint_url: str | None = None,
         access_key: str | None = None,
         secret_key: str | None = None,
@@ -1222,17 +1222,17 @@ class MinioStorage(StorageBackend):
 - [ ] **Step 4: 跑测试确认 PASS**
 
 ```bash
-cd stageflow && python -m pytest tests/contrib/test_minio.py -v
-cd stageflow && python -m pytest tests/ -q
-cd stageflow && python -m ruff check stageflow/ tests/
+cd pavoz && python -m pytest tests/contrib/test_minio.py -v
+cd pavoz && python -m pytest tests/ -q
+cd pavoz && python -m ruff check pavoz/ tests/
 ```
 Expected: 7 minio + 50 others = 57 PASS; ruff 0
 
 - [ ] **Step 5: commit**
 
 ```bash
-cd stageflow
-git add stageflow/contrib/storage/minio.py tests/contrib/test_minio.py
+cd pavoz
+git add pavoz/contrib/storage/minio.py tests/contrib/test_minio.py
 git commit -m "feat(contrib.storage): MinioStorage (boto3, ai_writer 行为对齐)
 
 - S3-compatible (AWS S3 / MinIO / Cloudflare R2 / etc.)
@@ -1276,7 +1276,7 @@ all = ["psycopg[binary]>=3.1", "pymysql>=1.1", "redis>=5.0", "boto3>=1.34"]
 在 README 的"零依赖" badge/行附近, 改为:
 
 ```markdown
-core 永远 Python stdlib only (无第三方依赖). 可选 adapter: `pip install stageflow[postgres]` / `[mysql]` / `[redis]` / `[minio]` / `[all]`.
+core 永远 Python stdlib only (无第三方依赖). 可选 adapter: `pip install pavoz[postgres]` / `[mysql]` / `[redis]` / `[minio]` / `[all]`.
 ```
 
 加新 ## Contrib 段 (在 "## 安装" 后), 列出 5 个 adapter 1 行说明.
@@ -1300,7 +1300,7 @@ core 永远 Python stdlib only (无第三方依赖). 可选 adapter: `pip instal
 ```markdown
 ## [0.4.0] — 2026-09-05
 
-### Added (stageflow.contrib.storage)
+### Added (pavoz.contrib.storage)
 
 - **PostgresStorage** (psycopg3 + JSONB, INSERT ON CONFLICT  upsert)
 - **MySQLStorage** (PyMySQL + LONGTEXT, INSERT ON DUPLICATE KEY UPDATE upsert)
@@ -1312,7 +1312,7 @@ core 永远 Python stdlib only (无第三方依赖). 可选 adapter: `pip instal
 ### Internal
 
 - core 12 模块 + StorageBackend Protocol 零变化 (API 冻结); 0 行 core 修改
-- contrib 是独立 subpackage (`stageflow.contrib.storage`), 不进 core __init__.py
+- contrib 是独立 subpackage (`pavoz.contrib.storage`), 不进 core __init__.py
 - extras 分组: `[postgres]` / `[mysql]` / `[redis]` / `[minio]` / `[sqlite]` (空) / `[contrib]` (无 sqlite) / `[all]` (全)
 
 ### Tests
@@ -1335,7 +1335,7 @@ core 永远 Python stdlib only (无第三方依赖). 可选 adapter: `pip instal
 
 ## v0.4: StorageBackend contrib adapters (2026-09-05, 已 ship)
 
-- stageflow.contrib.storage 5 个 adapter: Postgres / MySQL / Redis / MinIO / SQLite
+- pavoz.contrib.storage 5 个 adapter: Postgres / MySQL / Redis / MinIO / SQLite
 - core 永远 stdlib-only; contrib 是可选 extras
 - 行为对齐 ai_writer 既有 MinioStorage 用法 (delete 容忍 NoSuchKey)
 
@@ -1344,10 +1344,10 @@ core 永远 Python stdlib only (无第三方依赖). 可选 adapter: `pip instal
 - [ ] **Step 8: 全量回归**
 
 ```bash
-cd stageflow && python -m ruff check stageflow/ tests/
-cd stageflow && python -m pytest tests/ -q -m "not integration"
-cd stageflow && python -m pytest tests/ -q -m "integration"  # 大概率 skip 无 docker
-cd stageflow && python -m stageflow --help 2>&1 | head -3  # core 不破
+cd pavoz && python -m ruff check pavoz/ tests/
+cd pavoz && python -m pytest tests/ -q -m "not integration"
+cd pavoz && python -m pytest tests/ -q -m "integration"  # 大概率 skip 无 docker
+cd pavoz && python -m pavoz --help 2>&1 | head -3  # core 不破
 ```
 
 Expected: ruff 0; ≥73 unit tests PASS; CLI works.
@@ -1355,7 +1355,7 @@ Expected: ruff 0; ≥73 unit tests PASS; CLI works.
 - [ ] **Step 9: commit + tag**
 
 ```bash
-cd stageflow
+cd pavoz
 git add pyproject.toml README.md docs/ CHANGELOG.md ROADMAP.md
 git commit -m "docs+build: v0.4 contrib extras + docs (postgres/mysql/redis/minio/sqlite)
 
@@ -1372,7 +1372,7 @@ git tag v0.4.0
 - [ ] **Step 10: 验证**
 
 ```bash
-cd stageflow && git tag -l && git log --oneline -10
-wc -l stageflow/contrib/storage/*.py | tail
+cd pavoz && git tag -l && git log --oneline -10
+wc -l pavoz/contrib/storage/*.py | tail
 ```
 Expected: v0.4.0 在列; 7 commits (Task 1-7); contrib storage 5 个 adapter + base + __init__.py

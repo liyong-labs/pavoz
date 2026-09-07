@@ -1,11 +1,11 @@
 """CLI: run / trace / state / replay / export-input / fork-run (v0.6).
 
 用法:
-    python -m stageflow run dags/demo.py --task-id abc [--input '{"name": "x"}']
-    python -m stageflow trace --task-id abc
-    python -m stageflow state --task-id abc [--key k]
-    (存储目录: STAGEFLOW_STORAGE env, 默认 ~/.stageflow/data)
-    python -m stageflow replay dags/demo.py --task-id abc --stage s_b [--patch patch.py]
+    python -m pavoz run dags/demo.py --task-id abc [--input '{"name": "x"}']
+    python -m pavoz trace --task-id abc
+    python -m pavoz state --task-id abc [--key k]
+    (存储目录: PAVOZ_STORAGE env, 默认 ~/.pavoz/data)
+    python -m pavoz replay dags/demo.py --task-id abc --stage s_b [--patch patch.py]
 
 replay (--stage 单 stage 重放 + --patch 改 fn): v0.5.1 已 ship (2026-09-05).
 export-input / fork-run (v0.6, 2026-09-06): 任意过去节点取输入 → 改 → 装回续跑
@@ -27,7 +27,7 @@ from .checkpoint import CheckpointMismatchError, CheckpointStore
 from .runtime import Runtime
 from .storage import FileStorage
 
-DEFAULT_STORAGE = os.environ.get("STAGEFLOW_STORAGE", os.path.expanduser("~/.stageflow/data"))
+DEFAULT_STORAGE = os.environ.get("PAVOZ_STORAGE", os.path.expanduser("~/.pavoz/data"))
 
 
 def _load_dag(path: str):
@@ -35,17 +35,17 @@ def _load_dag(path: str):
     p = Path(path).resolve()
     if not p.exists():
         raise SystemExit(f"dag 文件不存在: {p}")
-    spec = importlib.util.spec_from_file_location("_stageflow_dag", p)
+    spec = importlib.util.spec_from_file_location("_pavoz_dag", p)
     assert spec is not None and spec.loader is not None, f"无法加载 dag 文件: {p}"
     mod = importlib.util.module_from_spec(spec)
-    sys.modules["_stageflow_dag"] = mod
+    sys.modules["_pavoz_dag"] = mod
     spec.loader.exec_module(mod)
     dags = [v for v in vars(mod).values() if type(v).__name__ == "DAG"]
     if not dags:
         raise SystemExit(f"{p} 里没有 DAG 实例")
     if len(dags) > 1:
         # 挑名字匹配的; 没有则第一个 (文档建议每文件 1 个 DAG)
-        want = getattr(sys.modules["_stageflow_dag"], "DEFAULT_DAG", None)
+        want = getattr(sys.modules["_pavoz_dag"], "DEFAULT_DAG", None)
         for d in dags:
             if d.name == want:
                 return d
@@ -121,7 +121,7 @@ async def _cmd_state(args) -> int:
 
 
 async def _cmd_replay(args) -> int:
-    """重放单 stage: stageflow replay <dag.py> --task-id X --stage Y [--patch P.py].
+    """重放单 stage: pavoz replay <dag.py> --task-id X --stage Y [--patch P.py].
 
     patch 文件约定: 模块顶层暴露 patch(dag) -> None (import 后调用, 可改 stage fn).
     """
@@ -131,10 +131,10 @@ async def _cmd_replay(args) -> int:
         if not patch_path.exists():
             print(f"patch 文件不存在: {patch_path}")
             return 1
-        spec = importlib.util.spec_from_file_location("_stageflow_patch", patch_path)
+        spec = importlib.util.spec_from_file_location("_pavoz_patch", patch_path)
         assert spec is not None and spec.loader is not None, f"无法加载 patch 文件: {patch_path}"
         mod = importlib.util.module_from_spec(spec)
-        sys.modules["_stageflow_patch"] = mod
+        sys.modules["_pavoz_patch"] = mod
         spec.loader.exec_module(mod)
         patcher = getattr(mod, "patch", None)
         if patcher is None:
@@ -206,7 +206,7 @@ async def _cmd_fork_run(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="stageflow", description="LLM/SE/Extract 流程编排")
+    parser = argparse.ArgumentParser(prog="pavoz", description="LLM/SE/Extract 流程编排")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_run = sub.add_parser("run", help="跑 DAG")

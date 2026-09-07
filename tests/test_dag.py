@@ -2,7 +2,7 @@
 
 import pytest
 
-from stageflow import DAG, CycleError, UnknownDepError
+from pavoz import DAG, CycleError, UnknownDepError
 
 
 def _mk(name="t"):

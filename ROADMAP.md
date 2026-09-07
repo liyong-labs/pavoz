@@ -10,7 +10,7 @@
 
 ## v0.4.1: Storage loader (config-driven, 2026-09-05, 已 ship)
 
-- `stageflow.storage_loader.load_storage(spec: str, **kwargs) -> StorageBackend`
+- `pavoz.storage_loader.load_storage(spec: str, **kwargs) -> StorageBackend`
 - spec 格式: `"pkg.module:ClassName"` — 用户 config 写自己 adapter 的 dotted path
 - core 不带任何 driver, 用户自己 pip install 自己要的 deps
 - ai_writer 兼容: `load_storage("backend.integration.sf_storage.MinioStorage", ...)` 直接可用
@@ -46,7 +46,7 @@
 
 **为什么**: LangGraph 生产教训 — 每次 node 切换全量序列化 state,
 50 文档 → 180KB/checkpoint → PG 写入 400ms (dev.to LangGraph 5 大坑)。
-stageflow 目前对 checkpoint 膨胀无感知, 等膨胀到拖慢 resume 才发现就晚了。
+pavoz 目前对 checkpoint 膨胀无感知, 等膨胀到拖慢 resume 才发现就晚了。
 
 **设计**:
 - `Runtime(on_checkpoint: Callable[[CheckpointStats], None] | None = None)`
@@ -92,7 +92,7 @@ per-node 状态快照" (调研角度 3 共识)。TestPipe 已能 mock 任意 sta
     膨胀明显, 再考虑只存 run_from 所需的最小 delta 集 (v0.2 不做, 先观测)
   - `run_from="s_x"`: s_x 之前全部用真实历史 delta mock, s_x 起真跑
   - 无 run_from: 全 mock 跑通断言与 checkpoint 一致 (回归 = DAG 结构/编排没坏)
-- ai_writer 等 use case: 已完成 task 的 stageflow checkpoint 直接当 fixture;
+- ai_writer 等 use case: 已完成 task 的 pavoz checkpoint 直接当 fixture;
   断言的不是"同一 LLM 输出"而是"给定相同 stage 输出, 图行为不变"
 
 **改动文件**: `checkpoint.py` (+stage_deltas 字段), `runtime.py` (_save_cp 存 delta),
@@ -140,7 +140,7 @@ per-node 快照是自研引擎通病)。
     stage → 返回 RunResult (state = 目标 stage 合并后)
   - 目标 stage 的依赖输出已在 checkpoint state 里 (done_stages 必须覆盖其全部
     depends_on, 否则明确报错)
-- CLI: `python -m stageflow replay <dag.py> --task-id X --stage s_x [--patch P.py]`
+- CLI: `python -m pavoz replay <dag.py> --task-id X --stage s_x [--patch P.py]`
   - 加载 dag 模块 → patch 文件 (import 后 monkey-patch dag.stages 的 fn / caller)
   - 输出: RunResult JSON (state 里目标 stage 的 delta keys) + 目标 stage 单独 delta
 - patch 约定: P.py 暴露 `patch(dag) -> None` (或直接副作用 import — import 即生效)
@@ -171,13 +171,13 @@ hash mismatch / 依赖未完成 → 明确错误。
 
 ## v0.3 候选追加 (2026-09-06 triage, use case #2: ai_writer 引用塌缩 debug)
 
-### 需求提案 (ai_writer → stageflow)
+### 需求提案 (ai_writer → pavoz)
 
 **场景**: ai_writer 14d8842 引用塌缩 debug — 终稿 26 个 [ref:79aa] 全同 + 44×[来源待补]。
 debug 摩擦: 回答"audit 看到的素材池 vs compose 用的素材池为什么不同"需手工翻 40+ trace JSON +
 多个 CP 文件; 回答"v1.3→v1.4 正文被谁改的"需逐 trace 对比全文。
 
-**提案能力**: stage 输入快照血缘查询 — `stageflow state --task X --at-stage s_audit --show-inputs`:
+**提案能力**: stage 输入快照血缘查询 — `pavoz state --task X --at-stage s_audit --show-inputs`:
 给定 task + stage, 直接返回该 stage 实际收到的输入 (素材池/state) + 该 stage 每次 LLM 调用
 的输入输出摘要。
 
@@ -187,13 +187,13 @@ debug 摩擦: 回答"audit 看到的素材池 vs compose 用的素材池为什�
 |---|---|
 | 1. 通用吗? | **部分** — "查任一 stage 的前置 state" 通用 (任何 DAG 用户 debug 都要) |
 | 2. 竞品先例? | **有** — LangGraph checkpoint state 全量可查 / Prefect artifact / Temporal event history |
-| 3. 绑 ai_writer? | **会绑** — ai_writer 编排壳模式下素材池/正文**不经 ctx.state** (stage 函数体直调旧 _run_xxx_phase, 业务数据走 ai_writer 自己 CP/DB) → stageflow 层面根本看不到素材池 |
+| 3. 绑 ai_writer? | **会绑** — ai_writer 编排壳模式下素材池/正文**不经 ctx.state** (stage 函数体直调旧 _run_xxx_phase, 业务数据走 ai_writer 自己 CP/DB) → pavoz 层面根本看不到素材池 |
 
 **裁决**: **拒** (回 ai_writer adapter 层) + 1 条收 backlog:
 1. **拒**: "素材池输入血缘" — 根因是 ai_writer 素材池**双路径加载** (compose 用 outliner selected 7 条,
-   audit/save 用另 5 条), 是业务 bug 不是编排缺口. stageflow 不该为"业务数据不经 state"的架构
+   audit/save 用另 5 条), 是业务 bug 不是编排缺口. pavoz 不该为"业务数据不经 state"的架构
    买单 — 真修法是 ai_writer 素材池单一加载源. 附带方向: 编排壳 stage 若想让业务产物进可观测层,
-   应显式 ctx.log/ctx.state 声明, 而非让 stageflow 猜.
+   应显式 ctx.log/ctx.state 声明, 而非让 pavoz 猜.
 2. **收 backlog (v0.3)**: **checkpoint state edit** — 任意已完成 stage 的 delta 可编辑后重放
    下游 (debug 改中间产物). 通用 (任何 DAG 调试图), 先例 (LangGraph state update / Temporal
    patch), 不绑 vendor. 与 M3 replay 互补: replay=改代码重跑, state-edit=改数据重放.

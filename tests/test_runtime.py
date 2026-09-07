@@ -1,7 +1,7 @@
 """Runtime: 顺序执行 / retries / 异常分类 / timeout / state merge / 冲突."""
 
 
-from stageflow import DAG, RetryableError, Runtime, StageError
+from pavoz import DAG, RetryableError, Runtime, StageError
 
 
 def _dag3():

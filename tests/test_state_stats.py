@@ -1,6 +1,6 @@
 """#36 (2026-09-06): Checkpoint.state_stats — state 体积观测 (调试大 state 用)."""
 
-from stageflow.checkpoint import Checkpoint
+from pavoz.checkpoint import Checkpoint
 
 
 def _mk_cp() -> Checkpoint:

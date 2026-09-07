@@ -14,9 +14,9 @@
 | **架构角色** | "orchestrator" | ai_research 项目里 pavoz 起的作用 (DAG 编排 + checkpoint + fork) |
 
 **Why 两层命名** (历史原因, 现已合并):
-- 原 `stageflow` 是通用库, 已被部署机其他项目用 (aics-platform / ai_writer 等)
+- 原 `pavoz` 是通用库, 已被部署机其他项目用 (aics-platform / ai_writer 等)
 - 原 `pavoz` 是 ai_research 项目专属对外名, GitHub 0 完全同名 repo
-- 2026-09-07 user 决定物理 rename: stageflow → pavoz, 全仓统一
+- 2026-09-07 user 决定物理 rename: pavoz → pavoz, 全仓统一
 
 **冲突解决**:
 - PyPI 上传: `pip install pavoz` (顶层 + 底层 同名)

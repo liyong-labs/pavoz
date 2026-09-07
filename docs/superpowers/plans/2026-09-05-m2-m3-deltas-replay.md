@@ -1,4 +1,4 @@
-# stageflow v0.5.1: M2 stage_deltas + M3 replay 调试能力
+# pavoz v0.5.1: M2 stage_deltas + M3 replay 调试能力
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -28,14 +28,14 @@
 
 | File | Action | Responsibility |
 |---|---|---|
-| `stageflow/checkpoint.py` | Modify | Checkpoint + `stage_deltas` + `initial_state` + `rebuild_state_before()` |
-| `stageflow/runtime.py` | Modify | `_run_stage` 返 delta；`run()` 收集 deltas；`_save_cp` 传新字段；新 `run_stage()` |
-| `stageflow/cli.py` | Modify | `run` 恒 attach store（修 R5）；新 `replay` 命令 |
-| `stageflow/testing.py` | Modify | `TestPipe.replay_from()` |
+| `pavoz/checkpoint.py` | Modify | Checkpoint + `stage_deltas` + `initial_state` + `rebuild_state_before()` |
+| `pavoz/runtime.py` | Modify | `_run_stage` 返 delta；`run()` 收集 deltas；`_save_cp` 传新字段；新 `run_stage()` |
+| `pavoz/cli.py` | Modify | `run` 恒 attach store（修 R5）；新 `replay` 命令 |
+| `pavoz/testing.py` | Modify | `TestPipe.replay_from()` |
 | `tests/test_deltas.py` | Create | M2 存储 + rebuild 测试 |
 | `tests/test_replay.py` | Create | M3 run_stage + CLI 测试 |
 | `tests/test_cli_replay.py` | Create | 或并入 test_replay.py |
-| `stageflow/__init__.py` + `pyproject.toml` | Modify | 0.5.1（Task 4） |
+| `pavoz/__init__.py` + `pyproject.toml` | Modify | 0.5.1（Task 4） |
 | `CHANGELOG.md` / `README.md` / `docs/en+cn` | Modify | Task 4 |
 
 ---
@@ -43,7 +43,7 @@
 ### Task 1: Checkpoint 加 stage_deltas + initial_state + rebuild_state_before
 
 **Files:**
-- Modify: `stageflow/checkpoint.py`
+- Modify: `pavoz/checkpoint.py`
 - Test: `tests/test_deltas.py` (new)
 
 **Interfaces:**
@@ -56,8 +56,8 @@
 """M2: stage_deltas 存储 + rebuild_state_before 重建任意 stage 前 state."""
 import pytest
 
-from stageflow.checkpoint import Checkpoint, workflow_hash
-from stageflow.dag import DAG
+from pavoz.checkpoint import Checkpoint, workflow_hash
+from pavoz.dag import DAG
 
 
 def _dag():
@@ -153,12 +153,12 @@ def test_rebuild_unknown_stage_raises():
 
 - [ ] **Step 2: 跑测试确认失败**
 
-Run: `cd stageflow && python3 -m pytest tests/test_deltas.py -v`
+Run: `cd pavoz && python3 -m pytest tests/test_deltas.py -v`
 Expected: FAIL（Checkpoint 无 initial_state/stage_deltas 字段 + rebuild_state_before 未定义）
 
 - [ ] **Step 3: 实现**
 
-修改 `stageflow/checkpoint.py`：
+修改 `pavoz/checkpoint.py`：
 
 ```python
 @dataclass
@@ -250,8 +250,8 @@ Expected: 67 passed (61 + 6)。若有既有测试构造 Checkpoint 报缺参—�
 
 - [ ] **Step 6: ruff + commit**
 
-Run: `ruff check stageflow/ tests/` → clean
-Commit: `git add stageflow/checkpoint.py tests/test_deltas.py && git commit -m "feat(checkpoint): stage_deltas + initial_state + rebuild_state_before (M2)
+Run: `ruff check pavoz/ tests/` → clean
+Commit: `git add pavoz/checkpoint.py tests/test_deltas.py && git commit -m "feat(checkpoint): stage_deltas + initial_state + rebuild_state_before (M2)
 
 每 stage 原始 return 按完成序存入 checkpoint; 与 initial_state 合起来
 可重建任意 stage 执行前的 state (M3 replay 的地基).
@@ -264,7 +264,7 @@ Commit: `git add stageflow/checkpoint.py tests/test_deltas.py && git commit -m "
 ### Task 2: runtime 收集 deltas + run_stage()
 
 **Files:**
-- Modify: `stageflow/runtime.py`
+- Modify: `pavoz/runtime.py`
 - Test: `tests/test_replay.py` (new)
 
 **Interfaces:**
@@ -279,10 +279,10 @@ import tempfile
 
 import pytest
 
-from stageflow import Runtime
-from stageflow.checkpoint import CheckpointStore, workflow_hash
-from stageflow.dag import DAG
-from stageflow.storage import FileStorage
+from pavoz import Runtime
+from pavoz.checkpoint import CheckpointStore, workflow_hash
+from pavoz.dag import DAG
+from pavoz.storage import FileStorage
 
 
 def _dag():
@@ -553,8 +553,8 @@ Expected: 72 passed (67 + 5)
 
 - [ ] **Step 6: ruff + commit**
 
-Run: `ruff check stageflow/ tests/` → clean
-Commit: `git add stageflow/runtime.py tests/test_replay.py && git commit -m "feat(runtime): run() 收集 stage_deltas + run_stage() 单 stage 重放 (M3)
+Run: `ruff check pavoz/ tests/` → clean
+Commit: `git add pavoz/runtime.py tests/test_replay.py && git commit -m "feat(runtime): run() 收集 stage_deltas + run_stage() 单 stage 重放 (M3)
 
 run(): 每 stage return 按完成序存入 checkpoint (M2 打通 runtime 层).
 run_stage(): 加载最新 cp → hash 校验 → rebuild_state_before → 只跑目标
@@ -568,12 +568,12 @@ ctx.run_id = 临时 UUID4.
 ### Task 3: CLI replay 命令 + run 恒 attach store (修 R5)
 
 **Files:**
-- Modify: `stageflow/cli.py`
+- Modify: `pavoz/cli.py`
 - Test: `tests/test_cli_replay.py` (new — 或并入 test_replay.py；若 CLI 函数是 async 可直接调)
 
 **Interfaces:**
 - Consumes: Task 2 `Runtime.run_stage`
-- Produces: `python -m stageflow replay <dag.py> --task-id X --stage Y [--patch P.py]`
+- Produces: `python -m pavoz replay <dag.py> --task-id X --stage Y [--patch P.py]`
 
 - [ ] **Step 1: 写失败测试**
 
@@ -584,11 +584,11 @@ CLI 测试直接调 `_cmd_replay`（async fn）而非 subprocess：
 import json
 import tempfile
 
-from stageflow.cli import DEFAULT_STORAGE, _cmd_replay, _cmd_run
-from stageflow.checkpoint import CheckpointStore
-from stageflow.dag import DAG
-from stageflow.storage import FileStorage
-import stageflow.cli as cli_mod
+from pavoz.cli import DEFAULT_STORAGE, _cmd_replay, _cmd_run
+from pavoz.checkpoint import CheckpointStore
+from pavoz.dag import DAG
+from pavoz.storage import FileStorage
+import pavoz.cli as cli_mod
 import os
 
 
@@ -597,7 +597,7 @@ def _write_dag(tmp: str) -> str:
     path = os.path.join(tmp, "demo_dag.py")
     with open(path, "w") as f:
         f.write("""
-from stageflow import DAG
+from pavoz import DAG
 
 dag = DAG("demo")
 
@@ -668,7 +668,7 @@ async def _cmd_run(args) -> int:
 
 ```python
 async def _cmd_replay(args) -> int:
-    """重放单 stage: stageflow replay <dag.py> --task-id X --stage Y [--patch P.py].
+    """重放单 stage: pavoz replay <dag.py> --task-id X --stage Y [--patch P.py].
 
     patch 文件约定: 模块顶层暴露 patch(dag) -> None (import 后调用, 可改 stage fn).
     """
@@ -678,9 +678,9 @@ async def _cmd_replay(args) -> int:
         if not patch_path.exists():
             print(f"patch 文件不存在: {patch_path}")
             return 1
-        spec = importlib.util.spec_from_file_location("_stageflow_patch", patch_path)
+        spec = importlib.util.spec_from_file_location("_pavoz_patch", patch_path)
         mod = importlib.util.module_from_spec(spec)
-        sys.modules["_stageflow_patch"] = mod
+        sys.modules["_pavoz_patch"] = mod
         spec.loader.exec_module(mod)
         patcher = getattr(mod, "patch", None)
         if patcher is None:
@@ -730,10 +730,10 @@ Run: `pytest tests/ -q` → 74 passed
 
 手动 smoke（验证 patch 机制端到端）:
 ```bash
-cd stageflow
+cd pavoz
 # 1. 建临时 dag + patch
 mkdir -p /tmp/sf-demo && cat > /tmp/sf-demo/dag.py <<'EOF'
-from stageflow import DAG
+from pavoz import DAG
 dag = DAG("demo")
 @dag.stage()
 async def s_a(ctx):
@@ -749,16 +749,16 @@ def patch(dag):
     dag.stages["s_b"].fn = s_b_v2
 EOF
 # 2. 跑一次 (落盘) → replay 原逻辑 → replay 带 patch
-STAGEFLOW_STORAGE=/tmp/sf-demo/store python3 -m stageflow run /tmp/sf-demo/dag.py --task-id smoke1
-STAGEFLOW_STORAGE=/tmp/sf-demo/store python3 -m stageflow replay /tmp/sf-demo/dag.py --task-id smoke1 --stage s_b
-STAGEFLOW_STORAGE=/tmp/sf-demo/store python3 -m stageflow replay /tmp/sf-demo/dag.py --task-id smoke1 --stage s_b --patch /tmp/sf-demo/patch.py
+PAVOZ_STORAGE=/tmp/sf-demo/store python3 -m pavoz run /tmp/sf-demo/dag.py --task-id smoke1
+PAVOZ_STORAGE=/tmp/sf-demo/store python3 -m pavoz replay /tmp/sf-demo/dag.py --task-id smoke1 --stage s_b
+PAVOZ_STORAGE=/tmp/sf-demo/store python3 -m pavoz replay /tmp/sf-demo/dag.py --task-id smoke1 --stage s_b --patch /tmp/sf-demo/patch.py
 ```
 Expected: run → done (b=2); replay → b=2; replay+patch → b=10
 
 - [ ] **Step 6: ruff + commit**
 
-Run: `ruff check stageflow/ tests/` → clean
-Commit: `git add stageflow/cli.py tests/test_cli_replay.py && git commit -m "feat(cli): replay 命令 (--stage --patch) + run 恒 attach store (R5 fix)
+Run: `ruff check pavoz/ tests/` → clean
+Commit: `git add pavoz/cli.py tests/test_cli_replay.py && git commit -m "feat(cli): replay 命令 (--stage --patch) + run 恒 attach store (R5 fix)
 
 replay <dag.py> --task-id X --stage Y [--patch P.py]:
 - 加载最新 cp → run_stage 单 stage 重放 → JSON 输出 (含 state)
@@ -774,9 +774,9 @@ CLI run 落盘 → replay/trace/state 对 CLI 产物可用.
 ### Task 4: TestPipe.replay_from + docs + v0.5.1
 
 **Files:**
-- Modify: `stageflow/testing.py`
+- Modify: `pavoz/testing.py`
 - Test: `tests/test_testpipe.py` (追加)
-- Modify: `pyproject.toml` + `stageflow/__init__.py` (0.5.1)
+- Modify: `pyproject.toml` + `pavoz/__init__.py` (0.5.1)
 - Modify: `CHANGELOG.md` + `README.md` + `docs/en|cn/api.md` + `docs/en|cn/architecture.md` + `ROADMAP.md` (M2/M3 标记 ship)
 
 **Interfaces:**
@@ -790,8 +790,8 @@ async def test_replay_from_reproduces_full_state():
     """从真实 cp 全 mock 重放 → 终态与 cp.state 一致 (回归: 图行为没坏)."""
     import tempfile
 
-    from stageflow.checkpoint import CheckpointStore
-    from stageflow.storage import FileStorage
+    from pavoz.checkpoint import CheckpointStore
+    from pavoz.storage import FileStorage
 
     dag = _dag()  # 复用文件顶部的 2-stage DAG
 
@@ -843,10 +843,10 @@ Expected: PASS
 - [ ] **Step 5: 版本 + changelog + docs**
 
 - `pyproject.toml`: version 0.5.0 → 0.5.1
-- `stageflow/__init__.py`: `__version__ = "0.5.1"` + 若有 usage docstring 检查 run_stage/replay 是否要提（不必细列）
+- `pavoz/__init__.py`: `__version__ = "0.5.1"` + 若有 usage docstring 检查 run_stage/replay 是否要提（不必细列）
 - `CHANGELOG.md` prepend [0.5.1]:
   - Added: Checkpoint.stage_deltas + initial_state (per-stage output replay); rebuild_state_before; Runtime.run_stage(); CLI replay --stage --patch; TestPipe.replay_from; CLI run 恒落盘 (R5)
-  - Changed: CLI run 不再只在 --resume 落盘（行为：单跑也写 ~/.stageflow/data）
+  - Changed: CLI run 不再只在 --resume 落盘（行为：单跑也写 ~/.pavoz/data）
   - 兼容: 加字段 .get 默认, v0.5.0 cp 可读
 - `README.md`: Features 加 "Stage replay" 行 + CLI 示例（replay 命令）；test count → 75
 - `docs/en|cn/api.md`: Checkpoint 新字段 + rebuild_state_before + Runtime.run_stage + CLI replay
@@ -857,11 +857,11 @@ Expected: PASS
 
 Run:
 ```bash
-cd stageflow && python3 -m pytest tests/ -q   # 75 passed
-python3 -m ruff check stageflow/ tests/                # clean
-python3 -c "import stageflow; print(stageflow.__version__)"  # 0.5.1
+cd pavoz && python3 -m pytest tests/ -q   # 75 passed
+python3 -m ruff check pavoz/ tests/                # clean
+python3 -c "import pavoz; print(pavoz.__version__)"  # 0.5.1
 ```
-Commit: `git add -A stageflow tests pyproject.toml CHANGELOG.md README.md docs/ 2>/dev/null; git commit -m "docs: v0.5.1 M2+M3 (stage_deltas + replay) release"`（注意别 git add docs/superpowers/）
+Commit: `git add -A pavoz tests pyproject.toml CHANGELOG.md README.md docs/ 2>/dev/null; git commit -m "docs: v0.5.1 M2+M3 (stage_deltas + replay) release"`（注意别 git add docs/superpowers/）
 Tag: `git tag v0.5.1`（local only）
 
 ---

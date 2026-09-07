@@ -1,9 +1,9 @@
 name: publish
 
 # PyPI Trusted Publishing (#33): tag v* 时自动发版.
-# 前提 (一次性): repo public + PyPI 建 stageflow 项目 +
+# 前提 (一次性): repo public + PyPI 建 pavoz 项目 +
 #   GitHub repo Settings → Environments → New environment "pypi" +
-#   PyPI 项目 Settings → Publishing → 添加 GitHub 仓库 ebziw/stageflow 信任.
+#   PyPI 项目 Settings → Publishing → 添加 GitHub 仓库 liyong-labs/pavoz 信任.
 on:
   push:
     tags: ["v*"]

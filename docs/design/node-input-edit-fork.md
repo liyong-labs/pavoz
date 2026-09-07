@@ -5,7 +5,7 @@
 
 ## 需求拆解
 
-| 动作 | 含义 | stageflow 落点 |
+| 动作 | 含义 | pavoz 落点 |
 |---|---|---|
 | 任意选一个过去节点 | 已 checkpoint 的 stage (每 stage 后落盘 = 天然边界) | `CheckpointStore.load_latest` + stage 列表 |
 | 取当时的输入 | stage 执行前 state = initial + 该 stage 前全部 deltas | `Checkpoint.rebuild_state_before(stage)` (M3 已有) |
@@ -16,11 +16,11 @@
 
 | 系统 | 能力 | 与我们的差距/借鉴 |
 |---|---|---|
-| **LangGraph** | Time travel 双模式: **replay** (历史 cp 只读重放) / **fork** (`update_state` 在历史 cp 分支, `invoke(None)` 续跑; 原历史不动; fork checkpoint 成为 latest; 状态更新按 node writers/reducers 应用, `as_node` 指定归因) | stageflow 已有 replay (run_stage); 缺 fork → **v0.6 照此实现**: fork cp (新 run_id) + latest 指向 fork + overrides 注入 = "as_node" 归因的简化 (producers 记 `<fork>`) |
-| **Prefect** | **无** "restart from task X / 改参后 UI retry" 内置. 官方答案: copy run + 改 flow 参数全量重跑 + 靠 task caching 复用; 同 run 改参数 "unusual operationally" | 印证: fork-as-new-run + 前序结果复用是正确范式 (stageflow 前序 deltas 复用 = 缓存超集) |
+| **LangGraph** | Time travel 双模式: **replay** (历史 cp 只读重放) / **fork** (`update_state` 在历史 cp 分支, `invoke(None)` 续跑; 原历史不动; fork checkpoint 成为 latest; 状态更新按 node writers/reducers 应用, `as_node` 指定归因) | pavoz 已有 replay (run_stage); 缺 fork → **v0.6 照此实现**: fork cp (新 run_id) + latest 指向 fork + overrides 注入 = "as_node" 归因的简化 (producers 记 `<fork>`) |
+| **Prefect** | **无** "restart from task X / 改参后 UI retry" 内置. 官方答案: copy run + 改 flow 参数全量重跑 + 靠 task caching 复用; 同 run 改参数 "unusual operationally" | 印证: fork-as-new-run + 前序结果复用是正确范式 (pavoz 前序 deltas 复用 = 缓存超集) |
 | Temporal / Airflow | workflow input 不可变; 修输入 = 新 run | fork 语义一致 |
 
-**设计取向**: LangGraph fork 范式 + stageflow 线性 topo 简化 (无并行 super-step, done_stages
+**设计取向**: LangGraph fork 范式 + pavoz 线性 topo 简化 (无并行 super-step, done_stages
 即执行序 → truncate 为纯后缀操作, 无 reducer 需求, 顶层 key 覆盖即可).
 
 ## 已落地实现 (v0.6, 全部测试绿)
@@ -43,10 +43,10 @@ runner 恒 `resume=False` → latest 指针移动不影响其业务语义.
 ### CLI
 
 ```bash
-stageflow export-input --task-id X --stage s_b        # 打印 s_b 执行前输入 JSON
-stageflow export-input --task-id X --stage s_b > in.json   # 存文件给人编辑
-stageflow fork-run dags/demo.py --task-id X --stage s_b --input in.json   # 装回续跑
-stageflow fork-run dags/demo.py --task-id X --stage s_b --overrides '{"k":"v"}'
+pavoz export-input --task-id X --stage s_b        # 打印 s_b 执行前输入 JSON
+pavoz export-input --task-id X --stage s_b > in.json   # 存文件给人编辑
+pavoz fork-run dags/demo.py --task-id X --stage s_b --input in.json   # 装回续跑
+pavoz fork-run dags/demo.py --task-id X --stage s_b --overrides '{"k":"v"}'
 ```
 
 ### 边界与语义
@@ -67,6 +67,6 @@ export-input→编辑→fork roundtrip / 未知 stage + 依赖缺失拒绝.
 ## 后续 (非 v0.6 范围)
 
 - **Web/可视化** (user: "甚至个人都可以做"): fork 树浏览 + 输入 JSON 编辑框 +
-  新旧 diff — 依赖 v0.6 primitives, 放 stageflow server 或业务侧 UI
+  新旧 diff — 依赖 v0.6 primitives, 放 pavoz server 或业务侧 UI
 - **reducer/嵌套 patch**: 有真实需求再加 (LangGraph reducers 是 channel 级,
   我们的 json-state 顶层覆盖已覆盖 90% 场景)

@@ -3,10 +3,10 @@ import tempfile
 
 import pytest
 
-from stageflow import Checkpoint, Runtime, StageError, workflow_hash
-from stageflow.checkpoint import CheckpointStore
-from stageflow.dag import DAG
-from stageflow.storage import FileStorage
+from pavoz import Checkpoint, Runtime, StageError, workflow_hash
+from pavoz.checkpoint import CheckpointStore
+from pavoz.dag import DAG
+from pavoz.storage import FileStorage
 
 
 def _dag():

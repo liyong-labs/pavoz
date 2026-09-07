@@ -2,10 +2,10 @@
 import json
 import os
 
-import stageflow.cli as cli_mod
-from stageflow.checkpoint import CheckpointStore
-from stageflow.cli import _cmd_replay, _cmd_run
-from stageflow.storage import FileStorage
+import pavoz.cli as cli_mod
+from pavoz.checkpoint import CheckpointStore
+from pavoz.cli import _cmd_replay, _cmd_run
+from pavoz.storage import FileStorage
 
 
 def _write_dag(tmp: str) -> str:
@@ -13,7 +13,7 @@ def _write_dag(tmp: str) -> str:
     path = os.path.join(tmp, "demo_dag.py")
     with open(path, "w") as f:
         f.write("""
-from stageflow import DAG
+from pavoz import DAG
 
 dag = DAG("demo")
 

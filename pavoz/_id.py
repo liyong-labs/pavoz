@@ -1,6 +1,6 @@
 """ID generation helpers.
 
-stageflow requires Python 3.12+ where uuid.uuid4 is the canonical
+pavoz requires Python 3.12+ where uuid.uuid4 is the canonical
 UUID generator. uuid.uuid7 is 3.14+; we use uuid4 to keep the
 3.12 floor. Uniqueness is the requirement — time-ordering is not.
 """

@@ -1,4 +1,4 @@
-# stageflow
+# pavoz
 
 🇬🇧 [English version](README.md)
 
@@ -12,7 +12,7 @@
 Python 3.12+  |  MIT License  |  stdlib only  |  111 tests
 ```
 
-stageflow 解决的是流程编排里最常用的一层: **声明式 DAG + 顺序执行 + 失败重试 +
+pavoz 解决的是流程编排里最常用的一层: **声明式 DAG + 顺序执行 + 失败重试 +
 断点续跑 + 可回归测试**。它刻意不做 macro orchestrator 的事 (调度器 / UI / 分布式),
 也不替业务做决策 (模型选型、审核循环、prompt 模板都是业务代码)。
 
@@ -24,10 +24,10 @@ stageflow 解决的是流程编排里最常用的一层: **声明式 DAG + 顺�
 - 跑到第 4 步失败, 前 3 步的昂贵调用全部重来
 - 想单独重跑某个阶段 / 用假数据回归, 无从下手
 
-stageflow 把**图执行**从业务里抽出来:
+pavoz 把**图执行**从业务里抽出来:
 
 ```python
-from stageflow import DAG
+from pavoz import DAG
 
 dag = DAG("research")
 
@@ -68,10 +68,10 @@ async def s_save(ctx):
 ## 安装
 
 ```bash
-# PyPI 上线后: pip install stageflow
+# PyPI 上线后: pip install pavoz
 # 目前: git clone + 本地装
-git clone git@github.com:ebziw/stageflow.git
-cd stageflow && pip install -e ".[dev]"
+git clone git@github.com:liyong-labs/pavoz.git
+cd pavoz && pip install -e ".[dev]"
 ```
 
 ## 存储后端 (配置驱动)
@@ -81,12 +81,12 @@ core 不带任何 storage driver — 用户自己 `pip install` 自己要的依�
 `backend/integration/sf_storage.py`), 通过 config 字符串 + `load_storage()` 加载.
 
 ```python
-from stageflow import load_storage, CheckpointStore
+from pavoz import load_storage, CheckpointStore
 
 # 内置 FileStorage (stdlib, 无额外依赖)
 storage = load_storage(
-    "stageflow.storage.FileStorage",
-    root_dir="/var/lib/stageflow/cp",
+    "pavoz.storage.FileStorage",
+    root_dir="/var/lib/pavoz/cp",
 )
 cp_store = CheckpointStore(storage)
 ```
@@ -106,7 +106,7 @@ storage = load_storage(
 
 ```python
 import asyncio
-from stageflow import DAG, Runtime, FileStorage, CheckpointStore  # noqa: F401
+from pavoz import DAG, Runtime, FileStorage, CheckpointStore  # noqa: F401
 
 dag = DAG("demo")
 
@@ -120,9 +120,9 @@ async def s_upper(ctx):
 
 async def main():
     rt = Runtime()
-    result = await rt.run(dag, task_id="demo-1", initial_state={"name": "stageflow"})
+    result = await rt.run(dag, task_id="demo-1", initial_state={"name": "pavoz"})
     print(result.status, result.state)
-    # done {'greeting': 'hello, stageflow', 'shout': 'HELLO, STAGEFLOW'}
+    # done {'greeting': 'hello, pavoz', 'shout': 'HELLO, PAVOZ'}
 
 asyncio.run(main())
 ```
@@ -134,15 +134,15 @@ English version: [`docs/en/quickstart.md`](docs/en/quickstart.md).
 ## CLI
 
 每次 `run` 都落 per-stage checkpoint (单跑也算, v0.5.1) 到
-`~/.stageflow/data` (`STAGEFLOW_STORAGE` 可覆盖目录) — replay/trace/state
+`~/.pavoz/data` (`PAVOZ_STORAGE` 可覆盖目录) — replay/trace/state
 对 CLI 产物直接可用:
 
 ```bash
-python -m stageflow run dags/demo.py --task-id demo-1 --input '{"query": "北方华创"}'
-python -m stageflow replay dags/demo.py --task-id demo-1 --stage s_compose
+python -m pavoz run dags/demo.py --task-id demo-1 --input '{"query": "北方华创"}'
+python -m pavoz replay dags/demo.py --task-id demo-1 --stage s_compose
 #   ^-- 在重建的输入上重放单 stage (前序 stage 不重跑)
-python -m stageflow trace --task-id demo-1
-python -m stageflow state --task-id demo-1 --key saved
+python -m pavoz trace --task-id demo-1
+python -m pavoz state --task-id demo-1 --key saved
 ```
 
 `replay` 还支持 `--patch P.py` (模块暴露 `patch(dag) -> None`) — 重放前
@@ -151,17 +151,17 @@ python -m stageflow state --task-id demo-1 --key saved
 
 ## 时间旅行调试 (v0.6)
 
-stageflow 为这个场景而生: **任何一次历史 run 都是可检视、可编辑、可 fork 的对象**。
+pavoz 为这个场景而生: **任何一次历史 run 都是可检视、可编辑、可 fork 的对象**。
 每个 checkpoint 存每 stage 的原始 delta (不只是合并终态) → 任意 stage 当时的输入
 可精确重建:
 
 ```bash
 # 1. 某 stage 当时看到了什么? (完整输入 JSON, 人可编辑)
-stageflow export-input --task-id job-1 --stage s_compose > input.json
+pavoz export-input --task-id job-1 --stage s_compose > input.json
 
 # 2. 改完装回: 从该 stage 分支续跑 — 前序 stage 复用 (不重跑),
 #    该 stage 及后继用改后输入重跑。原 run 的 checkpoint 不动。
-stageflow fork-run pipeline.py --task-id job-1 --stage s_compose --input input.json
+pavoz fork-run pipeline.py --task-id job-1 --stage s_compose --input input.json
 ```
 
 代码等价物:
@@ -174,7 +174,7 @@ await rt.fork_run(dag, task_id="job-1", from_stage="s_compose",
 单 stage 重放 (改 prompt 调参迭代, 不起新 run):
 
 ```bash
-stageflow replay pipeline.py --task-id job-1 --stage s_compose
+pavoz replay pipeline.py --task-id job-1 --stage s_compose
 ```
 
 每次 fork 是新 run_id 并成为该 task 的 latest; 原历史可反复 fork 出多分支。
@@ -196,7 +196,7 @@ See also: [`docs/en/architecture.md`](docs/en/architecture.md) and [`docs/en/api
 
 ## 设计取舍
 
-**循环留在业务层** — 这是 stageflow 最重要的设计决策。审计级联、质量收敛这类
+**循环留在业务层** — 这是 pavoz 最重要的设计决策。审计级联、质量收敛这类
 "同一阶段反复执行直到满足条件"的流程, 用 stage 函数内的普通 Python
 `for`/`while` 表达, 而不是图原语。框架只提供 3 种能力: DAG + per-node
 retries + checkpoint。成熟引擎 (Airflow/Temporal/Prefect) 也没有
@@ -212,9 +212,9 @@ sub-DAG 嵌套、业务 wrapper 实现 (LLM/Search/Extract adapter)、业务表 
 
 **不要用**:
 - **分布式规模调度** (cron/worker 集群/多租户队列) → Temporal / Prefect / Airflow, 那是它们的地盘
-- **动态图** (运行期改图形状、agent 递归 spawn) → LangGraph / Burr; stageflow 图是静态的,
+- **动态图** (运行期改图形状、agent 递归 spawn) → LangGraph / Burr; pavoz 图是静态的,
   动态控制流请写在 stage 内部的普通 Python 里
-- **Web UI / 可观测平台** → Temporal / Hatchet / Windmill; stageflow 给 CLI + JSON checkpoint 供你搭
+- **Web UI / 可观测平台** → Temporal / Hatchet / Windmill; pavoz 给 CLI + JSON checkpoint 供你搭
 
 ## 文档
 

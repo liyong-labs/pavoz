@@ -2,7 +2,7 @@
 
 🇬🇧 [English version](../en/api.md)
 
-公开面 = `stageflow/__init__.py` 的 `__all__`。core 零第三方依赖。
+公开面 = `pavoz/__init__.py` 的 `__all__`。core 零第三方依赖。
 
 ## DAG
 
@@ -39,7 +39,7 @@ result: RunResult = await rt.run(
 )
 ```
 
-- `task_id` 可选: 省略 → stageflow 自动生成 UUID4 (36 字符)。显式传入时入口
+- `task_id` 可选: 省略 → pavoz 自动生成 UUID4 (36 字符)。显式传入时入口
   校验: 非空、≤128、字符集仅 `[A-Za-z0-9_.-]` (禁 `/` — task_id 直接进
   storage key 路径)。跨 retry/resume 稳定 — 幂等键。resume 必须有显式
   task_id (自动生成的 ID 不会有 checkpoint 可找)
@@ -109,7 +109,7 @@ await ctx.call(kind: str, op: str, params: dict | None = None) -> dict
   (`CallResult(kind=..., op=..., params=...)`)
 - 注入的 caller 收**第 4 参** `meta: CallMeta` (`task_id` / `run_id` / `stage` /
   `attempt`) — caller 落 trace/llm_calls 时可直接关联执行上下文。
-  `CallMeta` 在 `stageflow.runtime`。stage 函数签名不受影响
+  `CallMeta` 在 `pavoz.runtime`。stage 函数签名不受影响
   (`async def fn(ctx) -> dict`)
 - `ctx.logger`: logging.Logger (stage 名已注入)
 
@@ -174,14 +174,14 @@ class StorageBackend:
 
 ## Storage loader
 
-stageflow core **只**带 `StorageBackend` Protocol + `FileStorage`。driver
+pavoz core **只**带 `StorageBackend` Protocol + `FileStorage`。driver
 (psycopg / redis / boto3 / ...) 由用户自己装, 自己写 (或抄) 实现 Protocol 的
 adapter, 然后用 config 字符串加载。
 
 ```python
-from stageflow import load_storage
+from pavoz import load_storage
 
-storage = load_storage("stageflow.storage.FileStorage", root_dir="/data/cp")
+storage = load_storage("pavoz.storage.FileStorage", root_dir="/data/cp")
 # 或:
 storage = load_storage(
     "backend.integration.sf_storage.MinioStorage",
@@ -196,7 +196,7 @@ cp_store = CheckpointStore(storage)
   - `"pkg.module:ClassName"` (canonical, 显式 separator)
   - `"pkg.module.path.ClassName"` (dotted, 最后一段是 class 名)
 - `**kwargs` — 透传给 `ClassName.__init__`
-- 失败抛 `StageflowStorageError` (`ImportError` 子类), 5 类错误信息友好:
+- 失败抛 `PavozStorageError` (`ImportError` 子类), 5 类错误信息友好:
   格式错 / 模块未装 / class 名错 / kwargs 错 / 非 `StorageBackend` 实例。
 
 完整参考 + ai_writer 互操作 + adapter 写法: [docs/storage.md](../storage.md).
@@ -225,13 +225,13 @@ assert result2.state == cp.state       # 相同 stage 输出进 → 相同图行
 ## CLI
 
 ```bash
-python -m stageflow run <dag.py> [--task-id X] [--input '{"k": "v"}'] [--resume]
-python -m stageflow trace --task-id X
-python -m stageflow state --task-id X [--key K]
-python -m stageflow replay <dag.py> --task-id X --stage Y [--patch P.py]   # v0.5.1
+python -m pavoz run <dag.py> [--task-id X] [--input '{"k": "v"}'] [--resume]
+python -m pavoz trace --task-id X
+python -m pavoz state --task-id X [--key K]
+python -m pavoz replay <dag.py> --task-id X --stage Y [--patch P.py]   # v0.5.1
 ```
 
-- `run`: 跑 DAG 文件 (模块须暴露 `dag` 变量); `STAGEFLOW_STORAGE` 环境变量
+- `run`: 跑 DAG 文件 (模块须暴露 `dag` 变量); `PAVOZ_STORAGE` 环境变量
   指向 FileStorage 目录 — 每次 run 都落 per-stage checkpoint (单跑也算,
   v0.5.1 R5 fix), `--resume`/replay/trace/state 对 CLI 产物可用
 - `trace/state`: 读 FileStorage 里的 checkpoint
