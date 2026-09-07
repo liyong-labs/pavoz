@@ -9,7 +9,7 @@
 仅标准库, 不绑定任何模型/搜索/存储服务。
 
 ```text
-Python 3.12+  |  MIT License  |  stdlib only  |  111 tests
+Python 3.12+  |  MIT License  |  stdlib only  |  111 tests  |  v0.2.0
 ```
 
 pavoz 解决的是流程编排里最常用的一层: **声明式 DAG + 顺序执行 + 失败重试 +

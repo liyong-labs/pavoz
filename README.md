@@ -1,5 +1,11 @@
 # pavoz
 
+[![PyPI](https://img.shields.io/pypi/v/pavoz)](https://pypi.org/project/pavoz/)
+[![Python](https://img.shields.io/pypi/pyversions/pavoz)](https://pypi.org/project/pavoz/)
+[![License](https://img.shields.io/pypi/l/pavoz)](https://github.com/liyong-labs/pavoz/blob/main/LICENSE)
+[![Tests](https://img.shields.io/github/actions/workflow/status/liyong-labs/pavoz/test.yml)](https://github.com/liyong-labs/pavoz/actions)
+[![Stdlib only](https://img.shields.io/badge/dependencies-stdlib%20only-blue)]()
+
 🇨🇳 [简体中文](README.cn.md)
 
 **The in-process Python workflow engine — durable, replayable, forkable pipelines with zero runtime dependencies.**
@@ -7,7 +13,7 @@
 No server. No scheduler. No YAML. No vendor lock-in. Define a DAG with `@dag.stage`, run it in your own process, and get per-stage **checkpoints**, **resume**, **replay**, and **time-travel forks** for free.
 
 ```text
-Python 3.12+  |  MIT License  |  stdlib only  |  111 tests
+Python 3.12+  |  MIT License  |  stdlib only  |  111 tests  |  v0.2.0
 ```
 
 ## Why another workflow engine?
@@ -28,7 +34,7 @@ pavoz pulls **graph execution** out of your business code and gives you durable,
 ## 30-second quickstart
 
 ```bash
-pip install pavoz            # not on PyPI yet → git clone + pip install -e .
+pip install pavoz
 ```
 
 ```python
