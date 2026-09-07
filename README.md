@@ -3,7 +3,8 @@
 [![PyPI](https://img.shields.io/pypi/v/pavoz)](https://pypi.org/project/pavoz/)
 [![Python](https://img.shields.io/pypi/pyversions/pavoz)](https://pypi.org/project/pavoz/)
 [![License](https://img.shields.io/pypi/l/pavoz)](https://github.com/liyong-labs/pavoz/blob/main/LICENSE)
-[![Tests](https://img.shields.io/github/actions/workflow/status/liyong-labs/pavoz/test.yml)](https://github.com/liyong-labs/pavoz/actions)
+[![Tests](https://img.shields.io/github/actions/workflow/status/liyong-labs/pavoz/test.yml?branch=main)](https://github.com/liyong-labs/pavoz/actions/workflows/test.yml)
+[![Stars](https://img.shields.io/github/stars/liyong-labs/pavoz)](https://github.com/liyong-labs/pavoz/stargazers)
 [![Stdlib only](https://img.shields.io/badge/dependencies-stdlib%20only-blue)]()
 
 🇨🇳 [简体中文](README.cn.md)

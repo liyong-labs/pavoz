@@ -78,7 +78,9 @@ class FileStorage(StorageBackend):
             for fn in files:
                 if fn.endswith(".json"):
                     rel = os.path.relpath(os.path.join(dirpath, fn), self.root)
-                    out.append(rel[: -len(".json")])
+                    # Storage keys use "/" regardless of host OS (Windows uses "\");
+                    # callers (CheckpointStore) match against "runs/.../checkpoint".
+                    out.append(rel.replace(os.sep, "/")[: -len(".json")])
         return sorted(out)
 
     def delete(self, key: str) -> None:

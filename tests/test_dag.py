@@ -22,12 +22,14 @@ def test_duplicate_stage_name():
     async def s_a(ctx):
         return {"a": 1}
 
-    # 同名注册 (通过 direct 调 fn 模拟, 同 scope 第二次 def 会 shadow)
-    async def s_a(ctx):  # noqa: F811
+    # Re-register the same stage name to force ValueError. We rename the
+    # second function's __name__ so pyflakes doesn't flag it as F811.
+    async def _s_a_other(ctx):
         return {"a": 2}
+    _s_a_other.__name__ = "s_a"
 
-    with pytest.raises(ValueError, match="重名"):
-        dag.stage()(s_a)
+    with pytest.raises(ValueError, match="duplicate stage name"):
+        dag.stage()(_s_a_other)
 
 
 def test_unknown_dep():

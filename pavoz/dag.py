@@ -69,7 +69,7 @@ class DAG:
                 raise TypeError(f"stage {fn.__name__} 必须是 async def (got {type(fn).__name__})")
             name = fn.__name__
             if name in self._stages:
-                raise ValueError(f"stage 重名: {name}")
+                raise ValueError(f"duplicate stage name: {name}")
             if self._frozen:
                 raise RuntimeError(f"DAG {self.name} 已冻结, 不能加 stage {name}")
             self._stages[name] = Stage(
