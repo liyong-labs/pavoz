@@ -1,0 +1,92 @@
+<svg width="1280" height="640" viewBox="0 0 1280 640" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0b1220"/>
+      <stop offset="50%" stop-color="#1e1b4b"/>
+      <stop offset="100%" stop-color="#0b1220"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="nodeFill" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="1"/>
+    </pattern>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1280" height="640" fill="url(#bg)"/>
+  <rect width="1280" height="640" fill="url(#grid)" opacity="0.4"/>
+
+  <!-- Subtle radial accent -->
+  <circle cx="1050" cy="280" r="320" fill="#8b5cf6" opacity="0.08"/>
+  <circle cx="180" cy="450" r="240" fill="#06b6d4" opacity="0.08"/>
+
+  <!-- Wordmark -->
+  <g transform="translate(80, 280)">
+    <text font-family="ui-sans-serif, -apple-system, BlinkMacSystemFont, system-ui, sans-serif"
+          font-weight="900" font-size="200" fill="#f8fafc" letter-spacing="-8">pavoz</text>
+  </g>
+
+  <!-- Tagline -->
+  <g transform="translate(84, 360)">
+    <rect x="0" y="0" width="6" height="36" fill="#06b6d4"/>
+    <text x="20" y="28" font-family="ui-monospace, 'SF Mono', Menlo, monospace"
+          font-weight="500" font-size="32" fill="#cbd5e1">
+      <tspan fill="#06b6d4">@dag.stage</tspan>
+      <tspan fill="#64748b">  ·  </tspan>
+      <tspan>in-process Python DAG</tspan>
+      <tspan fill="#64748b">  ·  </tspan>
+      <tspan fill="#8b5cf6">zero deps</tspan>
+    </text>
+  </g>
+
+  <!-- DAG visualization (right side, branching fan-in/out graph) -->
+  <g transform="translate(880, 320)" filter="url(#glow)">
+    <!-- Edges (fan out then fan in) -->
+    <path d="M 0 0 L 80 -80" stroke="url(#edge)" stroke-width="3" stroke-linecap="round" fill="none"/>
+    <path d="M 0 0 L 80 0"   stroke="url(#edge)" stroke-width="3" stroke-linecap="round" fill="none"/>
+    <path d="M 0 0 L 80 80"  stroke="url(#edge)" stroke-width="3" stroke-linecap="round" fill="none"/>
+    <path d="M 80 -80 L 200 0" stroke="url(#edge)" stroke-width="3" stroke-linecap="round" fill="none"/>
+    <path d="M 80 0 L 200 0"   stroke="url(#edge)" stroke-width="3" stroke-linecap="round" fill="none"/>
+    <path d="M 80 80 L 200 0" stroke="url(#edge)" stroke-width="3" stroke-linecap="round" fill="none"/>
+    <path d="M 200 0 L 320 0" stroke="url(#edge)" stroke-width="3" stroke-linecap="round" fill="none"/>
+
+    <!-- Nodes -->
+    <circle cx="0"   cy="0"   r="26" fill="#0b1220" stroke="#06b6d4" stroke-width="3"/>
+    <circle cx="80"  cy="-80" r="22" fill="url(#nodeFill)"/>
+    <circle cx="80"  cy="0"   r="22" fill="#0b1220" stroke="#06b6d4" stroke-width="3"/>
+    <circle cx="80"  cy="80"  r="22" fill="url(#nodeFill)"/>
+    <circle cx="200" cy="0"   r="26" fill="url(#nodeFill)"/>
+    <circle cx="320" cy="0"   r="26" fill="#0b1220" stroke="#8b5cf6" stroke-width="3"/>
+
+    <!-- Stage labels -->
+    <g font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="16" fill="#64748b" text-anchor="middle">
+      <text x="0"   y="55">start</text>
+      <text x="80"  y="-110">fork</text>
+      <text x="80"  y="50">branch</text>
+      <text x="80"  y="130">merge</text>
+      <text x="200" y="55">audit</text>
+      <text x="320" y="55">save</text>
+    </g>
+  </g>
+
+  <!-- GitHub corner -->
+  <g transform="translate(80, 590)">
+    <text font-family="ui-monospace, 'SF Mono', Menlo, monospace"
+          font-size="20" fill="#475569">
+      github.com/liyong-labs/pavoz  ·  MIT  ·  Python 3.12+
+    </text>
+  </g>
+</svg>
