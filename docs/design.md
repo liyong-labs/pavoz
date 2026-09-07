@@ -1,6 +1,6 @@
 # ai_research 5 stage 详细设计 (2026-09-07)
 
-> 配套: [PRD.md](PRD.md) / [stageflow-requirements.md](stageflow-requirements.md)
+> 配套: [PRD.md](PRD.md) / [pavoz-requirements.md](pavoz-requirements.md)
 > 设计依据: [handoff/ai-research/competitive-analysis.md](handoff/ai-research/competitive-analysis.md) §3 / §10 / §11 / §12
 
 ---

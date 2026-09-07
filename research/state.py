@@ -1,4 +1,4 @@
-"""ai-research 状态 schema. json-serializable, stageflow cp 落盘用.
+"""ai-research 状态 schema. json-serializable, pavoz cp 落盘用.
 
 设计依据: gpt-researcher deep_research 三元组 (goal/learnings/followup)
 + ODR research_brief 唯一意图载体 + 用户 T1-T5 条目级分级.
@@ -45,7 +45,7 @@ class Contradiction(TypedDict):
 
 
 class FrontierState(TypedDict, total=False):
-    """stageflow state 单 key producer 约束: 全程 frontier_update 一个 stage 写."""
+    """pavoz state 单 key producer 约束: 全程 frontier_update 一个 stage 写."""
     query: str
     research_brief: str
     personas: list[dict]

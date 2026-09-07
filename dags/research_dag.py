@@ -3,7 +3,7 @@
 骨架:
   s_clarify → s_warm_search → s_personas → s_research_loop × N → s_render_map
 
-外层 RevisionLoop 由 stageflow 调用方控制 (stage 内 Python while).
+外层 RevisionLoop 由 pavoz 调用方控制 (stage 内 Python while).
 停止: 连续 N 轮新 learnings < 阈值 或 followup 全相似.
 
 设计依据: docs/handoff/ai-research/competitive-analysis.md §3.
@@ -12,9 +12,9 @@ from __future__ import annotations
 
 import asyncio
 try:
-    from stageflow import dag, Context  # 部署机 editable install
+    from pavoz import dag, Context  # 部署机 editable install
 except ImportError:
-    from ai_research.research.stageflow_stub import dag, Context  # 本地 Pyright
+    from ai_research.research.pavoz_stub import dag, Context  # 本地 Pyright
 
 from ai_research.research.state import Learning, OpenQuestion
 

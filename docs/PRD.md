@@ -1,6 +1,6 @@
 # ai_research PRD (2026-09-07)
 
-> 配套设计 doc: [`design.md`](design.md) (5 stage 详解) / [`stageflow-requirements.md`](stageflow-requirements.md)
+> 配套设计 doc: [`design.md`](design.md) (5 stage 详解) / [`pavoz-requirements.md`](pavoz-requirements.md)
 > 设计依据: [`handoff/ai-research/competitive-analysis.md`](handoff/ai-research/competitive-analysis.md) §3 / §8 / §9 / §10 / §11 / §12
 
 ---
@@ -52,7 +52,7 @@
 
 - 跨 session frontier 合并 (`fork_run merge_frontier`)
 - TaskInterrupt (durable, 跨项目值得沉淀)
-- KnowledgeBaseNode (stageflow 原语扩展)
+- KnowledgeBaseNode (pavoz 原语扩展)
 - web UI (DAG 可视化 + 状态机)
 
 ### 不做 (YAGNI)
@@ -74,7 +74,7 @@
 | AC-1 | CLI `python -m dags.research_dag --query "适合 3080/10G 的模型"` 一次跑通到 render_map |
 | AC-2 | 产物含 5 段 (已证实/社区声称/理论可跑/已知未知/矛盾仲裁) |
 | AC-3 | 同 query 跑第二次, learnings cache 命中 + merge_frontier 合并去重 |
-| AC-4 | frontier state 落 stageflow cp |
+| AC-4 | frontier state 落 pavoz cp |
 | AC-5 | 连续 2 轮新 learnings < 阈值, RevisionLoop 熔断 + 已知未知段显式 |
 | AC-6 | 至少 1 条 learning 跑过反向证伪 (counter_searched=True) |
 | AC-7 | 至少 1 对矛盾完成仲裁 (arbiter_verdict 非空) |
@@ -96,7 +96,7 @@
 - ai_writer (同级项目): 复用 T1-T5 分级 + citation_precheck + 反向生成模式
 - ai_mindmap (M1+): evidence_map → mind map 自动转换
 - haomem: 产物 [ref:xxxx] 自动入 KB, 跨 session 召回
-- stageflow: 编排框架, 不修原语, M1+ 才提 PR (TaskInterrupt)
+- pavoz: 编排框架, 不修原语, M1+ 才提 PR (TaskInterrupt)
 
 ---
 

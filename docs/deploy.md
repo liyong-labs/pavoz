@@ -1,7 +1,7 @@
 # ai_research 部署规范 (2026-09-07)
 
 > **slim 部署 spec, 基于过去 2 周踩的 7 个坑**. **0 自动下载 / 0 env override / fail-fast**.
-> 配套: [PRD.md](PRD.md) / [design.md](design.md) / [stageflow-requirements.md](stageflow-requirements.md)
+> 配套: [PRD.md](PRD.md) / [design.md](design.md) / [pavoz-requirements.md](pavoz-requirements.md)
 
 ## 1. 三层架构
 

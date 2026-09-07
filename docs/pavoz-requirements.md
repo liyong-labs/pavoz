@@ -1,39 +1,34 @@
-# ai_research 对 stageflow 框架的需求 (2026-09-07)
+# ai_research 对 pavoz 框架的需求 (2026-09-07)
 
 > 配套: [PRD.md](PRD.md) / [design.md](design.md)
 > 设计依据: [handoff/ai-research/competitive-analysis.md](handoff/ai-research/competitive-analysis.md) §9
 
 ---
 
-## 0. 命名约定 (2026-09-07)
+## 0. 命名约定 (2026-09-07, 2026-09-07 已全量 rename 为 pavoz)
 
 | 层级 | 名字 | 用途 |
 |---|---|---|
 | **对外产品 / GitHub 仓库 / PyPI** | **`pavoz`** | ai_research 项目在 GitHub 上的仓库名 + 部署服务名 + 用户可见的 pip package 名 |
-| **底层框架实现** | `stageflow` | `/home/ai/stageflow/` Python 库 (in-process workflow engine), ai_research 的 DAG 运行时 |
-| **架构角色** | "orchestrator" | ai_research 项目里 stageflow 起的作用 (DAG 编排 + checkpoint + fork) |
+| **底层框架实现** | `pavoz` | `/home/ai/pavoz/` Python 库 (in-process workflow engine), ai_research 的 DAG 运行时 |
+| **架构角色** | "orchestrator" | ai_research 项目里 pavoz 起的作用 (DAG 编排 + checkpoint + fork) |
 
-**Why 两层命名**:
-- `stageflow` 是通用库, 已被部署机其他项目用 (aics-platform / ai_writer 等)
-- `pavoz` 是 ai_research 项目专属对外名, GitHub 0 完全同名 repo (18 描述命中, claim + graph 在 NLI/事实核查圈是核心术语, 听一次就懂), 2026-09-07 实测
-- ai_research 文档/PR/commit 默认用 `pavoz`, 内部 doc 引用 stageflow 实现细节
-
-**为什么叫 pavoz**:
-- `claim` (断言) = deep-research 的核心产出 (5 段证据地图里每条都是 claim)
-- `graph` (图) = learning 互相 supports/contradicts 关系图 (§12 论证层)
-- 学界 (NLI / fact-checking) + 工程 (knowledge graph) 双圈都懂
+**Why 两层命名** (历史原因, 现已合并):
+- 原 `stageflow` 是通用库, 已被部署机其他项目用 (aics-platform / ai_writer 等)
+- 原 `pavoz` 是 ai_research 项目专属对外名, GitHub 0 完全同名 repo
+- 2026-09-07 user 决定物理 rename: stageflow → pavoz, 全仓统一
 
 **冲突解决**:
-- PyPI 上传: `pip install pavoz` (顶层) → depends on `stageflow` (底层)
-- 代码 import: `from stageflow import DAG, Runtime` (不变)
-- README 开头: "# pavoz — powered by stageflow"
+- PyPI 上传: `pip install pavoz` (顶层 + 底层 同名)
+- 代码 import: `from pavoz import DAG, Runtime`
+- README 开头: "# pavoz — orchestrator + deep-research agent"
 - GitHub repo: `liyong-labs/pavoz`
 
 ---
 
-## 1. 现状: stageflow 已提供什么
+## 1. 现状: pavoz 已提供什么
 
-stageflow (部署机 `/home/ai/stageflow/`, 仓未同步本地) 已支持:
+pavoz (部署机 `/home/ai/pavoz/`, 仓未同步本地) 已支持:
 
 | 原语 | API | ai_research 怎么用 |
 |---|---|---|
@@ -44,11 +39,11 @@ stageflow (部署机 `/home/ai/stageflow/`, 仓未同步本地) 已支持:
 | fork_run | `fork_run(from_stage, overrides)` | 用户加 query 时合并 frontier |
 | per-node retry | 内建 | LLM call 失败 retry 1 次 |
 
-**M0 阶段: ai_research 不动 stageflow 一个原语** — 所有扩展在 ai_research 仓内自建 (`research/loop.py` / `llm_router.py` / `knowledge.py` / `merge.py`)。
+**M0 阶段: ai_research 不动 pavoz 一个原语** — 所有扩展在 ai_research 仓内自建 (`research/loop.py` / `llm_router.py` / `knowledge.py` / `merge.py`)。
 
 ---
 
-## 2. M0 阶段自建 (在 ai_research 仓内, 不污染 stageflow)
+## 2. M0 阶段自建 (在 ai_research 仓内, 不污染 pavoz)
 
 ### 2.1 RevisionLoop + no_progress
 
@@ -152,7 +147,7 @@ async def merge_frontier(prev_state: dict, new_results: list[Learning]) -> dict:
 
 ## 3. M1+ 候选: TaskInterrupt (durable)
 
-**为什么值得沉淀 stageflow**: 跨项目 ai_writer + ai_research 都需要"等用户回复"路径
+**为什么值得沉淀 pavoz**: 跨项目 ai_writer + ai_research 都需要"等用户回复"路径
 
 | 项目 | 路径 | 出现频率 |
 |---|---|---|
@@ -181,7 +176,7 @@ async def s_clarify(ctx):
 await dag.resume(s_clarify, token, override={"user_answer": "..."})
 ```
 
-**stageflow 改动**:
+**pavoz 改动**:
 - `dag.stage(interruptible=True)` 装饰器
 - `ctx.interrupt()` API
 - `dag.resume(stage, token, overrides)` CLI
@@ -196,7 +191,7 @@ await dag.resume(s_clarify, token, override={"user_answer": "..."})
 
 ---
 
-## 5. 不动 stageflow 的 6 项原语 (M0 自建, 见 §2)
+## 5. 不动 pavoz 的 6 项原语 (M0 自建, 见 §2)
 
 | 原语 | 为什么不沉淀 |
 |---|---|
@@ -207,16 +202,16 @@ await dag.resume(s_clarify, token, override={"user_answer": "..."})
 | KnowledgeBaseNode | ai_writer 素材池是 URL 列表, 不是 evidence graph |
 | fork_run merge_frontier | ai_writer fork 是"改输入重跑", 跨 session 合并是 ai_research 独有 |
 
-**M0 决策**: 跨项目不通用 → 在 ai_research 仓内实现, 不污染 stageflow.
+**M0 决策**: 跨项目不通用 → 在 ai_research 仓内实现, 不污染 pavoz.
 
 ---
 
-## 6. 与 stageflow 维护者的协作约定
+## 6. 与 pavoz 维护者的协作约定
 
-1. ai_research 不直接 PR 到 stageflow (避免 scope 蔓延)
-2. 任何 stageflow 改动由 stageflow owner 评估 (M1+ 提 TaskInterrupt PR)
-3. ai_research 复用 stageflow 时遇到痛点 → 写 work-note, 在 stageflow 0.x 路线图 review 时提
-4. 文档镜像: ai_research `docs/stageflow-requirements.md` 与 stageflow `README.md` 互相 link
+1. ai_research 不直接 PR 到 pavoz (避免 scope 蔓延)
+2. 任何 pavoz 改动由 pavoz owner 评估 (M1+ 提 TaskInterrupt PR)
+3. ai_research 复用 pavoz 时遇到痛点 → 写 work-note, 在 pavoz 0.x 路线图 review 时提
+4. 文档镜像: ai_research `docs/pavoz-requirements.md` 与 pavoz `README.md` 互相 link
 
 ---
 
