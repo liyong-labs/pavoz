@@ -136,8 +136,9 @@ pavoz fork-run pipeline.py --task-id job-1 --stage s_compose --set llm.model=x -
 - `--set KEY=VALUE` — repeatable dot-path overrides (`42` → int, `0.7` → float, `true` → bool), deep-merged: sibling keys are preserved instead of wiped
 - `--set-file overrides.yaml` — bulk JSON/YAML (safe_load, 1 MB cap); `pip install pavoz[yaml]`
 - `--compare-with RUN_ID` — leaf-level state diff against another run, printed after the fork
-- `--dry-run` — parse and show the merged overrides without executing
+- `--dry-run` — preview the apply effect on the target run's pre-stage state (leaf diff + `would_rerun`), no execution
 
+- `PAVOZ_STORAGE_SPEC` / `PAVOZ_STORAGE_KWARGS` — point the CLI at any StorageBackend (e.g. your MinIO adapter); `{task_id}` interpolated
 Library equivalent: `parse_set_args` / `parse_set_file` / `merge_overrides` / `apply_overrides` in `pavoz.state`. Full guide: [docs/replay-params.md](docs/replay-params.md) · runnable scripts in [examples/](examples/).
 
 ## When to use pavoz — and when not

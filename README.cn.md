@@ -200,8 +200,9 @@ pavoz fork-run pipeline.py --task-id job-1 --stage s_compose --set llm.model=x -
   兄弟键保留, 不再被整体抹掉
 - `--set-file overrides.yaml` — JSON/YAML 批量 (safe_load, 1MB 上限); `pip install pavoz[yaml]`
 - `--compare-with RUN_ID` — fork 完输出对另一 run 的 leaf 级 state diff
-- `--dry-run` — 只解析显示合并结果, 不执行
+- `--dry-run` — 预演 apply 效果 (对执行前 state 的 leaf diff + `would_rerun`), 不执行
 
+- `PAVOZ_STORAGE_SPEC` / `PAVOZ_STORAGE_KWARGS` — 把 CLI 指向任意 StorageBackend (如自己的 MinIO adapter); `{task_id}` 自动插值
 Library 等价物: `pavoz.state` 的 `parse_set_args` / `parse_set_file` / `merge_overrides` /
 `apply_overrides` (fork_run overrides 深合并 = behavior fix, 顶层标量覆盖行为不变)。
 完整指南: [docs/replay-params.md](docs/replay-params.md) · 可运行示例: [examples/](examples/)。
