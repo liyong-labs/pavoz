@@ -117,3 +117,105 @@ def merge_state(
 def snapshot(state: dict) -> dict:
     """deep copy (defensive). 每 stage 前给 ctx.state 用的快照."""
     return copy.deepcopy(state)
+
+
+# ── v0.9: apply_overrides utilities (CLI + Library API) ─────────────
+
+import json as _json
+
+_DUNDER_BLOCKLIST = frozenset({
+    "__proto__", "__class__", "__init__", "__dict__", "__getattribute__",
+    "__setattr__", "__delattr__", "__bases__", "__mro__", "__subclasses__",
+    "__getstate__", "__setstate__", "__reduce__", "__reduce_ex__",
+})
+
+_MAX_PATH_DEPTH = 5
+_MAX_INLINE_JSON_LEN = 500
+
+
+def _validate_path(path: str) -> None:
+    """Validate a dot-separated path is safe to use.
+
+    Raises ValueError on:
+    - empty path
+    - depth > 5
+    - empty segment
+    - dunder key (Python object injection defense)
+    - non-identifier characters
+    """
+    if not path:
+        raise ValueError(f"path {path!r} 为空")
+    parts = path.split(".")
+    if len(parts) > _MAX_PATH_DEPTH:
+        raise ValueError(
+            f"path {path!r} 深度 {len(parts)} > {_MAX_PATH_DEPTH} 限制"
+        )
+    for p in parts:
+        if not p:
+            raise ValueError(f"path {path!r} 含空 segment")
+        if p in _DUNDER_BLOCKLIST:
+            raise ValueError(
+                f"path {path!r} 含禁词 {p!r} (防 Python object injection)"
+            )
+        if not all(c.isalnum() or c == "_" for c in p):
+            raise ValueError(
+                f"path {path!r} 含非标识符字符 (只允许 [a-zA-Z0-9_])"
+            )
+
+
+def _infer_type(raw: str, *, infer_types: bool = True) -> Any:
+    """Auto-infer type from string. Default conservative (infer_types=True).
+
+    When infer_types=False, never infer — always return raw str. Use this
+    when type drift between v0.8 and v0.9 is unacceptable.
+    """
+    if not infer_types:
+        return raw
+    s = raw.strip()
+    if not s:
+        return s
+    if s in ("null", "None"):
+        return None
+    if s == "true":
+        return True
+    if s == "false":
+        return False
+    try:
+        return int(s)
+    except ValueError:
+        pass
+    try:
+        return float(s)
+    except ValueError:
+        pass
+    if len(s) <= _MAX_INLINE_JSON_LEN and s.startswith(("[", "{")):
+        try:
+            return _json.loads(s)
+        except _json.JSONDecodeError:
+            pass
+    return raw
+
+
+def _deep_set(d: dict, path: str, value: Any) -> None:
+    """Set d[path.split('.')[0]][...][last] = value. Mutates d.
+
+    Creates intermediate dicts as needed. Overwrites non-dict intermediate
+    values (with a warning implicit in behavior — caller is responsible
+    for understanding the schema).
+    """
+    parts = path.split(".")
+    cur = d
+    for p in parts[:-1]:
+        if p not in cur or not isinstance(cur[p], dict):
+            cur[p] = {}
+        cur = cur[p]
+    cur[parts[-1]] = value
+
+
+def _deep_merge(into: dict, src: dict) -> None:
+    """Recursively merge src into into (mutates into)."""
+    for k, v in src.items():
+        if isinstance(v, dict) and isinstance(into.get(k), dict):
+            _deep_merge(into[k], v)
+        else:
+            into[k] = v
