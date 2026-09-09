@@ -179,30 +179,69 @@ async def _cmd_export_input(args) -> int:
 
 
 async def _cmd_fork_run(args) -> int:
-    """fork-run: export-input 产物 (--input) 或 --overrides 装回 → 从 stage 分支续跑."""
+    """fork-run: 装回 state → 从 stage 分支续跑.
+
+    v0.9 新增: --set / --set-file / --compare-with / --dry-run.
+    优先级 (后写覆盖前写): --set > --set-file > --input > --overrides.
+    """
+    from pavoz.state import parse_set_args, parse_set_file, merge_overrides, _state_diff
+
     dag = _load_dag(args.dag)
-    overrides: dict = {}
-    if args.input:
-        overrides = json.loads(Path(args.input).read_text(encoding="utf-8"))
-    if args.overrides:
-        overrides.update(json.loads(args.overrides))
+
+    try:
+        overrides = merge_overrides(
+            json.loads(args.overrides) if args.overrides else None,
+            json.loads(Path(args.input).read_text(encoding="utf-8")) if args.input else None,
+            parse_set_file(args.set_file) if args.set_file else None,
+            parse_set_args(args.set) if args.set else None,
+        )
+    except ValueError as e:
+        print(f"参数错误: {e}")
+        return 1
+
+    if args.dry_run:
+        print(json.dumps({
+            "dry_run": True,
+            "task_id": args.task_id,
+            "stage": args.stage,
+            "overrides": overrides,
+        }, indent=2, ensure_ascii=False))
+        return 0
+
     runtime = Runtime(checkpoint_store=CheckpointStore(_storage()))
     try:
-        result = await runtime.fork_run(dag, task_id=args.task_id,
-                                        from_stage=args.stage, overrides=overrides)
-    except (CheckpointMismatchError, RuntimeError, ValueError, KeyError) as e:
+        result = await runtime.fork_run(
+            dag, task_id=args.task_id,
+            from_stage=args.stage,
+            overrides=overrides,
+        )
+    except (CheckpointMismatchError, RuntimeError, ValueError, KeyError, TimeoutError) as e:
         print(f"fork-run 失败: {e}")
         return 1
-    print(json.dumps({
+
+    output = {
         "task_id": result.task_id,
         "run_id": result.run_id,
         "dag": result.dag_name,
+        "stage": args.stage,
         "status": result.status,
         "error": result.error,
-        "stage_statuses": result.stage_statuses,
-        "state": result.state,
-    }, ensure_ascii=False, indent=2))
-    return 0 if result.status == "done" else 1
+        "overrides_applied": overrides,
+    }
+
+    if args.compare_with:
+        store = CheckpointStore(_storage())
+        orig_cp = store.load(args.task_id, args.compare_with)
+        if orig_cp is None:
+            print(f"compare-with: run {args.compare_with} 不存在")
+            return 1
+        diff = _state_diff(orig_cp.state, result.state)
+        output["compare_with"] = args.compare_with
+        output["diff_keys_count"] = len(diff)
+        output["diff_sample"] = dict(list(diff.items())[:10])
+
+    print(json.dumps(output, indent=2, ensure_ascii=False))
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -247,6 +286,15 @@ def main(argv: list[str] | None = None) -> int:
                         help='JSON 顶层覆盖, e.g. \'{"topic": "chickens"}\'')
     p_fork.add_argument("--input", default=None,
                         help="编辑过的输入 JSON 文件 (export-input 产物, 全量 state 覆盖)")
+    # v0.9 NEW — 4 flags
+    p_fork.add_argument("--set", action="append", default=[],
+                        help="点分路径 KEY=VALUE (可重复). 例: --set llm.model=longcat")
+    p_fork.add_argument("--set-file", default=None,
+                        help="JSON/YAML 文件批量覆盖. 1MB 上限, YAML 用 safe_load.")
+    p_fork.add_argument("--compare-with", default=None,
+                        help="跑完后输出 state leaf diff vs RUN_ID")
+    p_fork.add_argument("--dry-run", action="store_true", default=False,
+                        help="仅解析 + 显示 overrides, 不执行 stage")
     p_fork.set_defaults(fn=_cmd_fork_run)
 
     args = parser.parse_args(argv)
