@@ -220,3 +220,64 @@ class TestParseSetArgs:
     def test_empty_list_returns_empty_dict(self):
         from pavoz.state import parse_set_args
         assert parse_set_args([]) == {}
+
+
+class TestMergeOverrides:
+    def test_simple(self):
+        from pavoz.state import merge_overrides
+        assert merge_overrides({"a": 1}, {"b": 2}) == {"a": 1, "b": 2}
+
+    def test_priority_later_wins(self):
+        from pavoz.state import merge_overrides
+        assert merge_overrides(
+            {"a": 1, "b": 2},
+            {"a": 10, "c": 3},
+        ) == {"a": 10, "b": 2, "c": 3}
+
+    def test_nested(self):
+        from pavoz.state import merge_overrides
+        assert merge_overrides(
+            {"llm": {"model": "old", "temp": 0.7}},
+            {"llm": {"model": "new"}},
+        ) == {"llm": {"model": "new", "temp": 0.7}}
+
+    def test_with_none(self):
+        from pavoz.state import merge_overrides
+        assert merge_overrides(None, {"a": 1}, None) == {"a": 1}
+
+    def test_empty(self):
+        from pavoz.state import merge_overrides
+        assert merge_overrides() == {}
+        assert merge_overrides({}) == {}
+
+
+class TestApplyOverrides:
+    def test_nested_dict_format(self):
+        from pavoz.state import apply_overrides
+        result = apply_overrides(
+            {"a": 1},
+            {"b": {"c": 2}},
+        )
+        assert result == {"a": 1, "b": {"c": 2}}
+
+    def test_dot_path_format(self):
+        from pavoz.state import apply_overrides
+        result = apply_overrides(
+            {"a": 1},
+            {"b.c": 2},
+        )
+        assert result == {"a": 1, "b": {"c": 2}}
+
+    def test_mixed(self):
+        from pavoz.state import apply_overrides
+        result = apply_overrides(
+            {"llm": {"model": "old"}},
+            {"llm.model": "new", "config": {"x": 1}},
+        )
+        assert result == {"llm": {"model": "new"}, "config": {"x": 1}}
+
+    def test_does_not_mutate_base(self):
+        from pavoz.state import apply_overrides
+        base = {"a": 1}
+        apply_overrides(base, {"a": 2, "b": 3})
+        assert base == {"a": 1}  # base unchanged

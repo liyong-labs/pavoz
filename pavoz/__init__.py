@@ -20,7 +20,14 @@ per-node retry + absolute deadline) + Checkpoint (断点续跑) + TestPipe (回�
 from .checkpoint import Checkpoint, CheckpointMismatchError, CheckpointStore, workflow_hash
 from .dag import DAG, CycleError, Stage, UnknownDepError
 from .runtime import CallResult, Ctx, Runtime
-from .state import ReadOnlyStateView, StateConflictError
+from .state import (
+    ReadOnlyStateView,
+    StateConflictError,
+    apply_overrides,
+    merge_overrides,
+    parse_set_args,
+    parse_set_file,
+)
 from .storage import FileStorage, StorageBackend
 from .storage_loader import PavozStorageError, load_storage
 from .testing import TestPipe
@@ -50,6 +57,10 @@ __all__ = [
     "TestPipe",
     "UnknownDepError",
     "__version__",
+    "apply_overrides",
     "load_storage",
+    "merge_overrides",
+    "parse_set_args",
+    "parse_set_file",
     "workflow_hash",
 ]

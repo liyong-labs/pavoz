@@ -324,3 +324,59 @@ def _validate_dict_keys(d: dict, path: str = "") -> None:
             _validate_path(k)
         if isinstance(v, dict):
             _validate_dict_keys(v, f"{path}.{k}" if path else k)
+
+
+# key 校验复用 Task 3 落地的 _validate_dict_keys (pavoz/state.py) —
+# 语义: 拒 非字符串/空 key/dunder; '-' 等 dict key 合法; 含 '.' 的 key
+# 走 _validate_path. 本任务不得重复定义该函数 (重复 def 会静默覆盖).
+
+
+def merge_overrides(*sources: dict | None) -> dict:
+    """Merge multiple override dicts by priority. Later sources win.
+
+    注意: 结果 dict 的嵌套对象与输入 src 按引用共享 (不做 deepcopy) —
+    merge 后不要再 mutate 输入源.
+
+    Example:
+        >>> merge_overrides({"a": 1}, {"a": 2, "b": 3})
+        {'a': 2, 'b': 3}
+
+    None sources are skipped.
+    """
+    merged: dict = {}
+    for src in sources:
+        if src:
+            _validate_dict_keys(src, "")
+            _deep_merge(merged, src)
+    return merged
+
+
+def apply_overrides(base: dict, *patch_dicts: dict) -> dict:
+    """Library API: apply one or more patch dicts to base.
+
+    Each patch dict accepts BOTH formats:
+    - Nested dict (current pavoz convention): {"llm": {"model": "x"}}
+    - Dot-path dict (new): {"llm.model": "x"}
+
+    Returns: new dict (does not mutate base).
+
+    Example:
+        >>> apply_overrides({"a": 1}, {"b.c": 2})
+        {'a': 1, 'b': {'c': 2}}
+    """
+    merged = dict(base)
+    for patch in patch_dicts:
+        if not patch:
+            continue
+        for k, v in patch.items():
+            if "." in k:
+                # dot-path: validate + set
+                _validate_path(k)
+                _deep_set(merged, k, v)
+            else:
+                # nested dict: merge
+                if isinstance(v, dict) and isinstance(merged.get(k), dict):
+                    _deep_merge(merged[k], v)
+                else:
+                    merged[k] = v
+    return merged
