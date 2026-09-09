@@ -35,6 +35,80 @@
   记录每 stage 墙钟耗时 (含 retry 退避). 单 stage 重放 (run_stage) 不发事件.
 - 重试退避 full-jitter: `uniform(0, min(2^(attempt-1), 30))` — 多 task 同步重试防雷群.
 
+## [0.9.0] — 2026-09-XX
+
+### Added (fork-run 通用 param override — Declarative stage-level debug)
+
+**4 个新 CLI 标志** (`pavoz fork-run`):
+- `--set KEY=VALUE` (可重复, 点分路径 KEY, 类型自动推断)
+- `--set-file PATH` (JSON/YAML 文件, 1MB 上限, `yaml.safe_load`)
+- `--compare-with RUN_ID` (跑完后输出 state leaf diff)
+- `--dry-run` flag (仅解析 + 显示, 不执行 stage)
+
+**新模块级函数** (`pavoz.state`, 顶层也导出):
+- `parse_set_args(items)` — `--set` 列表解析
+- `parse_set_file(path)` — JSON/YAML 文件解析 (1MB + safe_load + dunder 校验)
+- `merge_overrides(*sources)` — 多源合并 (按优先级)
+- `apply_overrides(base, *patches)` — 接受 dot-path 或 nested dict, 不 mutate base
+- `_state_diff(a, b)` — state leaf diff (compare-with 用)
+
+**Priority merge**: `--set > --set-file > --input > --overrides` (后写覆盖前写)
+
+**Safety**:
+- 拒绝 dunder key (`__proto__`, `__class__` 等) — 防 Python object injection
+- 路径深度 ≤ 5 限制
+- YAML 用 `safe_load` (不 `yaml.load`) — 防任意代码执行
+- 文件大小 ≤ 1MB 限制
+
+**新 examples** (`examples/`):
+- `01_model_switch.sh` — 4-model composer A/B (ai-research 场景)
+- `02_prompt_patch.py` — 改 prompt 不重跑前序 stage
+- `03_compare_diff.py` — 多 run state diff 对比
+- `04_deep_merge.py` — dot-path 兄弟键保留演示
+- `05_yaml_file.sh` — YAML 文件批改 (dry-run first)
+
+**新 tests**:
+- `tests/test_state_apply.py` (28 case) — state.py utilities
+- `tests/test_fork_overrides.py` (5 case) — 深合并语义
+- `tests/test_cli_fork_set.py` (8 case) — CLI 直接调用
+
+**新 docs**:
+- `docs/replay-params.md` (完整指南)
+
+### Fixed
+
+- `fork_run` overrides 应用从顶层浅替换 (`state.update`) 改为深合并
+  (`apply_overrides`) — 嵌套 patch 不再抹掉兄弟键 (如 `--set llm.model=x`
+  不再丢 `llm.temperature`). 顶层标量覆盖行为不变.
+
+### Compatibility
+
+| v0.8 | v0.9 |
+|---|---|
+| `--overrides '{"k":"v"}'` | ✅ unchanged |
+| `--input edited.json` | ✅ unchanged |
+| `Runtime.fork_run(overrides=dict)` | ✅ 签名不变 (嵌套 dict 语义见 Fixed) |
+| `replay --patch patch.py` | ✅ unchanged |
+
+### Breaking changes
+
+无 (behavior fix 见 Fixed; 顶层标量覆盖不变).
+
+### Stdlib
+
+保持 zero runtime deps. YAML 是 `[yaml]` optional extra.
+
+### Motivation
+
+ai-research (consumer) 做 composer 4-model A/B 测试时, 当前痛点:
+- 直接 DB INSERT 绕 API (侵入性)
+- writer_chain 列存 model id (ai_writer-specific)
+- 4 task 并发无 isolation (race condition)
+
+pavoz v0.6 已有 `fork_run(overrides=dict)` (LangGraph fork 范式), 但 CLI UX 差
+(JSON string 嵌套痛苦). 本 PR 加 declarative 层, 让 1 行命令 = 切 model 重跑
+stage + diff 输出, 把 2 小时 hack 缩到 15 分钟.
+
 ## [0.8.0] — 2026-09-06
 
 ### Changed (checkpoint 格式: state 不落盘 — 旧格式 cp 兼容读但不再写)
