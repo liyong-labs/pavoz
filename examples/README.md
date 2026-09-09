@@ -13,7 +13,7 @@ search → download → filter → compress → compose → audit → save with
 MinIO-backed checkpoints and stage-level replay/fork in production) lives in
 [`docs/en/use-cases/ai-writer.md`](../docs/en/use-cases/ai-writer.md).
 
-# pavoz fork-run Examples (v0.9)
+# pavoz fork-run Examples (v0.3.0)
 
 5 runnable scenarios showing declarative param override.
 
@@ -38,5 +38,5 @@ bash 05_yaml_file.sh <task_id> overrides.yaml
 
 ## Requirements
 
-- `pavoz >= 0.9.0`
+- `pavoz >= 0.3.0`
 - For YAML (`05_yaml_file.sh`): `pip install pavoz[yaml]`

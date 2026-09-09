@@ -1,15 +1,15 @@
-# pavoz fork-run: Declarative Param Override Guide (v0.9)
+# pavoz fork-run: Declarative Param Override Guide (v0.3.0)
 
 ## What it solves
 
-Before v0.9, changing a nested param required JSON string with deep escaping:
+Before 0.3.0, changing a nested param required JSON string with deep escaping:
 
 ```bash
 pavoz fork-run dag.py --task-id X --stage s_compose \
   --overrides '{"llm_config": {"research_writer": {"model": "longcat"}}}'
 ```
 
-With v0.9:
+With 0.3.0:
 
 ```bash
 pavoz fork-run dag.py --task-id X --stage s_compose \
@@ -34,7 +34,7 @@ pavoz fork-run dag.py --task-id X --stage s_compose \
 先载入 `--input` 再 `update` `--overrides`.)
 ```
 
-## Merge semantics (v0.9 behavior fix)
+## Merge semantics (0.3.0 behavior fix)
 
 overrides 应用到 state 是**深合并**: patch 的 leaf 覆盖, 兄弟键保留.
 
@@ -92,7 +92,7 @@ from pavoz.state import parse_set_args, parse_set_file, merge_overrides, apply_o
 
 rt = Runtime(checkpoint_store=...)
 
-# Declarative (v0.9): 组合 helpers, 一行装回
+# Declarative (v0.3.0): 组合 helpers, 一行装回
 overrides = merge_overrides(
     parse_set_file("overrides.yaml"),          # 可选
     parse_set_args(["llm.model=longcat", "config.target_chars=8000"]),
@@ -103,7 +103,7 @@ await rt.fork_run(dag, task_id, from_stage="s_compose", overrides=overrides)
 await rt.fork_run(dag, task_id, from_stage="s_compose",
                   overrides={"llm": {"model": "longcat"}})
 
-# dot-path key dict (v0.9) — 值应用与 nested 等价, producer 语义不同 (见下)
+# dot-path key dict (v0.3.0) — 值应用与 nested 等价, producer 语义不同 (见下)
 await rt.fork_run(dag, task_id, from_stage="s_compose",
                   overrides={"llm.model": "longcat"})
 
@@ -116,7 +116,7 @@ new_state = apply_overrides(state, {"llm.model": "longcat"})
 > producer (后续 stage 重新产出该 key 时会静默覆盖你的 override).
 > 值应用本身两者等价 (深合并). 按 stage 重新生成与否选格式.
 
-## Isolation (no --in-place in v0.9)
+## Isolation (no --in-place in 0.3.0)
 
 fork-run 永远产生新 run_id (隔离). latest 指针随 save 移到 fork run;
 原 run 仍可用 `store.load(task_id, run_id)` 寻址, 历史不丢.
@@ -133,7 +133,7 @@ See `examples/` directory:
 
 ## Compatibility
 
-| v0.8 | v0.9 |
+| 0.2.0 | 0.3.0 |
 |---|---|
 | `--overrides '{"k":"v"}'` | ✅ unchanged |
 | `--input edited.json` | ✅ unchanged |
@@ -143,12 +143,12 @@ See `examples/` directory:
 | `--dry-run` | ❌→ ✅ new |
 | `Runtime.fork_run(overrides=dict)` | ✅ signature unchanged (嵌套 dict 语义: 整体替换→深合并, 见上) |
 
-## Migration from v0.8
+## Migration from 0.2.0
 
 No code changes required. To use new features:
 1. `pip install --upgrade pavoz`
 2. Optionally `pip install pavoz[yaml]` (for YAML support)
 3. Optionally replace JSON-string `--overrides` with `--set` / `--set-file`
 
-注意: "嵌套 dict 重置为更少 key" 的用法在 v0.9 不可表达 (兄弟键总被保留;
+注意: "嵌套 dict 重置为更少 key" 的用法在 0.3.0 不可表达 (兄弟键总被保留;
 仅标量覆盖整个 dict key 才整体替换) — 需要时用标量覆盖, 或先改 stage.

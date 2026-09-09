@@ -2,40 +2,7 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [0.2.0] — 2026-09-08
-
-### Changed (stageflow → pavoz 品牌重命名)
-
-- 包名: `stageflow` → **`pavoz`** (PyPI 包 + import 路径 + CLI 命令全统一)
-- 仓库: `ebziw/stageflow` → **`liyong-labs/pavoz`** (含 pyproject URLs / docs / CI)
-- 内部目录: `stageflow/` → `pavoz/` (12 文件 git mv)
-- Author: `ebziw` → `liyong-labs`
-
-### Added (协作式取消 + 生命周期事件 — 0.8.0 → 0.2.0 之间)
-
-- 协作式取消: `Runtime(cancel_check=...)` — stage 间/重试间检查点拦截, `RunResult.status`
-  新增 `"cancelled"`; 已完成 stage 照常落 checkpoint, `resume=True` 无缝续跑.
-  stage 内长循环用 `ctx.cancelled()` 轮询自行退出 (循环留业务层).
-  cancel_check 异常视为未取消 (fail-open).
-- 生命周期事件钩子: `Runtime(on_event=...)` — run_start / stage_start / stage_end /
-  stage_retry / run_end 五种结构化事件, observer 异常隔离. `RunResult.stage_timings`
-  记录每 stage 墙钟耗时 (含 retry 退避). 单 stage 重放 (run_stage) 不发事件.
-- 重试退避 full-jitter: `uniform(0, min(2^(attempt-1), 30))` — 多 task 同步重试防雷群.
-
-## [0.8.0] — 2026-09-06
-
-### Added
-
-- 协作式取消: `Runtime(cancel_check=...)` — stage 间/重试间检查点拦截, `RunResult.status`
-  新增 `"cancelled"`; 已完成 stage 照常落 checkpoint, `resume=True` 无缝续跑.
-  stage 内长循环用 `ctx.cancelled()` 轮询自行退出 (循环留业务层).
-  cancel_check 异常视为未取消 (fail-open).
-- 生命周期事件钩子: `Runtime(on_event=...)` — run_start / stage_start / stage_end /
-  stage_retry / run_end 五种结构化事件, observer 异常隔离. `RunResult.stage_timings`
-  记录每 stage 墙钟耗时 (含 retry 退避). 单 stage 重放 (run_stage) 不发事件.
-- 重试退避 full-jitter: `uniform(0, min(2^(attempt-1), 30))` — 多 task 同步重试防雷群.
-
-## [0.9.0-rc1] — 2026-09-09
+## [0.3.0-rc1] — 2026-09-09
 
 ### Added (fork-run 通用 param override — Declarative stage-level debug)
 
@@ -85,7 +52,7 @@
 
 ### Compatibility
 
-| v0.8 | v0.9 |
+| 0.2.0 | 0.3.0 |
 |---|---|
 | `--overrides '{"k":"v"}'` | ✅ unchanged |
 | `--input edited.json` | ✅ unchanged |
@@ -110,6 +77,40 @@ ai-research (consumer) 做 composer 4-model A/B 测试时, 当前痛点:
 pavoz v0.6 已有 `fork_run(overrides=dict)` (LangGraph fork 范式), 但 CLI UX 差
 (JSON string 嵌套痛苦). 本 PR 加 declarative 层, 让 1 行命令 = 切 model 重跑
 stage + diff 输出, 把 2 小时 hack 缩到 15 分钟.
+
+## [0.2.0] — 2026-09-08
+
+### Changed (stageflow → pavoz 品牌重命名)
+
+- 包名: `stageflow` → **`pavoz`** (PyPI 包 + import 路径 + CLI 命令全统一)
+- 仓库: `ebziw/stageflow` → **`liyong-labs/pavoz`** (含 pyproject URLs / docs / CI)
+- 内部目录: `stageflow/` → `pavoz/` (12 文件 git mv)
+- Author: `ebziw` → `liyong-labs`
+
+### Added (协作式取消 + 生命周期事件 — 0.8.0 → 0.2.0 之间)
+
+- 协作式取消: `Runtime(cancel_check=...)` — stage 间/重试间检查点拦截, `RunResult.status`
+  新增 `"cancelled"`; 已完成 stage 照常落 checkpoint, `resume=True` 无缝续跑.
+  stage 内长循环用 `ctx.cancelled()` 轮询自行退出 (循环留业务层).
+  cancel_check 异常视为未取消 (fail-open).
+- 生命周期事件钩子: `Runtime(on_event=...)` — run_start / stage_start / stage_end /
+  stage_retry / run_end 五种结构化事件, observer 异常隔离. `RunResult.stage_timings`
+  记录每 stage 墙钟耗时 (含 retry 退避). 单 stage 重放 (run_stage) 不发事件.
+- 重试退避 full-jitter: `uniform(0, min(2^(attempt-1), 30))` — 多 task 同步重试防雷群.
+
+## [0.8.0] — 2026-09-06
+
+### Added
+
+- 协作式取消: `Runtime(cancel_check=...)` — stage 间/重试间检查点拦截, `RunResult.status`
+  新增 `"cancelled"`; 已完成 stage 照常落 checkpoint, `resume=True` 无缝续跑.
+  stage 内长循环用 `ctx.cancelled()` 轮询自行退出 (循环留业务层).
+  cancel_check 异常视为未取消 (fail-open).
+- 生命周期事件钩子: `Runtime(on_event=...)` — run_start / stage_start / stage_end /
+  stage_retry / run_end 五种结构化事件, observer 异常隔离. `RunResult.stage_timings`
+  记录每 stage 墙钟耗时 (含 retry 退避). 单 stage 重放 (run_stage) 不发事件.
+- 重试退避 full-jitter: `uniform(0, min(2^(attempt-1), 30))` — 多 task 同步重试防雷群.
+
 
 ## [0.8.0] — 2026-09-06
 
