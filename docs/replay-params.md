@@ -23,7 +23,7 @@ pavoz fork-run dag.py --task-id X --stage s_compose \
 | `--set KEY=VALUE` | Single override, repeatable | `--set llm.model=x` |
 | `--set-file PATH` | Bulk JSON/YAML | `--set-file overrides.yaml` |
 | `--compare-with RUN_ID` | Diff vs another run | `--compare-with <run_id>` |
-| `--dry-run` | Parse only, no execution | `--dry-run` |
+| `--dry-run` | Preview apply effect (leaf diff + would_rerun), no execution | `--dry-run` |
 
 ## Priority (later overrides earlier)
 
@@ -76,6 +76,19 @@ pavoz fork-run dag.py --task-id X --stage s_b --set llm.model=x  # ✅
 | `2026-09-09` | `str` | ISO dates stay str |
 
 无逃生门. 类型不对时用 `--dry-run` 看解析结果再执行.
+
+## CLI storage (任意 StorageBackend)
+
+CLI 默认写 `~/.pavoz/data` (FileStorage). 设 env 即可指向任意 backend
+(全子命令生效, `{task_id}` 会替换为当前命令的 task_id):
+
+```bash
+export PAVOZ_STORAGE_SPEC="backend.integration.pavoz_storage.MinioStorage"
+export PAVOZ_STORAGE_KWARGS='{"task_id": "{task_id}"}'
+pavoz fork-run dag.py --task-id X --stage s_compose --set llm.model=y
+```
+
+`PAVOZ_STORAGE` (目录) 行为不变; 两者都设时 SPEC 优先.
 
 ## Safety
 

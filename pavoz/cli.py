@@ -52,8 +52,31 @@ def _load_dag(path: str):
     return dags[0]
 
 
-def _storage() -> FileStorage:
-    return FileStorage(DEFAULT_STORAGE)
+def _storage(task_id: str | None = None):
+    """storage 解析: PAVOZ_STORAGE_SPEC (任意 StorageBackend) > PAVOZ_STORAGE
+    (FileStorage 目录, 向后兼容) > 默认 ~/.pavoz/data.
+
+    PAVOZ_STORAGE_KWARGS: JSON dict, 传给 spec 类的 kwargs;
+    字符串值中的 {task_id} 替换为当前命令的 task_id (per-task adapter 用).
+    """
+    spec = os.environ.get("PAVOZ_STORAGE_SPEC")
+    if not spec:
+        return FileStorage(DEFAULT_STORAGE)
+    from .storage_loader import load_storage
+
+    kwargs = {}
+    raw = os.environ.get("PAVOZ_STORAGE_KWARGS")
+    if raw:
+        try:
+            kwargs = json.loads(raw)
+        except ValueError as e:
+            raise SystemExit(f"PAVOZ_STORAGE_KWARGS 不是合法 JSON: {e}")
+    if task_id:
+        kwargs = {
+            k: v.replace("{task_id}", task_id) if isinstance(v, str) else v
+            for k, v in kwargs.items()
+        }
+    return load_storage(spec, **kwargs)
 
 
 async def _cmd_run(args) -> int:
@@ -63,7 +86,7 @@ async def _cmd_run(args) -> int:
     if args.input:
         initial = json.loads(args.input)
     # v0.5.1 (R5 fix): 恒 attach store → CLI run 落盘, replay/trace/state 可用
-    runtime = Runtime(checkpoint_store=CheckpointStore(_storage()))
+    runtime = Runtime(checkpoint_store=CheckpointStore(_storage(task_id)))
     try:
         result = await runtime.run(
             dag, task_id, initial_state=initial, resume=args.resume
@@ -87,7 +110,7 @@ async def _cmd_run(args) -> int:
 
 async def _cmd_trace(args) -> int:
     """列 task 的最新 run checkpoint + stage 记录 (per-run, 看 load_latest)."""
-    store = CheckpointStore(_storage())
+    store = CheckpointStore(_storage(args.task_id))
     cp = store.load_latest(args.task_id)
     if cp is None:
         print(f"task {args.task_id} 无 checkpoint (没跑过)")
@@ -105,7 +128,7 @@ async def _cmd_trace(args) -> int:
 
 
 async def _cmd_state(args) -> int:
-    store = CheckpointStore(_storage())
+    store = CheckpointStore(_storage(args.task_id))
     cp = store.load_latest(args.task_id)
     if cp is None:
         print(f"task {args.task_id} 无 checkpoint")
@@ -144,7 +167,7 @@ async def _cmd_replay(args) -> int:
             print(f"patch 文件 {patch_path} 的 patch 不能是 async — 用同步 def patch(dag)")
             return 1
         patcher(dag)
-    runtime = Runtime(checkpoint_store=CheckpointStore(_storage()))
+    runtime = Runtime(checkpoint_store=CheckpointStore(_storage(args.task_id)))
     try:
         result = await runtime.run_stage(dag, task_id=args.task_id, stage_name=args.stage)
     except (CheckpointMismatchError, RuntimeError, ValueError, KeyError) as e:
@@ -164,7 +187,7 @@ async def _cmd_replay(args) -> int:
 
 async def _cmd_export_input(args) -> int:
     """export-input: 打印 stage 执行前 state (rebuild_state_before) — 人编辑的基座."""
-    store = CheckpointStore(_storage())
+    store = CheckpointStore(_storage(args.task_id))
     cp = store.load_latest(args.task_id)
     if cp is None:
         print(f"task {args.task_id} 无 checkpoint")
@@ -201,15 +224,36 @@ async def _cmd_fork_run(args) -> int:
         return 1
 
     if args.dry_run:
-        print(json.dumps({
+        from pavoz.state import apply_overrides
+
+        out = {
             "dry_run": True,
             "task_id": args.task_id,
             "stage": args.stage,
             "overrides": overrides,
-        }, indent=2, ensure_ascii=False))
+        }
+        # 预演: 对 latest run 的执行前 state 应用 overrides, 看 leaf 级效果 (不执行)
+        cp = CheckpointStore(_storage(args.task_id)).load_latest(args.task_id)
+        if cp is None:
+            out["preview"] = None
+            out["preview_note"] = "task 无 checkpoint — 首跑无预演基线"
+        elif args.stage not in cp.done_stages:
+            out["preview"] = None
+            out["preview_note"] = f"stage {args.stage} 未在 latest run 完成 — 无执行前 state 基线"
+        else:
+            before = cp.rebuild_state_before(args.stage)
+            after = apply_overrides(before, overrides)
+            diff = _state_diff(before, after)
+            stages = list(dag.stages)
+            out["preview"] = {
+                "diff_keys_count": len(diff),
+                "diff_sample": dict(list(diff.items())[:10]),
+                "would_rerun": stages[stages.index(args.stage):],
+            }
+        print(json.dumps(out, indent=2, ensure_ascii=False))
         return 0
 
-    runtime = Runtime(checkpoint_store=CheckpointStore(_storage()))
+    runtime = Runtime(checkpoint_store=CheckpointStore(_storage(args.task_id)))
     try:
         result = await runtime.fork_run(
             dag, task_id=args.task_id,
@@ -231,7 +275,7 @@ async def _cmd_fork_run(args) -> int:
     }
 
     if args.compare_with:
-        store = CheckpointStore(_storage())
+        store = CheckpointStore(_storage(args.task_id))
         orig_cp = store.load(args.task_id, args.compare_with)
         if orig_cp is None:
             print(f"compare-with: run {args.compare_with} 不存在")

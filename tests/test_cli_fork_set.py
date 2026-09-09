@@ -157,3 +157,76 @@ async def test_set_overrides_priority(monkeypatch, tmp_path, capsys):
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
     assert out["overrides_applied"]["topic"] == "from_set"
+
+
+async def test_dry_run_preview_leaf_diff(monkeypatch, tmp_path, capsys):
+    """R2: dry-run 预演 — 对执行前 state 的 leaf 级 diff + would_rerun."""
+    dag_path = _write_dag(str(tmp_path))
+    monkeypatch.setattr(cli_mod, "DEFAULT_STORAGE", str(tmp_path / "store"))
+    await _run_initial(dag_path, "pv1")
+    capsys.readouterr()  # 排掉 _cmd_run 的输出
+    rc = await _cmd_fork_run(
+        _fork_args(dag_path, "pv1", stage="s_a", set=["topic=edited"], dry_run=True))
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    pv = out["preview"]
+    assert pv["diff_keys_count"] == 1
+    assert "topic" in pv["diff_sample"]
+    assert pv["would_rerun"] == ["s_a", "s_b"]
+
+
+async def test_dry_run_preview_deep_merge_keeps_sibling(monkeypatch, tmp_path, capsys):
+    """R2 + 深合并 CLI 层可见: llm.model 变, llm.temperature 不出现在 diff (兄弟键保留)."""
+    dag_path = _write_dag(str(tmp_path))
+    monkeypatch.setattr(cli_mod, "DEFAULT_STORAGE", str(tmp_path / "store"))
+    await _run_initial(dag_path, "pv2")
+    capsys.readouterr()  # 排掉 _cmd_run 的输出
+    rc = await _cmd_fork_run(
+        _fork_args(dag_path, "pv2", set=["llm.model=new"], dry_run=True))
+    assert rc == 0
+    pv = json.loads(capsys.readouterr().out)["preview"]
+    assert "llm.model" in pv["diff_sample"]
+    assert "llm.temperature" not in pv["diff_sample"]
+    assert pv["diff_sample"]["llm.model"] == ["orig", "new"]
+
+
+async def test_dry_run_preview_stage_not_done(monkeypatch, tmp_path, capsys):
+    """R2 边界: 无 cp → preview null + note, rc 0 (不阻断)."""
+    dag_path = _write_dag(str(tmp_path))
+    monkeypatch.setattr(cli_mod, "DEFAULT_STORAGE", str(tmp_path / "store"))
+    rc = await _cmd_fork_run(
+        _fork_args(dag_path, "pv3", set=["topic=x"], dry_run=True))
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["preview"] is None
+    assert "无 checkpoint" in out["preview_note"]
+
+
+def test_storage_spec_env_resolution(monkeypatch, tmp_path):
+    """R1: PAVOZ_STORAGE_SPEC + KWARGS (含 {task_id} 插值) → load_storage."""
+    root = tmp_path / "ab-store"
+    monkeypatch.setenv("PAVOZ_STORAGE_SPEC", "pavoz.storage:FileStorage")
+    monkeypatch.setenv("PAVOZ_STORAGE_KWARGS",
+                       json.dumps({"root_dir": f"{root}/{{task_id}}"}))
+    store = cli_mod._storage("t-42")
+    assert store.root.endswith("t-42")
+
+
+def test_storage_spec_bad_module_friendly_error(monkeypatch):
+    """R1: spec 拼错 → PavozStorageError (含安装提示), 非 traceback."""
+    import pytest
+
+    from pavoz.storage_loader import PavozStorageError
+
+    monkeypatch.setenv("PAVOZ_STORAGE_SPEC", "nope.module:Store")
+    monkeypatch.delenv("PAVOZ_STORAGE_KWARGS", raising=False)
+    with pytest.raises(PavozStorageError, match="nope"):
+        cli_mod._storage("t-1")
+
+
+def test_storage_default_unchanged(monkeypatch, tmp_path):
+    """R1 后向兼容: 不设 SPEC → FileStorage(DEFAULT_STORAGE) 现行为."""
+    monkeypatch.delenv("PAVOZ_STORAGE_SPEC", raising=False)
+    monkeypatch.setattr(cli_mod, "DEFAULT_STORAGE", str(tmp_path / "d"))
+    store = cli_mod._storage()
+    assert store.root == str(tmp_path / "d")

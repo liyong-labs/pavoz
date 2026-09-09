@@ -168,6 +168,8 @@ hash mismatch / 依赖未完成 → 明确错误。
 - 安全门: dunder 拒绝 / 路径深度 ≤5 / 文件 ≤1MB / yaml.safe_load; CLI rc 契约保留
 - 消费端验收: ai-write composer 3-model A/B 端到端 (llm_calls 实证 override 达路由;
   详见 liyong-labs/ai_writer docs/handoff/pavoz-pr-v0.9/ACCEPTANCE.md)
+- R1 (ai-write 需求): CLI storage 解耦 — PAVOZ_STORAGE_SPEC/KWARGS, CLI 可操作任意 StorageBackend
+- R2 (ai-write 需求): --dry-run 预演 — 执行前 state 的 leaf diff + would_rerun
 - 0.3.0 正式版: soak ~1 周后 cut; PyPI publish 等 repo 公开
 
 ## v0.2 之后 (候选项, 未排期)

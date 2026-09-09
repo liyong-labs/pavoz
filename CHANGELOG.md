@@ -20,6 +20,15 @@
 - `merge_overrides(*sources)` — 多源合并 (按优先级)
 - `apply_overrides(base, *patches)` — 接受 dot-path 或 nested dict, 不 mutate base
 
+**CLI storage 解耦 (R1)**: `PAVOZ_STORAGE_SPEC` env (`pkg.module:Class`) +
+`PAVOZ_STORAGE_KWARGS` (JSON, `{task_id}` 插值) — CLI 全子命令可操作任意
+StorageBackend (如 consumer 的 MinIO adapter); 不设时现 FileStorage 行为不变。
+
+**dry-run 预演 (R2)**: `fork-run --dry-run` 从 "显示解析结果" 升级为
+"预演 apply 效果" — 基于 `rebuild_state_before(stage)` 的执行前 state 做
+leaf 级 diff (`preview.diff_keys_count` / `diff_sample` / `would_rerun`),
+试错不再需要真跑。
+
 **Priority merge**: `--set > --set-file > --overrides > --input` (后写覆盖前写;
 `--overrides` > `--input` 沿袭 v0.8 组合使用时的既有胜者)
 
