@@ -35,7 +35,14 @@ from .checkpoint import (
     workflow_hash,
 )
 from .dag import DAG
-from .state import ReadOnlyStateView, deep_validate_state, merge_state, snapshot
+from .state import (
+    ReadOnlyStateView,
+    _validate_dict_keys,
+    apply_overrides,
+    deep_validate_state,
+    merge_state,
+    snapshot,
+)
 from .types import FatalError, RetryableError, RunResult, StageError
 
 logger = logging.getLogger("pavoz")
@@ -485,9 +492,13 @@ class Runtime:
                 for _k in _dl:
                     producers[_k] = _d
         if overrides:
-            state.update(overrides)
+            # v0.9 深合并: v0.8 的 state.update 顶层浅替换会把嵌套 dict 的兄弟键抹掉
+            # (--set llm.model=x → temperature/chain 全丢). apply_overrides 只覆盖
+            # patch leaf, 兄弟键保留; nested dict 与 dot-path key dict 双格式等价.
+            _validate_dict_keys(overrides)  # dunder/非法 key 在 runtime 边界拒绝
+            state = apply_overrides(state, overrides)
             for _k in overrides:
-                producers[_k] = "<fork>"
+                producers[_k] = "<fork>"  # 仍按顶层 override key 记 producer
         deep_validate_state(state)
 
         statuses = {s: st for s, st in cp.stage_statuses.items() if s in keep}

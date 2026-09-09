@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .dag import DAG
+from .state import apply_overrides
 from .storage import StorageBackend
 
 __all__ = ["Checkpoint", "CheckpointMismatchError", "CheckpointStore", "workflow_hash"]
@@ -170,8 +171,10 @@ class Checkpoint:
                 for k in delta:
                     producers[k] = done
         # v0.8: fork overrides 最后 merge (覆盖前序 keep 产物; producer 标 <fork>)
+        # v0.9 深合并: v0.8 浅 update 会把嵌套 dict 的兄弟键抹掉 (resume 重建
+        # 才是 stage 实际看到的 state — 与 runtime.fork_run 应用语义保持一致)
         if stop_at is None and self.fork_overrides:
-            rebuilt.update(self.fork_overrides)
+            rebuilt = apply_overrides(rebuilt, self.fork_overrides)
             for k in self.fork_overrides:
                 producers[k] = "<fork>"
         return rebuilt, producers
