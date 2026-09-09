@@ -359,12 +359,14 @@ def apply_overrides(base: dict, *patch_dicts: dict) -> dict:
     - Dot-path dict (new): {"llm.model": "x"}
 
     Returns: new dict (does not mutate base).
+    base 的嵌套对象与结果完全独立 (deepcopy). 结果的嵌套对象可能与 patch
+    的嵌套对象共享引用 — 调用方 apply 后不要再 mutate patch.
 
     Example:
         >>> apply_overrides({"a": 1}, {"b.c": 2})
         {'a': 1, 'b': {'c': 2}}
     """
-    merged = dict(base)
+    merged = copy.deepcopy(base)
     for patch in patch_dicts:
         if not patch:
             continue

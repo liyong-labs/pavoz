@@ -281,3 +281,24 @@ class TestApplyOverrides:
         base = {"a": 1}
         apply_overrides(base, {"a": 2, "b": 3})
         assert base == {"a": 1}  # base unchanged
+
+    def test_does_not_mutate_base_nested(self):
+        import copy
+
+        from pavoz.state import apply_overrides
+        base = {"llm": {"model": "old", "temperature": 0.5}}
+        snapshot = copy.deepcopy(base)
+        result = apply_overrides(base, {"llm": {"model": "new"}})
+        assert base == snapshot  # base 深层不变
+        assert result == {"llm": {"model": "new", "temperature": 0.5}}
+        result["llm"]["temperature"] = 99
+        assert base["llm"]["temperature"] == 0.5  # 结果嵌套不是 base 的引用
+
+    def test_dot_path_does_not_mutate_base_nested(self):
+        import copy
+
+        from pavoz.state import apply_overrides
+        base = {"cfg": {"x": 1}}
+        snapshot = copy.deepcopy(base)
+        apply_overrides(base, {"cfg.y": 2})
+        assert base == snapshot
