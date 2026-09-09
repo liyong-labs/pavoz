@@ -53,7 +53,8 @@
 - `merge_overrides(*sources)` — 多源合并 (按优先级)
 - `apply_overrides(base, *patches)` — 接受 dot-path 或 nested dict, 不 mutate base
 
-**Priority merge**: `--set > --set-file > --input > --overrides` (后写覆盖前写)
+**Priority merge**: `--set > --set-file > --overrides > --input` (后写覆盖前写;
+`--overrides` > `--input` 沿袭 v0.8 组合使用时的既有胜者)
 
 **Safety**:
 - 拒绝 dunder key (`__proto__`, `__class__` 等) — 防 Python object injection

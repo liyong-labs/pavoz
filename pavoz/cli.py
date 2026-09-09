@@ -182,7 +182,8 @@ async def _cmd_fork_run(args) -> int:
     """fork-run: 装回 state → 从 stage 分支续跑.
 
     v0.9 新增: --set / --set-file / --compare-with / --dry-run.
-    优先级 (后写覆盖前写): --set > --set-file > --input > --overrides.
+    优先级 (后写覆盖前写): --set > --set-file > --overrides > --input
+    (--overrides > --input 是 v0.8 组合使用时的既有胜者, 保持不变).
     """
     from pavoz.state import parse_set_args, parse_set_file, merge_overrides, _state_diff
 
@@ -190,8 +191,8 @@ async def _cmd_fork_run(args) -> int:
 
     try:
         overrides = merge_overrides(
-            json.loads(args.overrides) if args.overrides else None,
             json.loads(Path(args.input).read_text(encoding="utf-8")) if args.input else None,
+            json.loads(args.overrides) if args.overrides else None,
             parse_set_file(args.set_file) if args.set_file else None,
             parse_set_args(args.set) if args.set else None,
         )

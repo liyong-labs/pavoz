@@ -28,7 +28,10 @@ pavoz fork-run dag.py --task-id X --stage s_compose \
 ## Priority (later overrides earlier)
 
 ```
---set > --set-file > --input > --overrides
+--set > --set-file > --overrides > --input
+
+(`--overrides` > `--input` 沿袭 v0.8 组合使用时的既有胜者 — v0.8 的合并顺序是
+先载入 `--input` 再 `update` `--overrides`.)
 ```
 
 ## Merge semantics (v0.9 behavior fix)
@@ -100,13 +103,18 @@ await rt.fork_run(dag, task_id, from_stage="s_compose", overrides=overrides)
 await rt.fork_run(dag, task_id, from_stage="s_compose",
                   overrides={"llm": {"model": "longcat"}})
 
-# dot-path key dict (v0.9) — 与 nested 等价
+# dot-path key dict (v0.9) — 值应用与 nested 等价, producer 语义不同 (见下)
 await rt.fork_run(dag, task_id, from_stage="s_compose",
                   overrides={"llm.model": "longcat"})
 
 # 纯 state 变换 (不跑 pipeline)
 new_state = apply_overrides(state, {"llm.model": "longcat"})
 ```
+
+> ⚠️ fork resume 场景下两者的 producer 语义不同: nested patch 会让 <fork> 认领
+> 顶层 key (后续 stage 链式覆盖该 key → StateConflictError); dot-path key 不改
+> producer (后续 stage 重新产出该 key 时会静默覆盖你的 override).
+> 值应用本身两者等价 (深合并). 按 stage 重新生成与否选格式.
 
 ## Isolation (no --in-place in v0.9)
 
