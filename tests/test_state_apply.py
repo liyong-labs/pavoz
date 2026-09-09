@@ -6,6 +6,59 @@ from pavoz.state import (
 )
 
 
+class TestParseSetFile:
+    def test_json_file(self, tmp_path):
+        import json
+        from pavoz.state import parse_set_file
+        f = tmp_path / "override.json"
+        f.write_text(json.dumps({"llm": {"model": "longcat"}}))
+        assert parse_set_file(str(f)) == {"llm": {"model": "longcat"}}
+
+    def test_yaml_file_safe_load(self, tmp_path):
+        pytest.importorskip("yaml")
+        from pavoz.state import parse_set_file
+        f = tmp_path / "override.yaml"
+        f.write_text("llm:\n  model: longcat\n")
+        assert parse_set_file(str(f)) == {"llm": {"model": "longcat"}}
+
+    def test_yaml_python_object_rejected(self, tmp_path):
+        """!!python/object must be rejected by yaml.safe_load."""
+        pytest.importorskip("yaml")
+        from pavoz.state import parse_set_file
+        f = tmp_path / "evil.yaml"
+        f.write_text("!!python/object/apply:os.system ['echo evil']\n")
+        with pytest.raises(Exception):  # ConstructorError or ValueError
+            parse_set_file(str(f))
+
+    def test_file_size_limit(self, tmp_path):
+        from pavoz.state import parse_set_file
+        f = tmp_path / "big.json"
+        f.write_text('{"x": "' + 'a' * 1_100_000 + '"}')
+        with pytest.raises(ValueError, match="1MB"):
+            parse_set_file(str(f))
+
+    def test_non_dict_top_level_rejected(self, tmp_path):
+        import json
+        from pavoz.state import parse_set_file
+        f = tmp_path / "list.json"
+        f.write_text(json.dumps([1, 2, 3]))
+        with pytest.raises(ValueError, match="顶层必须是 dict"):
+            parse_set_file(str(f))
+
+    def test_dunder_in_file_rejected(self, tmp_path):
+        import json
+        from pavoz.state import parse_set_file
+        f = tmp_path / "evil.json"
+        f.write_text(json.dumps({"__proto__": {"x": 1}}))
+        with pytest.raises(ValueError, match="禁词"):
+            parse_set_file(str(f))
+
+    def test_nonexistent_file_rejected(self):
+        from pavoz.state import parse_set_file
+        with pytest.raises(ValueError, match="不存在"):
+            parse_set_file("/tmp/pavoz_nonexistent_file_42.json")
+
+
 class TestValidatePath:
     def test_simple_ok(self):
         _validate_path("topic")  # no raise

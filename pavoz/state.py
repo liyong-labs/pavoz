@@ -247,3 +247,71 @@ def parse_set_args(items: list[str]) -> dict:
             )
         _deep_set(result, path, value)
     return result
+
+
+_MAX_FILE_SIZE = 1_000_000  # 1MB
+
+
+def parse_set_file(path: str) -> dict:
+    """Parse --set-file PATH. JSON or YAML. 1MB limit, yaml.safe_load only.
+
+    Raises:
+        ValueError: file missing / too large / parse error / not dict / unsafe keys.
+    """
+    from pathlib import Path  # local import — Path not in state module yet
+
+    p = Path(path)
+    if not p.exists():
+        raise ValueError(f"--set-file {path} 不存在")
+    size = p.stat().st_size
+    if size > _MAX_FILE_SIZE:
+        raise ValueError(
+            f"--set-file {path} 大小 {size}B > {_MAX_FILE_SIZE}B (1MB) 限制"
+        )
+    text = p.read_text(encoding="utf-8")
+    if path.endswith((".yaml", ".yml")):
+        try:
+            import yaml  # lazy import (stdlib-only 保持)
+        except ImportError:
+            raise ValueError(
+                f"--set-file {path} 是 YAML 但 PyYAML 未安装. "
+                "用 JSON 替代 OR pip install pyyaml."
+            )
+        data = yaml.safe_load(text)  # 强制 safe_load (防任意代码)
+    else:
+        def _reject_nonfinite(lit):
+            raise ValueError(f"--set-file {path} 含非有限数值 {lit!r} — JSON 无法持久化")
+
+        try:
+            data = _json.loads(text, parse_constant=_reject_nonfinite)
+        except _json.JSONDecodeError as e:
+            raise ValueError(f"--set-file {path} JSON 解析失败: {e}")
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"--set-file {path} 顶层必须是 dict (实际 {type(data).__name__})"
+        )
+    _validate_dict_keys(data, path="")
+    return data
+
+
+def _validate_dict_keys(d: dict, path: str = "") -> None:
+    """递归校验 override 源 dict 的所有 key (file 来源不可信).
+
+    只拒: 非字符串 / 空 key / dunder 禁词. 其余字符 (含 '-') 是合法 dict
+    key, 不拒 — 严格逐段校验是 _validate_path 的职责 (dot-path 场景).
+    含 '.' 的 key 走 _validate_path (dot-path 语义, apply_overrides 会展开).
+    注意: merge_overrides (Task 4) 复用本函数, 不要在其他任务里重复定义.
+    """
+    for k, v in d.items():
+        if not isinstance(k, str) or not k:
+            raise ValueError(
+                f"override key {k!r} 必须是非空字符串 (在 {path or '<root>'})"
+            )
+        if k in _DUNDER_BLOCKLIST:
+            raise ValueError(
+                f"override key {k!r} 含禁词 (在 {path or '<root>'})"
+            )
+        if "." in k:
+            _validate_path(k)
+        if isinstance(v, dict):
+            _validate_dict_keys(v, f"{path}.{k}" if path else k)
