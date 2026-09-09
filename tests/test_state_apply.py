@@ -22,12 +22,12 @@ class TestParseSetFile:
         assert parse_set_file(str(f)) == {"llm": {"model": "longcat"}}
 
     def test_yaml_python_object_rejected(self, tmp_path):
-        """!!python/object must be rejected by yaml.safe_load."""
+        """!!python/object must be rejected by yaml.safe_load → ValueError."""
         pytest.importorskip("yaml")
         from pavoz.state import parse_set_file
         f = tmp_path / "evil.yaml"
         f.write_text("!!python/object/apply:os.system ['echo evil']\n")
-        with pytest.raises(Exception):  # ConstructorError or ValueError
+        with pytest.raises(ValueError, match="YAML 解析失败"):
             parse_set_file(str(f))
 
     def test_file_size_limit(self, tmp_path):
@@ -57,6 +57,20 @@ class TestParseSetFile:
         from pavoz.state import parse_set_file
         with pytest.raises(ValueError, match="不存在"):
             parse_set_file("/tmp/pavoz_nonexistent_file_42.json")
+
+    def test_json_nonfinite_literal_rejected(self, tmp_path):
+        """裁决 #2 回归: JSON NaN/Infinity 字面量必须被 parse_constant 拒."""
+        from pavoz.state import parse_set_file
+        f = tmp_path / "nan.json"
+        f.write_text('{"x": NaN}')
+        with pytest.raises(ValueError, match="非有限"):
+            parse_set_file(str(f))
+
+    def test_directory_path_rejected(self, tmp_path):
+        """目录路径 → OSError 收敛为 ValueError (Task 7 CLI except ValueError)."""
+        from pavoz.state import parse_set_file
+        with pytest.raises(ValueError, match="读取失败"):
+            parse_set_file(str(tmp_path))
 
 
 class TestValidatePath:

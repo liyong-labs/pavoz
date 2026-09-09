@@ -263,12 +263,18 @@ def parse_set_file(path: str) -> dict:
     p = Path(path)
     if not p.exists():
         raise ValueError(f"--set-file {path} 不存在")
-    size = p.stat().st_size
+    try:
+        size = p.stat().st_size
+    except OSError as e:
+        raise ValueError(f"--set-file {path} 读取失败: {e}")
     if size > _MAX_FILE_SIZE:
         raise ValueError(
             f"--set-file {path} 大小 {size}B > {_MAX_FILE_SIZE}B (1MB) 限制"
         )
-    text = p.read_text(encoding="utf-8")
+    try:
+        text = p.read_text(encoding="utf-8")
+    except OSError as e:
+        raise ValueError(f"--set-file {path} 读取失败: {e}")
     if path.endswith((".yaml", ".yml")):
         try:
             import yaml  # lazy import (stdlib-only 保持)
@@ -277,7 +283,10 @@ def parse_set_file(path: str) -> dict:
                 f"--set-file {path} 是 YAML 但 PyYAML 未安装. "
                 "用 JSON 替代 OR pip install pyyaml."
             )
-        data = yaml.safe_load(text)  # 强制 safe_load (防任意代码)
+        try:
+            data = yaml.safe_load(text)  # 强制 safe_load (防任意代码)
+        except yaml.YAMLError as e:
+            raise ValueError(f"--set-file {path} YAML 解析失败: {e}")
     else:
         def _reject_nonfinite(lit):
             raise ValueError(f"--set-file {path} 含非有限数值 {lit!r} — JSON 无法持久化")
