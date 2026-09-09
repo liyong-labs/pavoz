@@ -6,6 +6,7 @@
 用法:
     python examples/02_prompt_patch.py <task_id> <new_prompt_file>
 """
+import json
 import sys
 import subprocess
 from pathlib import Path
@@ -22,7 +23,7 @@ def main():
     # v0.9 declarative: --set-file 引用 prompt 文件
     prompt_meta_file = prompt_file.with_suffix(".meta.json")
     prompt_meta_file.write_text(
-        '{"prompts": {"compose_synthesize": ' + repr(new_prompt) + '}}'
+        '{"prompts": {"compose_synthesize": ' + json.dumps(new_prompt, ensure_ascii=False) + '}}'
     )
 
     subprocess.run([

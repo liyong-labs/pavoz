@@ -45,12 +45,13 @@
 - `--compare-with RUN_ID` (跑完后输出 state leaf diff)
 - `--dry-run` flag (仅解析 + 显示, 不执行 stage)
 
-**新模块级函数** (`pavoz.state`, 顶层也导出):
+**新模块级函数** (`parse_set_args` / `parse_set_file` / `merge_overrides` /
+`apply_overrides` 顶层也导出; `_state_diff` 是 `pavoz.state` 内部 helper,
+仅 compare-with 内部使用, 不在顶层导出面):
 - `parse_set_args(items)` — `--set` 列表解析
 - `parse_set_file(path)` — JSON/YAML 文件解析 (1MB + safe_load + dunder 校验)
 - `merge_overrides(*sources)` — 多源合并 (按优先级)
 - `apply_overrides(base, *patches)` — 接受 dot-path 或 nested dict, 不 mutate base
-- `_state_diff(a, b)` — state leaf diff (compare-with 用)
 
 **Priority merge**: `--set > --set-file > --input > --overrides` (后写覆盖前写)
 
@@ -68,8 +69,8 @@
 - `05_yaml_file.sh` — YAML 文件批改 (dry-run first)
 
 **新 tests**:
-- `tests/test_state_apply.py` (28 case) — state.py utilities
-- `tests/test_fork_overrides.py` (5 case) — 深合并语义
+- `tests/test_state_apply.py` (54 case) — state.py utilities
+- `tests/test_fork_overrides.py` (6 case) — 深合并语义
 - `tests/test_cli_fork_set.py` (8 case) — CLI 直接调用
 
 **新 docs**:
