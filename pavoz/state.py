@@ -382,3 +382,34 @@ def apply_overrides(base: dict, *patch_dicts: dict) -> dict:
                 else:
                     merged[k] = v
     return merged
+
+
+_DIFF_STR_MAX = 200
+_DIFF_LIST_MAX = 50
+
+
+def _truncate_for_diff(v: Any) -> Any:
+    """Truncate long strings / lists for readable diff output."""
+    if isinstance(v, str) and len(v) > _DIFF_STR_MAX:
+        return v[:_DIFF_STR_MAX] + f"...(truncated, total {len(v)} chars)"
+    if isinstance(v, list) and len(v) > _DIFF_LIST_MAX:
+        return v[:_DIFF_LIST_MAX] + ["...(truncated)"]
+    return v
+
+
+def _state_diff(a: dict, b: dict, path: str = "") -> dict[str, list]:
+    """Recursively find leaf differences between two state dicts.
+
+    Returns: {full.path: [before, after]} dict. Skips nested diffs
+    when both sides are dicts (recurses instead).
+    """
+    diffs: dict[str, list] = {}
+    keys = set(a.keys()) | set(b.keys())
+    for k in keys:
+        full = f"{path}.{k}" if path else k
+        va, vb = a.get(k), b.get(k)
+        if isinstance(va, dict) and isinstance(vb, dict):
+            diffs.update(_state_diff(va, vb, full))
+        elif va != vb:
+            diffs[full] = [_truncate_for_diff(va), _truncate_for_diff(vb)]
+    return diffs

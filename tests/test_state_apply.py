@@ -302,3 +302,40 @@ class TestApplyOverrides:
         snapshot = copy.deepcopy(base)
         apply_overrides(base, {"cfg.y": 2})
         assert base == snapshot
+
+
+class TestStateDiff:
+    def test_top_level_diff(self):
+        from pavoz.state import _state_diff
+        diff = _state_diff({"a": 1}, {"a": 2})
+        assert diff == {"a": [1, 2]}
+
+    def test_nested_diff(self):
+        from pavoz.state import _state_diff
+        diff = _state_diff(
+            {"llm": {"model": "old"}},
+            {"llm": {"model": "new"}},
+        )
+        assert diff == {"llm.model": ["old", "new"]}
+
+    def test_added_key(self):
+        from pavoz.state import _state_diff
+        diff = _state_diff({"a": 1}, {"a": 1, "b": 2})
+        assert diff == {"b": [None, 2]}
+
+    def test_removed_key(self):
+        from pavoz.state import _state_diff
+        diff = _state_diff({"a": 1, "b": 2}, {"a": 1})
+        assert diff == {"b": [2, None]}
+
+    def test_no_diff_empty(self):
+        from pavoz.state import _state_diff
+        diff = _state_diff({"a": 1}, {"a": 1})
+        assert diff == {}
+
+    def test_truncate_long_strings(self):
+        from pavoz.state import _state_diff
+        long = "x" * 300
+        diff = _state_diff({"k": long}, {"k": long + "y"})
+        # v0, v1 in diff["k"], long v0 gets truncated
+        assert "truncated" in str(diff["k"][0])
