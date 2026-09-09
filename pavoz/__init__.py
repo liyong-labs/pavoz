@@ -33,7 +33,7 @@ from .storage_loader import PavozStorageError, load_storage
 from .testing import TestPipe
 from .types import FatalError, RetryableError, RunResult, StageError
 
-__version__ = "0.2.0"
+__version__ = "0.3.0rc1"
 
 __all__ = [
     "DAG",

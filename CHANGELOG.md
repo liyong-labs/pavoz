@@ -35,7 +35,7 @@
   记录每 stage 墙钟耗时 (含 retry 退避). 单 stage 重放 (run_stage) 不发事件.
 - 重试退避 full-jitter: `uniform(0, min(2^(attempt-1), 30))` — 多 task 同步重试防雷群.
 
-## [0.9.0] — 2026-09-XX
+## [0.9.0-rc1] — 2026-09-09
 
 ### Added (fork-run 通用 param override — Declarative stage-level debug)
 
