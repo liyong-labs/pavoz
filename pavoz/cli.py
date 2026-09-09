@@ -241,7 +241,7 @@ async def _cmd_fork_run(args) -> int:
         output["diff_sample"] = dict(list(diff.items())[:10])
 
     print(json.dumps(output, indent=2, ensure_ascii=False))
-    return 0
+    return 0 if result.status == "done" else 1
 
 
 def main(argv: list[str] | None = None) -> int:

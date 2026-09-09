@@ -4,7 +4,7 @@ import os
 
 import pavoz.cli as cli_mod
 from pavoz.checkpoint import CheckpointStore
-from pavoz.cli import _cmd_replay, _cmd_run
+from pavoz.cli import _cmd_fork_run, _cmd_replay, _cmd_run
 from pavoz.storage import FileStorage
 
 
@@ -95,3 +95,38 @@ async def test_cli_replay_async_patch_rejected(monkeypatch, tmp_path, capsys):
     rc = await _cmd_replay(_Args(dag=dag_path, task_id="cli-1", stage="s_b", patch=patch_path))
     assert rc == 1
     assert "不能是 async" in capsys.readouterr().out
+
+
+async def test_cli_fork_run_failed_status_returns_1(monkeypatch, tmp_path, capsys):
+    """v0.9 回归: fork-run 跑出 status=failed → rc=1 (v0.8 契约, reviewer 裁定恢复).
+
+    注: run 对 failed stage 同样 rc=1 (0 if status=="done" else 1, 实测非 reviewer
+    草案里的 rc==0) — stage 异常在 runtime 管线内被捕获, 不 raise.
+    """
+    dag_path = os.path.join(str(tmp_path), "fail_dag.py")
+    with open(dag_path, "w") as f:
+        f.write("""
+from pavoz import DAG
+
+dag = DAG("fail_demo")
+
+@dag.stage()
+async def s_a(ctx):
+    return {"a": 1}
+
+@dag.stage(depends_on=["s_a"])
+async def s_b(ctx):
+    raise RuntimeError("boom")
+""")
+    monkeypatch.setattr(cli_mod, "DEFAULT_STORAGE", str(tmp_path / "store"))
+    rc = await _cmd_run(_Args(dag=dag_path, task_id="failrc", input=None, resume=False))
+    assert rc == 1  # failed stage → status="failed" → rc=1 (与 _cmd_fork_run 同契约)
+    capsys.readouterr()  # 丢掉 run 的 JSON, 只留 fork-run 的输出
+
+    rc = await _cmd_fork_run(_Args(dag=dag_path, task_id="failrc", stage="s_b",
+                                   overrides='{"x": 1}', input=None, set=[],
+                                   set_file=None, compare_with=None, dry_run=False))
+    assert rc == 1  # status != done → rc=1 (v0.8 契约)
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "failed"
+    assert out["overrides_applied"] == {"x": 1}  # stdout 仍带 overrides 供诊断
