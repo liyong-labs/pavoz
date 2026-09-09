@@ -8,6 +8,7 @@ stage 只能:
 from __future__ import annotations
 
 import copy
+import math
 from typing import Any
 
 __all__ = ["ReadOnlyStateView", "StateConflictError", "merge_state"]
@@ -219,3 +220,30 @@ def _deep_merge(into: dict, src: dict) -> None:
             _deep_merge(into[k], v)
         else:
             into[k] = v
+
+
+def parse_set_args(items: list[str]) -> dict:
+    """Parse --set KEY=VALUE list into a nested dict.
+
+    Example:
+        >>> parse_set_args(["llm.model=x", "config.x=5"])
+        {'llm': {'model': 'x'}, 'config': {'x': 5}}
+
+    Raises:
+        ValueError: any item missing '=' or path unsafe.
+    """
+    result: dict = {}
+    for item in items:
+        if "=" not in item:
+            raise ValueError(
+                f"--set {item!r} 缺 '=' 分隔符. 格式: --set path.to.key=value"
+            )
+        path, raw = item.split("=", 1)
+        _validate_path(path)
+        value = _infer_type(raw)
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError(
+                f"--set {item!r} 值为非有限数值 (nan/inf) — JSON 无法持久化"
+            )
+        _deep_set(result, path, value)
+    return result

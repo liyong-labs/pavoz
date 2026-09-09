@@ -91,3 +91,65 @@ class TestDeepMerge:
         into = {"a": {"x": 1, "y": 2}}
         _deep_merge(into, {"a": {"y": 20, "z": 3}})
         assert into == {"a": {"x": 1, "y": 20, "z": 3}}
+
+
+class TestParseSetArgs:
+    def test_single_top_level(self):
+        from pavoz.state import parse_set_args
+        assert parse_set_args(["topic=chickens"]) == {"topic": "chickens"}
+
+    def test_single_nested(self):
+        from pavoz.state import parse_set_args
+        assert parse_set_args(["llm.model=longcat"]) == {
+            "llm": {"model": "longcat"}
+        }
+
+    def test_multiple_merge(self):
+        from pavoz.state import parse_set_args
+        result = parse_set_args([
+            "llm.model=longcat",
+            "llm.temperature=0.7",
+            "config.target_chars=5000",
+        ])
+        assert result == {
+            "llm": {"model": "longcat", "temperature": 0.7},
+            "config": {"target_chars": 5000},
+        }
+
+    def test_type_inference(self):
+        from pavoz.state import parse_set_args
+        assert parse_set_args(["a=42"]) == {"a": 42}
+        assert parse_set_args(["b=3.14"]) == {"b": 3.14}
+        assert parse_set_args(["c=true"]) == {"c": True}
+        assert parse_set_args(["d=null"]) == {"d": None}
+        assert parse_set_args(['e=[1,2,3]']) == {"e": [1, 2, 3]}
+        assert parse_set_args(['f={"k":"v"}']) == {"f": {"k": "v"}}
+
+    def test_missing_equals_rejected(self):
+        from pavoz.state import parse_set_args
+        with pytest.raises(ValueError, match="缺 '='"):
+            parse_set_args(["no_equals_sign"])
+
+    def test_dunder_rejected(self):
+        from pavoz.state import parse_set_args
+        with pytest.raises(ValueError, match="禁词"):
+            parse_set_args(["__proto__.x=1"])
+
+    def test_dunder_mid_path_rejected(self):
+        from pavoz.state import parse_set_args
+        with pytest.raises(ValueError, match="禁词"):
+            parse_set_args(["a.__proto__.b=1"])
+
+    def test_non_finite_nan_rejected(self):
+        from pavoz.state import parse_set_args
+        with pytest.raises(ValueError, match="非有限"):
+            parse_set_args(["x=nan"])
+
+    def test_non_finite_inf_rejected(self):
+        from pavoz.state import parse_set_args
+        with pytest.raises(ValueError, match="非有限"):
+            parse_set_args(["x=inf"])
+
+    def test_empty_list_returns_empty_dict(self):
+        from pavoz.state import parse_set_args
+        assert parse_set_args([]) == {}
