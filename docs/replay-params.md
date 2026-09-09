@@ -149,3 +149,6 @@ No code changes required. To use new features:
 1. `pip install --upgrade pavoz`
 2. Optionally `pip install pavoz[yaml]` (for YAML support)
 3. Optionally replace JSON-string `--overrides` with `--set` / `--set-file`
+
+注意: "嵌套 dict 重置为更少 key" 的用法在 v0.9 不可表达 (兄弟键总被保留;
+仅标量覆盖整个 dict key 才整体替换) — 需要时用标量覆盖, 或先改 stage.

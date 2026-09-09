@@ -5,7 +5,7 @@
     python examples/03_compare_diff.py <task_id> <run_id_1> [<run_id_2> ...]
 
 输出:
-    每对 run 的 state leaf diff (用 _state_diff).
+    每对 run 的 state 顶层 key 对比 (轻量, 不依赖内部 API).
 """
 import sys
 import json

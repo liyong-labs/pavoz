@@ -11,7 +11,15 @@ import copy
 import math
 from typing import Any
 
-__all__ = ["ReadOnlyStateView", "StateConflictError", "merge_state"]
+__all__ = [
+    "ReadOnlyStateView",
+    "StateConflictError",
+    "merge_state",
+    "parse_set_args",
+    "parse_set_file",
+    "merge_overrides",
+    "apply_overrides",
+]
 
 # json.dumps 能处理的类型白名单 (naobao 调研: set/datetime/Path/bytes 全要 raise)
 _JSON_TYPES = (str, int, float, bool, type(None), list, dict)
@@ -309,7 +317,9 @@ def _validate_dict_keys(d: dict, path: str = "") -> None:
     只拒: 非字符串 / 空 key / dunder 禁词. 其余字符 (含 '-') 是合法 dict
     key, 不拒 — 严格逐段校验是 _validate_path 的职责 (dot-path 场景).
     含 '.' 的 key 走 _validate_path (dot-path 语义, apply_overrides 会展开).
-    注意: merge_overrides (Task 4) 复用本函数, 不要在其他任务里重复定义.
+
+    不变量: 本函数是 override key 校验的唯一入口 — parse_set_file /
+    merge_overrides 共用; 新增校验路径时复用本函数, 不要平行实现.
     """
     for k, v in d.items():
         if not isinstance(k, str) or not k:
@@ -326,9 +336,9 @@ def _validate_dict_keys(d: dict, path: str = "") -> None:
             _validate_dict_keys(v, f"{path}.{k}" if path else k)
 
 
-# key 校验复用 Task 3 落地的 _validate_dict_keys (pavoz/state.py) —
-# 语义: 拒 非字符串/空 key/dunder; '-' 等 dict key 合法; 含 '.' 的 key
-# 走 _validate_path. 本任务不得重复定义该函数 (重复 def 会静默覆盖).
+# merge_overrides 的 key 校验复用 _validate_dict_keys (唯一入口) —
+# 拒 非字符串/空 key/dunder; '-' 等 dict key 合法; 含 '.' 的 key 走
+# _validate_path. 不要在此平行实现校验 (重复 def 会静默覆盖).
 
 
 def merge_overrides(*sources: dict | None) -> dict:

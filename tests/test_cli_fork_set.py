@@ -21,7 +21,7 @@ dag = DAG("demo")
 
 @dag.stage()
 async def s_a(ctx):
-    return {"a": 1, "topic": "orig"}
+    return {"a": 1, "topic": "orig", "llm": {"model": "orig", "temperature": 0.5}}
 
 @dag.stage(depends_on=["s_a"])
 async def s_b(ctx):
@@ -91,7 +91,8 @@ async def test_set_top_level(monkeypatch, tmp_path, capsys):
 
 async def test_set_nested(monkeypatch, tmp_path, capsys):
     dag_path = _write_dag(str(tmp_path))
-    monkeypatch.setattr(cli_mod, "DEFAULT_STORAGE", str(tmp_path / "store"))
+    store_dir = str(tmp_path / "store")
+    monkeypatch.setattr(cli_mod, "DEFAULT_STORAGE", store_dir)
     await _run_initial(dag_path, "set2")
     capsys.readouterr()  # 丢掉 run 的 JSON, 只留 fork-run 的输出
     rc = await _cmd_fork_run(
@@ -100,6 +101,11 @@ async def test_set_nested(monkeypatch, tmp_path, capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["overrides_applied"]["llm"]["model"] == "longcat"
     assert out["overrides_applied"]["config"]["x"] == 42
+    # CLI 路径下兄弟键保留 (mirror test_fork_overrides.py 场景):
+    # fork 后新 run 的 final state 里 llm.model 被覆盖, llm.temperature 仍在
+    fork_cp = CheckpointStore(FileStorage(store_dir)).load("set2", out["run_id"])
+    assert fork_cp.state["llm"]["model"] == "longcat"
+    assert fork_cp.state["llm"]["temperature"] == 0.5
 
 
 async def test_set_file_json(monkeypatch, tmp_path, capsys):

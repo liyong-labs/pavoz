@@ -13,7 +13,7 @@ fi
 
 # yaml lazy import — 缺 yaml 时 pavoz 自动报错 + 提示 install
 YAML_SIZE=$(stat -c%s "$YAML_FILE")
-if [ "$YAML_SIZE" -gt 1048576 ]; then
+if [ "$YAML_SIZE" -gt 1000000 ]; then
   echo "YAML file $YAML_SIZE > 1MB, 拒绝"
   exit 1
 fi
