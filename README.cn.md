@@ -9,7 +9,7 @@
 仅标准库, 不绑定任何模型/搜索/存储服务。
 
 ```text
-Python 3.12+  |  MIT License  |  stdlib only  |  111 tests  |  v0.2.0
+Python 3.12+  |  MIT License  |  stdlib only  |  180 tests  |  v0.3.0-rc1
 ```
 
 pavoz 解决的是流程编排里最常用的一层: **声明式 DAG + 顺序执行 + 失败重试 +
@@ -181,6 +181,31 @@ pavoz replay pipeline.py --task-id job-1 --stage s_compose
 LLM stage 出错时, 从"当时输入是什么 → 改一句 → 只重跑那个 stage"只需几秒,
 而不是重跑整条 30 分钟管线。
 
+## 声明式参数覆盖 (v0.3.0 新)
+
+fork 重跑不再需要手改 JSON — 点分路径 + 类型自动推断 + 对比原 run 的 state diff,
+一行命令:
+
+```bash
+# 切某 stage 的 writer 模型并重跑 — 前序 stage 复用
+pavoz fork-run pipeline.py --task-id job-1 --stage s_compose \
+  --set llm.model=longcat --set config.target_chars=8000 \
+  --compare-with <original_run_id>
+
+# 只看 override 会应用成什么样 (不执行):
+pavoz fork-run pipeline.py --task-id job-1 --stage s_compose --set llm.model=x --dry-run
+```
+
+- `--set KEY=VALUE` — 可重复点分覆盖 (`42`→int / `0.7`→float / `true`→bool), 深合并 —
+  兄弟键保留, 不再被整体抹掉
+- `--set-file overrides.yaml` — JSON/YAML 批量 (safe_load, 1MB 上限); `pip install pavoz[yaml]`
+- `--compare-with RUN_ID` — fork 完输出对另一 run 的 leaf 级 state diff
+- `--dry-run` — 只解析显示合并结果, 不执行
+
+Library 等价物: `pavoz.state` 的 `parse_set_args` / `parse_set_file` / `merge_overrides` /
+`apply_overrides` (fork_run overrides 深合并 = behavior fix, 顶层标量覆盖行为不变)。
+完整指南: [docs/replay-params.md](docs/replay-params.md) · 可运行示例: [examples/](examples/)。
+
 ## 核心概念
 
 - **DAG**: 静态声明、按拓扑顺序执行的有向无环图
@@ -217,6 +242,7 @@ sub-DAG 嵌套、业务 wrapper 实现 (LLM/Search/Extract adapter)、业务表 
 - **Web UI / 可观测平台** → Temporal / Hatchet / Windmill; pavoz 给 CLI + JSON checkpoint 供你搭
 
 ## 文档
+- [docs/replay-params.md](docs/replay-params.md) — fork-run 声明式参数覆盖完整指南 (--set / --set-file / --compare-with / --dry-run)
 
 | 文档 | 内容 |
 |---|---|

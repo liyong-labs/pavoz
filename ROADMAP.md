@@ -157,11 +157,27 @@ hash mismatch / 依赖未完成 → 明确错误。
 
 ---
 
-## v0.2 之后 (v0.3 候选, 未排期)
+## v0.3.0-rc1: Declarative param override (2026-09-09, 已 ship)
+
+- `fork-run` 4 新 flag: `--set` / `--set-file` / `--compare-with` / `--dry-run`
+  (点分路径 + 类型推断 + state leaf diff; 见 docs/replay-params.md)
+- `pavoz.state` 新 helper: parse_set_args / parse_set_file / merge_overrides /
+  apply_overrides (+ _state_diff 内部)
+- `fork_run` overrides 应用改深合并 (behavior fix — 兄弟键保留;
+  runtime fork_run + Checkpoint._rebuild_state 两处应用点同步)
+- 安全门: dunder 拒绝 / 路径深度 ≤5 / 文件 ≤1MB / yaml.safe_load; CLI rc 契约保留
+- 消费端验收: ai-write composer 3-model A/B 端到端 (llm_calls 实证 override 达路由;
+  详见 liyong-labs/ai_writer docs/handoff/pavoz-pr-v0.9/ACCEPTANCE.md)
+- 0.3.0 正式版: soak ~1 周后 cut; PyPI publish 等 repo 公开
+
+## v0.2 之后 (候选项, 未排期)
+
 
 - 对外发布准备 (PyPI publish 流程, 若走开源分发)
 - "pipeline 留 plain code / 动态留业务循环" 的差异化叙事正式化 (docs)
 - 真实第二 use case (验证通用性)
+- fork override 压过 stage 重产出 key 的语义 (当前 StateConflictError —
+  override 语义 = 注入执行前输入; 有真实使用诉求再议, 见 replay-params.md footgun 段)
 
 ## 不做 (YAGNI 延续)
 

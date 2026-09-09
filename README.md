@@ -14,7 +14,7 @@
 No server. No scheduler. No YAML. No vendor lock-in. Define a DAG with `@dag.stage`, run it in your own process, and get per-stage **checkpoints**, **resume**, **replay**, and **time-travel forks** for free.
 
 ```text
-Python 3.12+  |  MIT License  |  stdlib only  |  111 tests  |  v0.2.0
+Python 3.12+  |  MIT License  |  stdlib only  |  180 tests  |  v0.3.0-rc1
 ```
 
 ## Why another workflow engine?
@@ -118,6 +118,27 @@ pavoz replay pipeline.py --task-id job-1 --stage s_compose     # rerun one stage
 ```
 
 Each fork gets a new `run_id` and becomes the task's latest run; the original checkpoint stays intact — multiple forks of the same history coexist. If your LLM stage misbehaves, you're seconds away from *"what did it see → change one sentence → re-run just that stage"* instead of a 30-minute pipeline rerun.
+
+## Declarative param override (new in v0.3.0)
+
+Fork-and-rerun used to mean hand-editing JSON. Now the fork input is a one-liner — point paths, automatic type inference, and a state diff against the original run:
+
+```bash
+# Switch the writer model of one stage and rerun it — upstream stages are reused.
+pavoz fork-run pipeline.py --task-id job-1 --stage s_compose \
+  --set llm.model=longcat --set config.target_chars=8000 \
+  --compare-with <original_run_id>
+
+# Preview what the override would apply (no execution):
+pavoz fork-run pipeline.py --task-id job-1 --stage s_compose --set llm.model=x --dry-run
+```
+
+- `--set KEY=VALUE` — repeatable dot-path overrides (`42` → int, `0.7` → float, `true` → bool), deep-merged: sibling keys are preserved instead of wiped
+- `--set-file overrides.yaml` — bulk JSON/YAML (safe_load, 1 MB cap); `pip install pavoz[yaml]`
+- `--compare-with RUN_ID` — leaf-level state diff against another run, printed after the fork
+- `--dry-run` — parse and show the merged overrides without executing
+
+Library equivalent: `parse_set_args` / `parse_set_file` / `merge_overrides` / `apply_overrides` in `pavoz.state`. Full guide: [docs/replay-params.md](docs/replay-params.md) · runnable scripts in [examples/](examples/).
 
 ## When to use pavoz — and when not
 
