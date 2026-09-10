@@ -201,6 +201,14 @@ async def _cmd_export_input(args) -> int:
     return 0
 
 
+async def _cmd_prune(args) -> int:
+    """修剪 task 的旧 run checkpoint (R1). 格式归引擎 — 消费者自删会踩 latest 指针."""
+    store = CheckpointStore(_storage(args.task_id))
+    rep = store.prune(args.task_id, keep_last=args.keep_last, dry_run=args.dry_run)
+    print(json.dumps(rep, ensure_ascii=False, indent=2))
+    return 0
+
+
 async def _cmd_fork_run(args) -> int:
     """fork-run: 装回 state → 从 stage 分支续跑.
 
@@ -341,6 +349,15 @@ def main(argv: list[str] | None = None) -> int:
     p_fork.add_argument("--dry-run", action="store_true", default=False,
                         help="仅解析 + 显示 overrides, 不执行 stage")
     p_fork.set_defaults(fn=_cmd_fork_run)
+
+    p_prune = sub.add_parser(
+        "prune", help="按保留数修剪 task 的旧 run checkpoint (保护 latest 指针指向的 run)")
+    p_prune.add_argument("--task-id", required=True)
+    p_prune.add_argument("--keep-last", type=int, default=3,
+                         help="保留最近 N 个 run (按 stage 最后活动时间排序; latest 指针的 run 无条件保留)")
+    p_prune.add_argument("--dry-run", action="store_true", default=False,
+                         help="只列出将删 run 与近似可释放字节, 不删除")
+    p_prune.set_defaults(fn=_cmd_prune)
 
     args = parser.parse_args(argv)
     return asyncio.run(args.fn(args))

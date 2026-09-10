@@ -95,6 +95,29 @@ class Ctx:
     logger: logging.Logger = field(default_factory=lambda: logger)
     deadline: float | None = None  # absolute deadline (time.time()), 无 = 不限制
     cancel_check: Callable[[], bool] | None = None  # v0.9: bound 到本 task 的取消检查
+    on_event: Callable[[str, dict], None] | None = None  # R3: 进度心跳出口 (Runtime._emit)
+    _last_progress: float | None = field(
+        default=None, repr=False, compare=False)  # R3: 同 fraction 去抖
+
+    def set_progress(self, fraction: float, note: str | None = None) -> None:
+        """Stage 内可选进度心跳 (R3, 2026-09-10 ai-research PR).
+
+        长 stage (分钟级 LLM 调用) 期间 "在算还是卡死" 的观测信号. 语义:
+        - **best-effort 瞬态信号**: 只进 on_event 事件流 (stage_progress),
+          **不写 checkpoint**, 不影响 deadline / 重试 / 取消语义, 无顺序送达保证.
+        - 同 fraction 去抖 (引擎内, 一次比较); 未启用事件 (on_event=None) 时 no-op.
+        - fraction 约定 0.0~1.0; note 自由文本 (如 "batch 3/10").
+        """
+        if self.on_event is None:
+            return
+        if self._last_progress is not None and fraction == self._last_progress:
+            return
+        self._last_progress = fraction
+        self.on_event("stage_progress", {
+            "task_id": self.task_id, "run_id": self.run_id,
+            "stage": self.stage_name, "attempt": self.attempt,
+            "fraction": fraction, "note": note,
+        })
 
     async def call(self, kind: str, op: str, params: dict | None = None) -> dict:
         """Outbound call entry point. `kind` is opaque (caller-defined: 'llm', 'search', 'http', ...).
@@ -280,7 +303,7 @@ class Runtime:
                 )
 
             _st0 = time.time()
-            status, new_state, err, producers, delta = await self._run_stage(
+            status, new_state, err, err_class, producers, delta = await self._run_stage(
                 dag, stage.fn, name, task_id, run_id, state, stage.retries,
                 stage_deadline, producers,
             )
@@ -293,6 +316,7 @@ class Runtime:
             if status == "cancelled":
                 result.status = "cancelled"
                 result.error = err
+                result.error_class = err_class
                 result.stage_statuses[name] = "cancelled"
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": "cancelled"})
@@ -305,6 +329,7 @@ class Runtime:
             if status == "failed":
                 result.status = "failed"
                 result.error = err
+                result.error_class = err_class
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas, initial_state_saved, stage_ts,
                               _fork_overrides)
@@ -408,7 +433,7 @@ class Runtime:
                 else run_deadline
             )
 
-        status, new_state, err, _producers, _delta = await self._run_stage(
+        status, new_state, err, err_class, _producers, _delta = await self._run_stage(
             dag, stage.fn, stage_name, task_id, run_id, state, stage.retries,
             stage_deadline, producers, emit=False,
         )
@@ -417,9 +442,11 @@ class Runtime:
         if status == "failed":
             result.status = "failed"
             result.error = err
+            result.error_class = err_class
         elif status == "cancelled":
             result.status = "cancelled"
             result.error = err
+            result.error_class = err_class
         else:
             result.status = "done"
         return result
@@ -537,8 +564,11 @@ class Runtime:
         stage_deadline: float | None,
         producers: dict[str, str],
         emit: bool = True,
-    ) -> tuple[str, dict, str | None, dict, dict | None]:
-        """跑一个 stage (含 retry). 返 (status, new_state, error, producers, delta).
+    ) -> tuple[str, dict, str | None, str | None, dict, dict | None]:
+        """跑一个 stage (含 retry). 返 (status, new_state, error, error_class, producers, delta).
+
+        error_class = 原始异常类名 (R2): 未知异常保真 (业务 PipelineError ≠ 引擎
+        FatalError, 消费者分诊用); StageError/FatalError → 自身类名; cancelled → None.
 
         delta = stage 的 return dict (成功, 可能 {}), 失败 = None.
         ctx.attempt = 1-based 当前尝试次数, RetryableError 重试时 +1.
@@ -556,7 +586,7 @@ class Runtime:
                                              "status": "cancelled",
                                              "duration": time.time() - _t0,
                                              "error": "cancelled by caller"})
-                return "cancelled", state, "stage 已取消 (cancelled by caller)", producers, None
+                return "cancelled", state, "stage 已取消 (cancelled by caller)", None, producers, None
             attempt += 1
             if emit:
                 self._emit("stage_start", {"task_id": task_id, "run_id": run_id,
@@ -573,6 +603,7 @@ class Runtime:
                     caller=self.caller or _noop_caller,
                     deadline=stage_deadline,
                     cancel_check=(lambda: self._is_cancelled(task_id)) if self.cancel_check else None,
+                    on_event=(self._emit if emit else None),
                 )
                 delta = await self._with_timeout(fn, None, ctx, stage_deadline, name, task_id)
                 if delta is None:
@@ -595,7 +626,7 @@ class Runtime:
                     self._emit("stage_end", {"task_id": task_id, "run_id": run_id, "stage": name,
                                              "attempt": attempt, "status": "done",
                                              "duration": time.time() - _t0, "error": None})
-                return "done", new_state, None, producers, delta
+                return "done", new_state, None, None, producers, delta
 
             except (StageError, FatalError) as e:
                 # 业务错误 / 程序 bug: 不重试
@@ -607,7 +638,7 @@ class Runtime:
                     self._emit("stage_end", {"task_id": task_id, "run_id": run_id, "stage": name,
                                              "attempt": attempt, "status": "failed",
                                              "duration": time.time() - _t0, "error": str(e)})
-                return "failed", state, str(e), producers, None
+                return "failed", state, str(e), type(e).__name__, producers, None
             except (RetryableError, TimeoutError) as e:
                 if attempt <= retries:
                     # v0.9: full jitter (AWS 惯例) — 多 task 同步重试防雷群
@@ -631,14 +662,14 @@ class Runtime:
                     self._emit("stage_end", {"task_id": task_id, "run_id": run_id, "stage": name,
                                              "attempt": attempt, "status": "failed",
                                              "duration": time.time() - _t0, "error": str(e)})
-                return "failed", state, str(e), producers, None
+                return "failed", state, str(e), type(e).__name__, producers, None
             except Exception as e:  # 未知异常 → FatalError 语义
                 logger.exception("task=%s run=%s stage=%s 未预期异常", task_id, run_id[:8], name)
                 if emit:
                     self._emit("stage_end", {"task_id": task_id, "run_id": run_id, "stage": name,
                                              "attempt": attempt, "status": "failed",
                                              "duration": time.time() - _t0, "error": str(e)})
-                return "failed", state, f"FatalError: {e}", producers, None
+                return "failed", state, f"FatalError: {e}", type(e).__name__, producers, None
 
     # ── timeout wrapper ─────────────────────────────────
     async def _with_timeout(self, fn, _req_unused, ctx, deadline, name, task_id):

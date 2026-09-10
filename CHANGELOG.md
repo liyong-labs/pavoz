@@ -2,6 +2,25 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Added (consumer PR: ai-research R1/R2/R3 — 2026-09-10, 见 docs/design/pr-reply-ai-research-2026-09-10.md)
+
+- **R2 `RunResult.error_class`**: 原始异常类名 (失败时保留, cancelled/done 为 None)。
+  未知业务异常 (如 PipelineError) 保真原始类名; `error` 字符串格式不变 (API 冻结)。
+  用途: 错误分诊 (业务失败→调参重跑 vs 代码 bug→找人)。
+- **R1 `CheckpointStore.prune(task_id, *, keep_last, dry_run)` + `pavoz prune` CLI**:
+  按保留数修剪旧 run checkpoint。排序 = max(stage_ts); **latest 指针指向的 run
+  无条件保留**; `--dry-run` 列将删 run + 近似字节。不做 max_runs_per_task 自动修剪
+  (v0.4 adapters REVERSED 先例: 不替客户决定保留策略)。
+- **R3 `Ctx.set_progress(fraction, note=None)`**: stage 内进度心跳 → `stage_progress`
+  生命周期事件 (第 5 种)。best-effort 瞬态信号: 不落 checkpoint, 不碰 deadline/重试,
+  同 fraction 引擎内去抖, 未启用 on_event 时 no-op。
+
+### 2026-09-10 之前 (已在 0.3.0-rc1 tag 之后, 未入版本)
+
+- ai-write 需求 PR (530f4c2): CLI storage 解耦 `PAVOZ_STORAGE_SPEC` + fork-run `--dry-run` 预演。
+
 ## [0.3.0-rc1] — 2026-09-09
 
 ### Added (fork-run 通用 param override — Declarative stage-level debug)

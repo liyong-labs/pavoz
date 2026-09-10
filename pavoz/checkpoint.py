@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -263,6 +264,59 @@ class CheckpointStore:
         读到已删 run → 返 None → caller 收到明确 "无 checkpoint".
         """
         self.storage.delete(self._key(task_id, run_id))
+
+    def prune(self, task_id: str, *, keep_last: int, dry_run: bool = False) -> dict:
+        """按保留数修剪旧 run 的 checkpoint (R1, 2026-09-10 ai-research PR).
+
+        语义:
+        - 排序 = max(stage_ts) (run 最后活动时间, v0.7 epoch); 无 stage_ts 的 run
+          视为最旧. 最新 keep_last 个保留; **latest 指针指向的 run 无条件保留**
+          (resume/fork 基线), 指针文件本身不动.
+        - 被删 run 的后续行为 = 既有边界: load(task, rid)→None, load_latest 在
+          指针指向被删 run 时→None (本实现不会让指针悬空), fork-run 报
+          "无 checkpoint, 不能 fork".
+        - 删除以 key 为粒度 (StorageBackend.delete), 跨 task 不触碰.
+        - approx_bytes = 重新序列化 JSON 的字节数 (近似值, dry-run 预估用).
+- FileStorage 只删 key 文件, 可能残留空目录 (0 字节, 无碍).
+
+        不做: max_runs_per_task 自动修剪 (引擎不替客户决定保留策略,
+        v0.4 storage adapters REVERSED 同一先例); 跨 task GC / 引用计数.
+        """
+        if keep_last < 0:
+            raise ValueError(f"keep_last 必须 >= 0, got {keep_last}")
+        run_ids = self.list_runs(task_id)
+        latest_d = self.storage.get(self._latest_key(task_id))
+        latest_run = (latest_d or {}).get("run_id")
+
+        def _mtime(rid: str) -> tuple[float, str]:
+            cp = self.load(task_id, rid)
+            ts = max(cp.stage_ts.values()) if cp and cp.stage_ts else 0.0
+            return (ts, rid)
+
+        ordered = sorted(run_ids, key=_mtime)  # 旧 → 新
+        keep = set(ordered[-keep_last:]) if keep_last > 0 else set()
+        if latest_run:
+            keep.add(latest_run)
+        victims = [r for r in ordered if r not in keep]
+
+        deleted: list[dict] = []
+        freed = 0
+        for rid in victims:
+            raw = self.storage.get(self._key(task_id, rid))
+            size = len(json.dumps(raw).encode("utf-8")) if raw else 0
+            if not dry_run:
+                self.delete(task_id, rid)
+            deleted.append({"run_id": rid, "approx_bytes": size})
+            freed += size
+        kept = [r for r in ordered if r in keep]
+        return {
+            "task_id": task_id,
+            "dry_run": dry_run,
+            "protected_latest": latest_run,
+            "kept": kept,
+            "deleted": deleted,
+            "approx_bytes_freed": freed,
+        }
 
     def load_compatible(self, task_id: str, run_id: str, dag: DAG) -> Checkpoint | None:
         """加载 + 校验 workflow hash. mismatch → CheckpointMismatchError.

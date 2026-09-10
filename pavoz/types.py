@@ -38,11 +38,15 @@ class RunResult:
             appear with ~0 duration
         status: "running" | "done" | "failed" | "cancelled"
         error: error message if status in ("failed", "cancelled")
+        error_class: 原始异常类名 (如 "ValueError" / 业务 PipelineError), 失败时保留 —
+            诊断元数据 (消费者据此分派告警: 业务失败→调参重跑, 代码 bug→找人), 类名
+            可随重构变化, 不作跨版本稳定契约. cancelled → None; done → None.
+            (R2, 2026-09-10 ai-research PR: 引擎吞异常不能连类型一起吞.)
     """
 
     __slots__ = (
-        "dag_name", "error", "run_id", "stage_statuses", "stage_timings",
-        "state", "status", "task_id",
+        "dag_name", "error", "error_class", "run_id", "stage_statuses",
+        "stage_timings", "state", "status", "task_id",
     )
 
     def __init__(self, task_id: str, dag_name: str, run_id: str = ""):
@@ -54,6 +58,7 @@ class RunResult:
         self.stage_timings: dict[str, float] = {}  # stage → 墙钟秒 (含 retry 退避)
         self.status: str = "running"
         self.error: str | None = None
+        self.error_class: str | None = None
 
     def __repr__(self) -> str:
         short = self.run_id[:8] if self.run_id else "?"
