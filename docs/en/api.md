@@ -208,7 +208,7 @@ cp_store = CheckpointStore(storage)
   for 5 failure modes: format error / module not installed / wrong class name /
   wrong kwargs / non-`StorageBackend` instance.
 
-Full reference + ai_writer compatibility + adapter recipe: [docs/storage.md](storage.md).
+Full reference + storage interop contract + adapter recipe: [docs/storage.md](storage.md).
 
 ## `TestPipe`
 

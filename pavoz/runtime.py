@@ -51,7 +51,7 @@ __all__ = ["CallMeta", "CallResult", "Ctx", "Runtime"]
 
 
 async def _noop_caller(kind: str, op: str, params: dict, meta: CallMeta) -> dict:
-    """默认 caller: no-op echo. 真调用由业务注入 (ai_writer adapter / TestPipe mock).
+    """默认 caller: no-op echo. 真调用由业务注入 (业务 adapter / TestPipe mock).
 
     必须是 async — Ctx.call 恒 await caller (sync fn 会被 await 崩 TypeError).
     """

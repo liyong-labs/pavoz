@@ -199,7 +199,7 @@ cp_store = CheckpointStore(storage)
 - 失败抛 `PavozStorageError` (`ImportError` 子类), 5 类错误信息友好:
   格式错 / 模块未装 / class 名错 / kwargs 错 / 非 `StorageBackend` 实例。
 
-完整参考 + ai_writer 互操作 + adapter 写法: [docs/storage.md](../storage.md).
+完整参考 + 存储互操作契约 + adapter 写法: [docs/storage.md](../storage.md).
 
 ## TestPipe
 

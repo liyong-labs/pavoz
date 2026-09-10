@@ -1,7 +1,7 @@
 """Storage loader: 按 'pkg.module:Class' 字符串加载 StorageBackend 实现.
 
 core 不带任何 driver — 用户自己 `pip install` 自己要的依赖 (psycopg / redis /
-boto3 / etc.) + 自己写 adapter 或抄 ai_writer 的 `backend.integration.sf_storage`.
+boto3 / etc.).
 本模块只做 importlib + 友好错误, stdlib only.
 """
 

@@ -1,7 +1,7 @@
 """Storage backend Protocol + file 实现.
 
 core 零依赖 (不 import psycopg/redis/minio). v1 默认 file backend (本地测试/单机).
-ai_writer 接入时实现自己的 backend (DB/MinIO) 注入.
+接入方实现自己的 backend (DB/MinIO) 注入.
 
 接口只 3 个方法 — checkpoint 持久化 + trace 数据够用.
 """

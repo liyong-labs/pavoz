@@ -47,7 +47,7 @@ class Checkpoint:
 
     v0.8 (2026-09-06, user: 发布前向前看, 旧数据记录可弃): **state 不落盘** —
     全量 state 是 stage_deltas + initial_state 的确定性函数 (_rebuild_state),
-    双份落盘 = 2x 体积 (ai_writer 真实 cp 2.8MB, state 冗余 ~1.4MB). 序列化层
+    双份落盘 = 2x 体积 (真实业务 cp 2.8MB 量级, state 冗余约占一半). 序列化层
     只存增量 + 元数据; state 变 property (load 后惰性重建).
     """
 

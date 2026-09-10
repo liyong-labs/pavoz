@@ -5,7 +5,7 @@
 **进程内的 Python 工作流引擎 — 零运行时依赖, 每次运行都可 checkpoint、replay、fork。**
 
 无服务端 / 无调度器 / 无 YAML / 无厂商锁定。用 `@dag.stage` 声明 DAG, 在自己的进程里跑,
-白拿按 stage 的**断点续跑**、**单节点重放**与**时间旅行 fork**(任意历史节点取输入 → 改 → 装回)。
+即可获得按 stage 的**断点续跑**、**单节点重放**与**时间旅行 fork**(任意历史节点取输入 → 改 → 装回)。
 仅标准库, 不绑定任何模型/搜索/存储服务。
 
 ```text
@@ -77,8 +77,8 @@ cd pavoz && pip install -e ".[dev]"
 ## 存储后端 (配置驱动)
 
 core 不带任何 storage driver — 用户自己 `pip install` 自己要的依赖
-(psycopg / redis / boto3 / ...), 自己写 adapter (或抄 ai_writer 既有
-`backend/integration/sf_storage.py`), 通过 config 字符串 + `load_storage()` 加载.
+(psycopg / redis / boto3 / ...), 自己写一个 4 方法 adapter (约 5-10 行,
+见 [docs/storage.md](docs/storage.md)), 通过 config 字符串 + `load_storage()` 加载.
 
 ```python
 from pavoz import load_storage, CheckpointStore

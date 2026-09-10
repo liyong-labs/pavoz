@@ -183,7 +183,7 @@ DBOS pioneered "lightweight durable workflows" and its `fork_workflow(id, step)`
   `fork_run` to branch from a historical stage with edited inputs.
 - **One process, one run at a time**: pavoz is an in-process engine with no
   built-in queue, scheduler, or multi-worker coordination. Lease/heartbeat on the
-  task row is your integration's job (see the ai_writer reference integration).
+  task row is your integration's job (see the [reference integration](docs/en/use-cases/ai-writer.md)).
 
 ## Use cases
 

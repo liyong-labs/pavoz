@@ -78,24 +78,19 @@ PavozStorageError: storage 'builtins:int' 实例不是 StorageBackend (类型 in
 `PavozStorageError` 是 `ImportError` 的子类 — 现有 `except ImportError`
 的代码路径不会吞, 但语义更精确。
 
-## ai_writer 互操作 (2026-09-05 底线)
+## 与既有存储代码互操作
 
-ai_writer 项目已有 [`backend/integration/sf_storage.py`](../../../claude/backend/integration/sf_storage.py),
-实现了 `MinioStorage(StorageBackend)`, 直接可加载:
+项目里已有一套对象存储封装 (MinIO / S3 / DB) 想直接当 pavoz 的 storage 用?
+两种路径, 都不改业务代码:
 
-```python
-from pavoz import load_storage, CheckpointStore
+1. **包一层 adapter** (推荐): 写一个 `StorageBackend` 子类, 4 个方法各自转发到
+  既有封装 (5-10 行), 用 `load_storage("你的 dotted path")` 加载;
+2. **直接加载既有类**: 只要那个类实现了 put / get / list_keys / delete 四方法
+   (duck typing 即可, 不必继承), `load_storage` 同样能加载。
 
-storage = load_storage(
-    "backend.integration.sf_storage.MinioStorage",
-    task_id="abc-123",
-)
-# storage.put/get/list_keys/delete 直接用, 行为对齐 sf_storage 原 API
-```
-
-ai_writer 的 `MinioStorage` 内部用 `research_trace._put_json/_get_json/_list_dir`
-(已带 bucket 配置 + 错误容错), `delete` 容忍 `NoSuchKey` — pavoz `CheckpointStore`
-可直接用它, 不需改业务代码。
+行为契约: `get` 对不存在的 key 返回 `None`; `delete` 对不存在的 key 不抛错
+(幂等); `list_keys(prefix)` 返回字典序全量 key。满足这三条, checkpoint /
+trace / prune / fork 全部正常工作。
 
 ## 用户写 adapter (5-10 行)
 
