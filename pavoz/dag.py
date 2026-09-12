@@ -4,10 +4,10 @@
     dag = DAG("research_pipeline")
 
     @dag.stage()
-    async def s_plan(req, ctx): ...
+    async def s_plan(ctx): ...
 
     @dag.stage(depends_on=["s_plan"], retries=2, timeout=600)
-    async def s_search(req, ctx): ...
+    async def s_search(ctx): ...
 
 DAG 是静态的: 定义一次, parse 一次. 不支持运行时改图 (v1 YAGNI).
 """
@@ -62,7 +62,7 @@ class DAG:
         retries: int = 0,
         timeout: float | None = None,
     ) -> Callable[[NodeFn], NodeFn]:
-        """@dag.stage() 装饰器. stage fn 签名: async def fn(req, ctx) -> dict."""
+        """@dag.stage() 装饰器. stage fn 签名: async def fn(ctx) -> dict (v1 统一 ctx-only)."""
 
         def _wrap(fn: NodeFn) -> NodeFn:
             if not inspect.iscoroutinefunction(fn):
