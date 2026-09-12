@@ -87,7 +87,7 @@ pavoz state  --task-id job-1 --key count
 | **Regression testing built in** | `TestPipe` mocks any stage's output and runs the whole graph; `TestPipe.replay_from(cp, dag)` feeds a *real run's* saved outputs back as mocks — refactor a stage, prove the graph still converges. |
 | **Storage is pluggable** | Core is stdlib-only. Default `FileStorage` needs nothing; for durable/cross-machine runs implement the 5-method `StorageBackend` (get/put/list/delete) over Postgres, MinIO, Redis, whatever you already run — or load it from a config string with `load_storage()`. |
 | **Cooperative cancellation** | `Runtime(cancel_check=...)` — interception at stage/retry boundaries (status="cancelled"; completed stages stay checkpointed, resume picks up seamlessly); long-running stages poll `ctx.cancelled()` and exit on their own |
-| **Event hooks** | `Runtime(on_event=...)` — five structured lifecycle events: run_start / stage_start / stage_end / stage_retry / run_end (observer exceptions isolated); `RunResult.stage_timings` per-stage wall clock |
+| **Event hooks** | `Runtime(on_event=...)` — structured lifecycle events: run_start / stage_start / stage_end / stage_retry / run_end, plus `stage_progress` via `ctx.set_progress()` for long stages (observer exceptions isolated); `RunResult.stage_timings` per-stage wall clock |
 
 ## Time-travel debugging
 
@@ -190,6 +190,12 @@ DBOS pioneered "lightweight durable workflows" and its `fork_workflow(id, step)`
 - **LLM content pipelines** — search → download → filter → compress → compose → audit → save, with per-stage checkpointing so a failed audit never repeats 40 minutes of upstream work. ([reference integration](docs/en/use-cases/ai-writer.md))
 - **Agent steps with durable state** — long-running multi-step agents where each step's output must survive process restarts.
 - **Any multi-stage Python pipeline** that outgrows a script but doesn't need a platform.
+
+## Extensions
+
+Extensions are plain decorators over stage functions — the framework itself needs no changes. The official pack, [pavoz-extensions](https://github.com/liyong-labs/pavoz-extensions), ships `@gate` (worker → multi-lens review → score → revise loop) and `@schema` (cross-stage contract validation); [`examples/agent_loop.py`](examples/agent_loop.py) walks the pattern end to end. Third parties are welcome to publish their own `pavoz-*` packages — core never depends on them.
+
+Extensions pin a compatible core range (e.g. `pavoz>=0.3,<0.4`); during 0.x, minor releases may contain breaking changes ([details](docs/en/architecture.md#extension-surface-a-stage-function-is-the-extension-point)).
 
 ## Docs & development
 

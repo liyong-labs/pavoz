@@ -6,7 +6,6 @@ stage_progress 不落 checkpoint / 同 fraction 去抖 / 无 on_event no-op.
 from __future__ import annotations
 
 import asyncio
-import json
 
 import pytest
 

@@ -53,6 +53,33 @@ async def s_quality_loop(ctx):
 The framework offers only three capabilities: **DAG (linear graph) + per-node retries + checkpoint**. No `sub_dag`, `retry_budget`, `escalation`, or `watchdog` primitives.
 Reference: the most mature engines (Airflow/Temporal/Prefect) likewise lack cross-stage retry primitives — loops and gates are expressed in workflow code.
 
+#### Extension surface: a stage function *is* the extension point
+
+The framework ships no loop primitives, but it does ship **extension points** — you can build your own mechanisms with decorators and injection, without touching framework source:
+
+| Extension point | Mechanism | Use for |
+|---|---|---|
+| **Stage function** | any `async def(ctx) -> dict`; wrap it before registration | Quality gates (score + redo loop) / contract validation / instrumentation / adaptive timeouts |
+| **Lifecycle events** | `Runtime(on_event=fn)`, `fn(event: str, data: dict)` | Progress reporting / metrics / alerting; observer exceptions are isolated and never affect the run |
+| **Outbound calls** | `ctx.call(kind, op, params)` → injected caller | Route every LLM / HTTP / DB call through one seam — tracing, accounting and replay all hang off it |
+| **Storage** | `StorageBackend` Protocol | Swap where checkpoints land (files / DB / object storage) |
+| **Cancellation** | `Runtime(cancel_check=...)` + `ctx.cancelled()` | Cooperative cancellation; long stages poll and exit on their own |
+
+Lifecycle events:
+
+| Event | When | Key fields |
+|---|---|---|
+| `run_start` / `run_end` | Run boundaries | `task_id` / `run_id` / `status` |
+| `stage_start` / `stage_end` | Every attempt | `task_id` / `run_id` / `stage` / `attempt` / `status` / `duration` |
+| `stage_retry` | After a `RetryableError` schedules a retry | Same as above + `error` |
+| `stage_progress` | Stage calls `ctx.set_progress(fraction, note)` | `fraction` / `note` (best-effort transient signal, **never checkpointed**) |
+
+**Decorator gotcha**: always wrap stage functions with `functools.wraps` — the stage name comes from `fn.__name__`, and dropping it makes every decorated stage collide on the same name.
+
+**Version policy**: third-party extensions declare `pavoz>=0.3,<0.4` (enforced by pip resolution) and run a CI matrix of *(lowest supported × latest)*. During 0.x, minor releases may contain breaking changes (semver permits it); regular semantics return at 1.0.
+
+Reference implementation: [pavoz-extensions](https://github.com/liyong-labs/pavoz-extensions) — `@gate` (worker → multi-lens review → score → redo) and `@schema` (cross-stage contract validation). Two plain decorators, and the template for writing your own `pavoz-*` extension.
+
 ### 2. Stage = `async def(ctx) -> dict`
 
 - Read: `ctx.state` (a `ReadOnlyStateView` — deep copy; writes raise)

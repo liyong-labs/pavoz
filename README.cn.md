@@ -62,7 +62,7 @@ async def s_save(ctx):
 | **Stage 重放** | 从 checkpoint 重放: `Runtime.run_stage` 在重建的输入上重跑单 stage (调 prompt/参数不重跑前序); `TestPipe.replay_from(cp, dag)` 把真实 run 存下的 stage 输出当 mock 喂回去 — 对真实 run 做图回归 |
 | **与业务解耦** | 存储 (`StorageBackend`)、外部调用 (`ctx.call` caller) 全部 Protocol, 业务侧注入 |
 | **协作式取消** | `Runtime(cancel_check=...)` — stage 间/重试间检查点拦截 (status="cancelled", 已完成 stage 照常落 cp, resume 无缝续跑); stage 内长循环 `ctx.cancelled()` 轮询自退出 |
-| **事件钩子** | `Runtime(on_event=...)` — run_start / stage_start / stage_end / stage_retry / run_end 五种结构化事件 (observer 异常隔离); `RunResult.stage_timings` 每 stage 墙钟耗时 |
+| **事件钩子** | `Runtime(on_event=...)` — run_start / stage_start / stage_end / stage_retry / run_end 结构化事件, 长 stage 可用 `ctx.set_progress()` 发 `stage_progress` 心跳 (observer 异常隔离); `RunResult.stage_timings` 每 stage 墙钟耗时 |
 | **零依赖** | core 仅 Python 标准库; 不发散到 psycopg/redis/boto3 等 |
 
 ## 安装
@@ -241,6 +241,12 @@ sub-DAG 嵌套、业务 wrapper 实现 (LLM/Search/Extract adapter)、业务表 
 - **动态图** (运行期改图形状、agent 递归 spawn) → LangGraph / Burr; pavoz 图是静态的,
   动态控制流请写在 stage 内部的普通 Python 里
 - **Web UI / 可观测平台** → Temporal / Hatchet / Windmill; pavoz 给 CLI + JSON checkpoint 供你搭
+
+## 扩展
+
+扩展就是包在 stage 函数外的普通装饰器 —— 框架本身不需要任何改动。官方扩展包 [pavoz-extensions](https://github.com/liyong-labs/pavoz-extensions) 提供 `@gate` (worker → 多 lens 评审 → 评分 → 重做循环) 与 `@schema` (跨 stage 契约校验); [`examples/agent_loop.py`](examples/agent_loop.py) 有端到端的可跑示例。第三方可自由发布自己的 `pavoz-*` 包 —— 核心永不依赖它们。
+
+扩展声明兼容的核心版本区间 (如 `pavoz>=0.3,<0.4`); 0.x 期间 minor 版本可能含破坏性变更 ([详见](docs/cn/architecture.md#扩展面-一个-stage-就是扩展点))。
 
 ## 文档
 - [docs/replay-params.md](docs/replay-params.md) — fork-run 声明式参数覆盖完整指南 (--set / --set-file / --compare-with / --dry-run)

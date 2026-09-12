@@ -22,7 +22,7 @@ jobs:
       - name: Lint (pyflakes)
         run: |
           pip install pyflakes
-          python -m pyflakes pavoz tests
+          python -m pyflakes pavoz tests examples
       - name: Test
         run: |
           python -m pytest tests/ -q

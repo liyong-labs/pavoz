@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+### Changed (扩展面文档 + 示例升级 — 2026-09-13)
+
+- **架构文档新增《扩展面》一节** (`docs/cn/architecture.md` + `docs/en/architecture.md`):
+  五个扩展点 (stage 函数 / 生命周期事件 / `ctx.call` / `StorageBackend` / 取消) + 事件表 +
+  装饰器注意事项 (`functools.wraps`) + 版本策略。**核心 API 无改动。**
+- **`examples/agent_loop.py` 升级**: 保留原内联循环写法, 新增 `quality_gate` 装饰器版本
+  (多 lens 评分 / `min` 聚合 / 阈值 / 分数写 `on_event`), 并加回归测试 (`tests/test_examples_agent_loop.py`)
+  防止示例腐化。
+- **pyflakes 范围加入 `examples/`**; 顺带修掉 `tests/` 中一处未使用 import (存量 lint 失败)。
+- 修正 `pavoz/dag.py` docstring 中过期的 stage 签名 (`async def s_x(req, ctx)` → `async def s_x(ctx)`,
+  实际调用见 `runtime.py` 的 ctx-only 约定)。
+
+### Rejected (2026-09-13 评审决议 — 见 `docs/design/extension-plan-2026-09-13.md`)
+
+- 核心不新增全局 hook 注册表: `Runtime(on_event=...)` 已提供同等观察能力, 且注入式优于进程级全局状态。
+- 核心不新增 `ctx._meta`: `Ctx` 在每次 attempt 重建, 不能承载 run 级记账 (计数会被重试绕过)。
+- 下游质量门 / 契约校验以**独立扩展包**形式提供 (pavoz-extensions), 核心保持零依赖、零改动。
+
 ### Added (consumer PR: ai-research R1/R2/R3 — 2026-09-10, 见 docs/design/pr-reply-ai-research-2026-09-10.md)
 
 - **R2 `RunResult.error_class`**: 原始异常类名 (失败时保留, cancelled/done 为 None)。

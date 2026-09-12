@@ -175,7 +175,10 @@ hash mismatch / 依赖未完成 → 明确错误。
 ## v0.2 之后 (候选项, 未排期)
 
 
-- 对外发布准备 (PyPI publish 流程, 若走开源分发)
+- **扩展生态 (2026-09-13 启动)**: 官方扩展包 `pavoz-extensions` (`@gate` 质量门 / `@schema`
+  契约校验, 纯装饰器, 零核心改动) + 架构文档《扩展面》一节。
+  计划与 11 项决议: `docs/design/extension-plan-2026-09-13.md`; 扩展仓: liyong-labs/pavoz-extensions
+- **对外发布准备**: `0.3.0` 转正 + PyPI Trusted Publishing (发布清单见扩展计划 W2.5)
 - "pipeline 留 plain code / 动态留业务循环" 的差异化叙事正式化 (docs)
 - 真实第二 use case (验证通用性)
 - fork override 压过 stage 重产出 key 的语义 (当前 StateConflictError —

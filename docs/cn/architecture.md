@@ -56,6 +56,33 @@ sub_dag/retry_budget/escalation/watchdog 原语.
 参考: 最成熟引擎 (Airflow/Temporal/Prefect) 都没有 cross-stage retry 原语 —
 循环和 gate 用 workflow 代码表达.
 
+#### 扩展面: 一个 stage 就是扩展点
+
+框架不提供循环原语, 但提供**扩展点** —— 你可以不碰框架源码, 用装饰器/注入实现自己的机制:
+
+| 扩展点 | 机制 | 用途 |
+|---|---|---|
+| **stage 函数** | 任意 `async def(ctx) -> dict`, 注册前先包一层 | 质量门 (评分 + 重做循环) / 契约校验 / 埋点 / 自适应超时 |
+| **生命周期事件** | `Runtime(on_event=fn)`, `fn(event: str, data: dict)` | 进度上报 / 指标采集 / 告警; observer 异常被隔离, 不影响 run |
+| **出站调用** | `ctx.call(kind, op, params)` → caller 注入 | LLM / HTTP / DB 全走同一出口, trace、记账、重放都挂在这里 |
+| **存储** | `StorageBackend` Protocol | 换 checkpoint 落盘位置 (文件 / DB / 对象存储) |
+| **取消** | `Runtime(cancel_check=...)` + `ctx.cancelled()` | 协作式取消, 长 stage 自行轮询退出 |
+
+生命周期事件表:
+
+| 事件 | 时机 | 主要字段 |
+|---|---|---|
+| `run_start` / `run_end` | run 边界 | `task_id` / `run_id` / `status` |
+| `stage_start` / `stage_end` | 每次 attempt | `task_id` / `run_id` / `stage` / `attempt` / `status` / `duration` |
+| `stage_retry` | `RetryableError` 触发重试后 | 同上 + `error` |
+| `stage_progress` | stage 内调 `ctx.set_progress(fraction, note)` | `fraction` / `note` (best-effort 瞬态信号, **不落 checkpoint**) |
+
+**装饰器注意事项**: 包 stage 函数时必须用 `functools.wraps` —— stage 名取自 `fn.__name__`, 丢了它所有被装饰的 stage 会重名。
+
+**版本策略**: 第三方扩展声明 `pavoz>=0.3,<0.4` (pip 解析即强制), CI 跑 "最低支持版本 × 最新版本" 矩阵; 0.x 期间 minor 版本可能包含破坏性变更 (semver 允许), 1.0 之后回归常规语义。
+
+参考实现: [pavoz-extensions](https://github.com/liyong-labs/pavoz-extensions) —— `@gate` (worker → 多 lens 评审 → 评分 → 重做) 与 `@schema` (跨 stage 契约校验), 两个纯装饰器, 也是写你自己的 `pavoz-*` 扩展的模板。
+
 ### 2. Stage = async def(ctx) -> dict
 
 - 读: `ctx.state` (ReadOnlyStateView, 深拷贝, 写会 raise)
