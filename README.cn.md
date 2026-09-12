@@ -9,7 +9,7 @@
 仅标准库, 不绑定任何模型/搜索/存储服务。
 
 ```text
-Python 3.12+  |  MIT License  |  stdlib only  |  180 tests  |  v0.3.0-rc1
+Python 3.12+  |  MIT License  |  stdlib only  |  200+ tests  |  v0.3.0-rc1
 ```
 
 pavoz 解决的是流程编排里最常用的一层: **声明式 DAG + 顺序执行 + 失败重试 +
@@ -266,8 +266,8 @@ sub-DAG 嵌套、业务 wrapper 实现 (LLM/Search/Extract adapter)、业务表 
 ## 测试
 
 ```bash
-pytest            # 111 tests
-ruff check .      # lint
+python -m pytest                          # 全部测试
+python -m pyflakes pavoz tests examples   # lint (CI 同款)
 ```
 
 ## License

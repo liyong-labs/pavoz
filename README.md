@@ -14,7 +14,7 @@
 No server. No scheduler. No YAML. No vendor lock-in. Define a DAG with `@dag.stage`, run it in your own process, and get per-stage **checkpoints**, **resume**, **replay**, and **time-travel forks** for free.
 
 ```text
-Python 3.12+  |  MIT License  |  stdlib only  |  180 tests  |  v0.3.0-rc1
+Python 3.12+  |  MIT License  |  stdlib only  |  200+ tests  |  v0.3.0-rc1
 ```
 
 ## Why another workflow engine?

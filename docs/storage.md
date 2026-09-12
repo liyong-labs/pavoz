@@ -7,7 +7,7 @@ driver (psycopg / redis / boto3 / ...) 由用户自己 `pip install`, adapter �
 自己写 (或 vendor 第三方), pavoz 只提供:
 
 1. **`StorageBackend` Protocol** — adapter 必须实现的 4 个方法 (`put / get /
-   list_keys / delete`), 见 [`pavoz.storage`](../../pavoz/storage.py)。
+   list_keys / delete`), 见 [`pavoz.storage`](../pavoz/storage.py)。
 2. **`FileStorage`** — 内置 stdlib 实现 (本地文件系统), 默认/测试用。
 3. **`load_storage(spec, **kwargs)`** — 按 config 字符串加载任意 `StorageBackend`
    实现, 见下文。

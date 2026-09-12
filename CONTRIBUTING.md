@@ -1,7 +1,7 @@
 # 贡献指南
 
-pavoz 是通用流程编排库 — 贡献前请先读 [`docs/architecture.md`](docs/architecture.md),
-理解三个不变量:
+pavoz 是通用流程编排库 — 贡献前请先读 [`docs/cn/architecture.md`](docs/cn/architecture.md)
+(英文: [`docs/en/architecture.md`](docs/en/architecture.md)), 理解三个不变量:
 
 1. **core 零依赖**: `pavoz/` 不 import 任何第三方库 (stdlib only)。
    存储/外部调用/任务表全部走 Protocol, 由业务侧注入。
@@ -20,14 +20,14 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 ```
 
-## 质量门槛 (PR 前必须全过)
+## 质量门槛 (PR 前必须全过 — 与 CI 同款命令)
 
 ```bash
-ruff check pavoz/ tests/    # lint
-pytest                           # 38+ tests
+python -m pytest                          # 全部测试
+python -m pyflakes pavoz tests examples   # lint
 ```
 
-- 新行为必须有对应测试 (`tests/test_*.py`)
+- 新行为必须有对应测试 (`tests/test_*.py`); 示例 (`examples/`) 有回归测试防腐化
 - 改 merge/checkpoint 语义时, 向后兼容 (旧 checkpoint 能 resume) 是硬要求
 
 ## 提交规范
@@ -38,10 +38,10 @@ pytest                           # 38+ tests
 
 ## 文档
 
-- 公开 API 变更同步 `docs/api.md`
-- 定位/能力边界变更同步 `docs/architecture.md`
+- 公开 API 变更同步 `docs/cn/api.md` + `docs/en/api.md`
+- 定位/能力边界变更同步 `docs/cn/architecture.md` + `docs/en/architecture.md`
 - 新版本条目追加 `CHANGELOG.md`
-- 业务接入示例归 `docs/use-cases/` (参考实现, 不进主文档)
+- 业务接入示例归 `docs/cn/use-cases/` + `docs/en/use-cases/` (参考实现, 不进主文档)
 
 ## Issue / PR
 

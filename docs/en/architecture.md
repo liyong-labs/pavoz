@@ -193,7 +193,7 @@ re-supplying data:
 | `storage.py` | `StorageBackend` Protocol + `FileStorage` (default) |
 | `testing.py` | `TestPipe` (mock stages to run the whole graph; `replay_from(cp, dag)` checkpoint regression, v0.5.1) |
 | `cli.py` | `run` / `trace` / `state` / `replay` (v0.5.1) |
-| `storage_loader.py` | `load_storage(spec, **kwargs)` — config-string driven `StorageBackend` loader (importlib + friendly errors); see [docs/storage.md](storage.md) |
+| `storage_loader.py` | `load_storage(spec, **kwargs)` — config-string driven `StorageBackend` loader (importlib + friendly errors); see [docs/storage.md](../storage.md) |
 
 ## What we don't do (YAGNI)
 
