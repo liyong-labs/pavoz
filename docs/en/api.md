@@ -28,6 +28,8 @@ rt = Runtime(
     checkpoint_store: CheckpointStore | None = None,
     caller: Callable[[str, str, dict, CallMeta], Awaitable[dict]] | None = None,
     default_timeout: float | None = None,   # absolute deadline for the whole run (seconds)
+    on_event: Callable[[str, dict], None] | None = None,   # lifecycle event sink
+    cancel_check: Callable[[str], bool] | None = None,     # task_id → cancelled?
 )
 
 result: RunResult = await rt.run(
@@ -59,6 +61,19 @@ result: RunResult = await rt.run(
   remaining run deadline.
 - On completion the checkpoint is kept (not deleted) — it is the task's latest
   run and the target of future resumes/`load_latest`.
+- `on_event`: lifecycle event sink (`fn(event: str, data: dict)`) — observe only, it
+  never changes execution semantics. Events: `run_start` / `run_end` (`task_id` /
+  `run_id` / `status`), `stage_start` / `stage_end` (`stage` / `attempt` / `status` /
+  `duration`), `stage_retry` (+ `error`), and `stage_progress` (emitted by
+  `ctx.set_progress()` inside a stage — best-effort transient signal, **never
+  checkpointed**). Observer exceptions are isolated (logged and ignored) and never
+  affect the run. This is the **main extension seam** — instrumentation, alerting
+  and metrics all hang off it (see [Architecture · extension surface](architecture.md#extension-surface-a-stage-function-is-the-extension-point))
+- `cancel_check`: cooperative cancellation (`task_id → cancelled?`). The runtime
+  intercepts at stage and retry boundaries (status="cancelled"; stages already
+  completed stay checkpointed, so resume continues); long-running stage bodies poll
+  `ctx.cancelled()` and exit on their own. A checker that raises → treated as
+  "not cancelled" (fail-open)
 
 ### `Runtime.run_stage` (single-stage replay, v0.5.1)
 
@@ -81,6 +96,27 @@ effect in seconds without re-running upstream stages.
   `stage_deltas` → `RuntimeError` (re-run once to produce a fresh checkpoint);
   unknown stage → `KeyError`
 
+### `Runtime.fork_run` (branch a past run, v0.6)
+
+```python
+result: RunResult = await rt.fork_run(
+    dag, task_id, *, from_stage: str, overrides: dict | None = None,
+    run_id: str | None = None,
+)
+```
+
+Upstream stages are reused (never re-run); `from_stage` and everything after it
+re-run against the injected `overrides` — "change one input, re-run only what
+depends on it". The original run's checkpoint is untouched; the fork gets a new
+run_id and becomes the task's latest.
+
+- `overrides`: top-level state-key overrides injected into `from_stage`'s pre-run
+  state (deep merge — sibling keys survive). The CLI `--set` / `--set-file` flags
+  go through this same entry (see [replay-params.md](../replay-params.md))
+- `run_id`: fork onto a specific run_id (defaults to a fresh UUID4)
+- `from_stage` absent from the task's checkpoint record → explicit error, never a
+  silent fresh start
+
 ### `RunResult`
 
 - `task_id`: caller-supplied or auto-generated UUID4
@@ -89,6 +125,12 @@ effect in seconds without re-running upstream stages.
 - `state`: final state
 - `stage_statuses`: each stage's `done`, `failed`, or `cancelled`
 - `error`: failure or cancellation reason (exception converted to string)
+- `error_class`: the original exception's class name on failure (e.g. `ValueError`
+  or a business `PipelineError`) — for triage: business failure → re-run with
+  tweaked parameters, code bug → find the owner. `None` when done/cancelled. Class
+  names may change across refactors; not a cross-version contract
+- `stage_timings`: `{stage: wall-clock seconds}` (includes retry backoff sleeps;
+  executed stages only)
 
 ### Failure semantics (no exception raised; returns `failed`)
 
@@ -109,6 +151,9 @@ ctx.state: ReadOnlyStateView   # read-only deep copy; any write raises
 ctx.deadline: float | None     # absolute deadline for this stage
 
 await ctx.call(kind: str, op: str, params: dict | None = None) -> dict
+ctx.set_progress(fraction: float, note: str | None = None) -> None  # long-stage heartbeat
+ctx.cancelled() -> bool                                            # cooperative-cancel poll
+ctx.on_event: Callable[[str, dict], None] | None                   # this run's event sink
 ```
 
 - `ctx.call` is the **only** entry point for external calls inside a stage. The `kind`/`op`/return-value shape is defined by the business caller — the framework just passes them through. The default caller is a no-op echo (`CallResult(kind=..., op=..., params=...)`)
@@ -117,6 +162,15 @@ await ctx.call(kind: str, op: str, params: dict | None = None) -> dict
   correlate the execution context without extra plumbing. `CallMeta` lives in
   `pavoz.runtime`. Stage functions are unaffected (`async def fn(ctx) -> dict`).
 - `ctx.logger`: `logging.Logger` (with the stage name already injected)
+- `ctx.set_progress(fraction, note=None)`: optional heartbeat for long stages —
+  answers "working or stuck?" during minute-long LLM calls. Best-effort: it only
+  emits a `stage_progress` event on `on_event`, is never checkpointed, and does not
+  affect deadline/retry/cancellation semantics; identical fractions are debounced,
+  and it is a no-op when no `on_event` is configured
+- `ctx.cancelled()`: cooperative-cancellation poll (the loop decides how to exit);
+  a raising `cancel_check` counts as "not cancelled"
+- `ctx.on_event`: the same sink as `Runtime(on_event=...)` — decorator-style
+  extensions (a quality gate, say) emit their own events onto the same stream
 
 ## State
 
@@ -136,6 +190,7 @@ run_ids: list[str] = store.list_runs(task_id)             # what runs exist? (de
 store.delete(task_id, run_id)                             # pointer is NOT updated on delete
 cp: Checkpoint | None = store.load_compatible(task_id, run_id, dag)
 # hash-checked load; run_id="" → load the task's latest run (load_latest sentinel)
+removed: dict = store.prune(task_id, keep_last=5, dry_run=False)   # trim old runs
 ```
 
 - Storage layout: each run is saved at `runs/{task_id}/{run_id}/checkpoint`;
@@ -164,6 +219,12 @@ cp: Checkpoint | None = store.load_compatible(task_id, run_id, dag)
   completed before it). `KeyError` if the stage is not in this run's record.
   Used by `run_stage` so a stage's own earlier output can never pollute its
   replay input.
+- `store.prune(task_id, *, keep_last, dry_run=False)`: trim a task's old checkpoints —
+  keeps the newest `keep_last` runs by last activity (`max(stage_ts)`), deletes the
+  rest at key granularity and returns an approximate freed-byte count. **The run the
+  `latest` pointer names is always kept** and the pointer file itself is untouched
+  (the pointer can never dangle). `dry_run=True` reports without deleting.
+  CLI: `pavoz prune`
 - `workflow_hash(dag)`: sha256 over stage names + dependencies + retries + timeout (function-body changes don't affect the hash)
 - `CheckpointMismatchError`: structure changed on resume → refuse to resume (rerun with `resume=False`, or delete the run's checkpoint)
 
@@ -251,6 +312,22 @@ python -m pavoz replay <dag.py> --task-id X --stage Y [--patch P.py]   # v0.5.1
   `patch(dag) -> None` to swap implementations in before replaying (must be
   sync — async patch is rejected). Output is the result JSON; nothing is
   persisted (no checkpoint written, `latest` pointer untouched)
+
+## Param overrides (library equivalents of `fork-run`)
+
+```python
+parse_set_args(["a.b=1", "c=true"]) -> dict    # --set dotted-path parsing (types inferred)
+parse_set_file("overrides.yaml") -> dict        # --set-file (JSON/YAML, safe_load, 1 MB cap)
+merge_overrides(base: dict, patch: dict) -> dict   # deep merge (sibling keys survive)
+apply_overrides(state: dict, overrides: dict) -> dict
+```
+
+The CLI `pavoz fork-run --set / --set-file` flags go through this same chain, and
+`Runtime.fork_run(overrides=...)` deep-merges identically. Full guide:
+[replay-params.md](../replay-params.md).
+
+`pavoz.__version__`: the current version string (kept in sync with
+`pyproject.toml` / the release tag).
 
 ## Related documents
 

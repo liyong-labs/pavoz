@@ -29,6 +29,8 @@ rt = Runtime(
     checkpoint_store: CheckpointStore | None = None,
     caller: Callable[[str, str, dict, CallMeta], Awaitable[dict]] | None = None,
     default_timeout: float | None = None,   # 整跑 absolute deadline (秒)
+    on_event: Callable[[str, dict], None] | None = None,   # 生命周期事件出口
+    cancel_check: Callable[[str], bool] | None = None,     # task_id → 已取消?
 )
 
 result: RunResult = await rt.run(
@@ -55,6 +57,15 @@ result: RunResult = await rt.run(
   deadline 参数; stage 级 `timeout` 受 run 剩余 deadline 封顶
 - run 完成后 checkpoint **保留** (不删除) — 它是该 task 的最新 run, 是未来
   resume / `load_latest` 的目标
+- `on_event`: 生命周期事件出口 (`fn(event: str, data: dict)`), 只观察不改变执行语义。
+  事件: `run_start` / `run_end` (`task_id` / `run_id` / `status`)、`stage_start` /
+  `stage_end` (`stage` / `attempt` / `status` / `duration`)、`stage_retry` (+ `error`)、
+  `stage_progress` (stage 内 `ctx.set_progress()` 触发, best-effort 瞬态信号, **不落
+  checkpoint**)。observer 抛异常被隔离 (log + 忽略), 不影响 run。
+  这是**扩展面的主入口** — 埋点 / 告警 / 指标都挂这里 (见 [架构 · 扩展面](architecture.md#扩展面-一个-stage-就是扩展点))
+- `cancel_check`: 协作式取消 (`task_id → 已取消?`)。runtime 只在 stage 边界与重试
+  边界拦截 (status="cancelled"; 已完成 stage 照常落 cp, resume 可续); stage 内的长
+  循环自行 `ctx.cancelled()` 轮询退出。检查器抛异常 → 视为未取消 (fail-open)
 
 ### `Runtime.run_stage` (单 stage 重放, v0.5.1)
 
@@ -74,6 +85,24 @@ stage** — 调 prompt/参数秒级看效果, 不重跑前序 stage。
   `CheckpointMismatchError`; pre-M2 (v0.5.0) cp 无 `stage_deltas` →
   `RuntimeError` (重跑一次生成新 cp); stage 不存在 → `KeyError`
 
+### `Runtime.fork_run` (从历史 run 分支续跑, v0.6)
+
+```python
+result: RunResult = await rt.fork_run(
+    dag, task_id, *, from_stage: str, overrides: dict | None = None,
+    run_id: str | None = None,
+)
+```
+
+前序 stage 复用 (不重跑), `from_stage` 及其后继用注入的 `overrides` 重跑 —
+"改一个输入, 只重跑下游"。原 run 的 checkpoint 不动; fork 产生新 run_id 并成为该
+task 的 latest。
+
+- `overrides`: 顶层 state key 覆盖, 注入 `from_stage` 的执行前 state (深合并 —
+  兄弟键保留)。CLI 的 `--set` / `--set-file` 走同一入口 (见 [replay-params.md](../replay-params.md))
+- `run_id`: 指定则在给定 run_id 上 fork (默认新 UUID4)
+- `from_stage` 不在该 task 的 checkpoint 记录里 → 明确报错, 不静默新建
+
 ### RunResult
 
 - `task_id`: caller 提供或自动生成 UUID4
@@ -82,6 +111,10 @@ stage** — 调 prompt/参数秒级看效果, 不重跑前序 stage。
 - `state`: 最终 state
 - `stage_statuses`: 每 stage 的 `done | failed | cancelled`
 - `error`: failed/cancelled 原因 (异常转字符串)
+- `error_class`: 失败时的原始异常类名 (如 `ValueError` / 业务 `PipelineError`),
+  用于分诊 — 业务失败→调参重跑, 代码 bug→找人。done / cancelled 为 `None`。
+  类名可随重构变化, 不作跨版本契约
+- `stage_timings`: `{stage: 墙钟秒}` (含 retry 退避 sleep; 只含已执行的 stage)
 
 ### 失败语义 (不抛异常, 返回 failed)
 
@@ -102,6 +135,9 @@ ctx.state: ReadOnlyStateView   # 只读深拷贝; 写任何属性 raise
 ctx.deadline: float | None     # 本 stage absolute deadline
 
 await ctx.call(kind: str, op: str, params: dict | None = None) -> dict
+ctx.set_progress(fraction: float, note: str | None = None) -> None  # 长 stage 心跳
+ctx.cancelled() -> bool                                            # 协作式取消轮询
+ctx.on_event: Callable[[str, dict], None] | None                   # 本 run 的事件出口
 ```
 
 - `ctx.call` 是 stage 内**唯一**外部调用入口。`kind`/`op`/返回值结构由业务
@@ -112,6 +148,14 @@ await ctx.call(kind: str, op: str, params: dict | None = None) -> dict
   `CallMeta` 在 `pavoz.runtime`。stage 函数签名不受影响
   (`async def fn(ctx) -> dict`)
 - `ctx.logger`: logging.Logger (stage 名已注入)
+- `ctx.set_progress(fraction, note=None)`: 长 stage 的可选心跳 — 分钟级 LLM 调用
+  期间回答"在算还是卡死"。best-effort: 只进 `on_event` 的 `stage_progress` 事件,
+  不落 checkpoint, 不影响 deadline / 重试 / 取消语义; 同 fraction 自动去抖, 未启用
+  `on_event` 时是 no-op
+- `ctx.cancelled()`: 协作式取消轮询 (长循环自行决定退出方式); `cancel_check`
+  抛异常 → 视为未取消
+- `ctx.on_event`: 与 `Runtime(on_event=...)` 同一个出口 — 装饰器类扩展
+  (如质量门) 用它发自定义事件, 与运行时事件共用一个流
 
 ## State
 
@@ -133,6 +177,7 @@ run_ids: list[str] = store.list_runs(task_id)             # 有哪些 run? (调�
 store.delete(task_id, run_id)                             # 指针不随删除更新
 cp: Checkpoint | None = store.load_compatible(task_id, run_id, dag)
 # hash 校验加载; run_id="" → 该 task 最新 run (load_latest 哨兵)
+removed: dict = store.prune(task_id, keep_last=5, dry_run=False)  # 修剪旧 run
 ```
 
 - 存储布局: 每次 run 存 `runs/{task_id}/{run_id}/checkpoint`; 每次 `save()`
@@ -155,6 +200,10 @@ cp: Checkpoint | None = store.load_compatible(task_id, run_id, dag)
   (`initial_state` + 它之前已完成 stage 的 deltas)。stage 不在本次 run 的
   记录里 → `KeyError`。`run_stage` 用它 — 保证 stage 自己的旧输出不会污染
   重放输入
+- `store.prune(task_id, *, keep_last, dry_run=False)`: 修剪旧 run 的 checkpoint —
+  按"最后活动时间" (`max(stage_ts)`) 保留最新 `keep_last` 个, 其余删除 (key 级
+  `delete` + 返回释放字节数近似值)。**latest 指针指向的 run 无条件保留**, 指针
+  文件本身不动 (不会让指针悬空)。`dry_run=True` 只算不删。CLI: `pavoz prune`
 - `workflow_hash(dag)`: stage 名+依赖+retries+timeout 的 sha256 指纹
   (改函数体不影响 hash)
 - `CheckpointMismatchError`: resume 时结构变了 → 拒续跑 (`resume=False`
@@ -238,6 +287,20 @@ python -m pavoz replay <dag.py> --task-id X --stage Y [--patch P.py]   # v0.5.1
 - `replay`: 在重建的输入上重放单 stage (见 `Runtime.run_stage`); 可选
   `--patch P.py` 加载暴露 `patch(dag) -> None` 的模块先换实现 (必须 sync —
   async patch 拒绝)。输出 result JSON; 不落任何盘 (不写 cp, 不动 latest 指针)
+
+## 参数覆盖 (fork-run 的库等价物)
+
+```python
+parse_set_args(["a.b=1", "c=true"]) -> dict    # --set 的点分路径解析 (类型自动推断)
+parse_set_file("overrides.yaml") -> dict        # --set-file (JSON/YAML, safe_load, 1MB 上限)
+merge_overrides(base: dict, patch: dict) -> dict   # 深合并 (兄弟键保留)
+apply_overrides(state: dict, overrides: dict) -> dict
+```
+
+CLI `pavoz fork-run --set / --set-file` 走的就是这条链;`Runtime.fork_run(overrides=...)`
+的内部深合并语义与之相同。完整指南: [replay-params.md](../replay-params.md)。
+
+`pavoz.__version__`: 当前版本字符串 (与 `pyproject.toml` / release tag 同步)。
 
 ## 相关文档
 
