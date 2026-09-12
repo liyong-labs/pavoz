@@ -86,7 +86,7 @@ pavoz state  --task-id job-1 --key count
 | **Loops stay in business code** | No framework-level `retry_budget`/loop DSL to learn. Need an audit→fix→re-audit loop? Write a `while` inside one stage — it's your logic, expressed in Python, checkpointed at the node boundary. |
 | **Regression testing built in** | `TestPipe` mocks any stage's output and runs the whole graph; `TestPipe.replay_from(cp, dag)` feeds a *real run's* saved outputs back as mocks — refactor a stage, prove the graph still converges. |
 | **Storage is pluggable** | Core is stdlib-only. Default `FileStorage` needs nothing; for durable/cross-machine runs implement the 5-method `StorageBackend` (get/put/list/delete) over Postgres, MinIO, Redis, whatever you already run — or load it from a config string with `load_storage()`. |
-| **Cooperative cancellation** | `Runtime(cancel_check=...)` — interception at stage/retry boundaries (status="cancelled"; completed stages stay checkpointed, resume picks up seamlessly); long-running stages poll `ctx.cancelled()` and exit on their own |
+| **Cooperative cancellation** | `Runtime(cancel_check=...)` — interception at stage/retry boundaries (status="cancelled"; completed stages stay checkpointed, resume continues from where it stopped); long-running stages poll `ctx.cancelled()` and exit on their own |
 | **Event hooks** | `Runtime(on_event=...)` — structured lifecycle events: run_start / stage_start / stage_end / stage_retry / run_end, plus `stage_progress` via `ctx.set_progress()` for long stages (observer exceptions isolated); `RunResult.stage_timings` per-stage wall clock |
 
 ## Time-travel debugging
@@ -119,9 +119,9 @@ pavoz replay pipeline.py --task-id job-1 --stage s_compose     # rerun one stage
 
 Each fork gets a new `run_id` and becomes the task's latest run; the original checkpoint stays intact — multiple forks of the same history coexist. If your LLM stage misbehaves, you're seconds away from *"what did it see → change one sentence → re-run just that stage"* instead of a 30-minute pipeline rerun.
 
-## Declarative param override (new in v0.3.0)
+## Declarative param override
 
-Fork-and-rerun used to mean hand-editing JSON. Now the fork input is a one-liner — point paths, automatic type inference, and a state diff against the original run:
+**Since v0.3.0** fork-and-rerun no longer means hand-editing JSON — the fork input is a one-liner: point paths, automatic type inference, and a state diff against the original run:
 
 ```bash
 # Switch the writer model of one stage and rerun it — upstream stages are reused.

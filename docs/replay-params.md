@@ -36,7 +36,7 @@ pavoz fork-run dag.py --task-id X --stage s_compose \
 
 ## Merge semantics (0.3.0 behavior fix)
 
-overrides 应用到 state 是**深合并**: patch 的 leaf 覆盖, 兄弟键保留.
+overrides 应用到 state 是**深合并**: patch 的 leaf 覆盖, 兄弟键保留。
 
 ```bash
 # state 里已有 llm: {model: a, temperature: 0.5}
@@ -44,7 +44,7 @@ pavoz fork-run dag.py --task-id X --stage s_compose --set llm.model=b
 # → llm: {model: b, temperature: 0.5}   # temperature 保留 (v0.8 会抹掉)
 ```
 
-v0.8 行为 (顶层浅替换) 只对"标量覆盖"保持不变; 嵌套 dict 从整体替换改为深合并.
+v0.8 行为 (顶层浅替换) 只对"标量覆盖"保持不变; 嵌套 dict 从整体替换改为深合并。
 Library API 等价: `apply_overrides(state, patch)`.
 
 ## Override target rule (footgun)
@@ -75,7 +75,7 @@ pavoz fork-run dag.py --task-id X --stage s_b --set llm.model=x  # ✅
 | `hello` | `str` | default passthrough |
 | `2026-09-09` | `str` | ISO dates stay str |
 
-无逃生门. 类型不对时用 `--dry-run` 看解析结果再执行.
+无逃生门. 类型不对时用 `--dry-run` 看解析结果再执行。
 
 ## CLI storage (任意 StorageBackend)
 
@@ -88,7 +88,7 @@ export PAVOZ_STORAGE_KWARGS='{"task_id": "{task_id}"}'
 pavoz fork-run dag.py --task-id X --stage s_compose --set llm.model=y
 ```
 
-`PAVOZ_STORAGE` (目录) 行为不变; 两者都设时 SPEC 优先.
+`PAVOZ_STORAGE` (目录) 行为不变; 两者都设时 SPEC 优先。
 
 ## Safety
 
@@ -127,12 +127,12 @@ new_state = apply_overrides(state, {"llm.model": "longcat"})
 > ⚠️ fork resume 场景下两者的 producer 语义不同: nested patch 会让 <fork> 认领
 > 顶层 key (后续 stage 链式覆盖该 key → StateConflictError); dot-path key 不改
 > producer (后续 stage 重新产出该 key 时会静默覆盖你的 override).
-> 值应用本身两者等价 (深合并). 按 stage 重新生成与否选格式.
+> 值应用本身两者等价 (深合并). 按 stage 重新生成与否选格式。
 
 ## Isolation (no --in-place in 0.3.0)
 
 fork-run 永远产生新 run_id (隔离). latest 指针随 save 移到 fork run;
-原 run 仍可用 `store.load(task_id, run_id)` 寻址, 历史不丢.
+原 run 仍可用 `store.load(task_id, run_id)` 寻址, 历史不丢。
 覆盖原 run 的需求推迟到 v0.10 (带并发保护再上).
 
 ## Examples

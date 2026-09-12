@@ -78,7 +78,7 @@ cd pavoz && pip install -e ".[dev]"
 
 core 不带任何 storage driver — 用户自己 `pip install` 自己要的依赖
 (psycopg / redis / boto3 / ...), 自己写一个 4 方法 adapter (约 5-10 行,
-见 [docs/storage.md](docs/storage.md)), 通过 config 字符串 + `load_storage()` 加载.
+见 [docs/storage.md](docs/storage.md)), 通过 config 字符串 + `load_storage()` 加载。
 
 ```python
 from pavoz import load_storage, CheckpointStore
@@ -149,9 +149,9 @@ python -m pavoz state --task-id demo-1 --key saved
 换上新实现, prompt/参数秒级迭代。`run --resume` 续跑中断的 run (跳过已
 完成 stage, 复用同 run_id)。
 
-## 时间旅行调试 (v0.6)
+## 时间旅行调试
 
-pavoz 为这个场景而生: **任何一次历史 run 都是可检视、可编辑、可 fork 的对象**。
+**v0.6 起** pavoz 为这个场景而生: **任何一次历史 run 都是可检视、可编辑、可 fork 的对象**。
 每个 checkpoint 存每 stage 的原始 delta (不只是合并终态) → 任意 stage 当时的输入
 可精确重建:
 
@@ -181,9 +181,9 @@ pavoz replay pipeline.py --task-id job-1 --stage s_compose
 LLM stage 出错时, 从"当时输入是什么 → 改一句 → 只重跑那个 stage"只需几秒,
 而不是重跑整条 30 分钟管线。
 
-## 声明式参数覆盖 (v0.3.0 新)
+## 声明式参数覆盖
 
-fork 重跑不再需要手改 JSON — 点分路径 + 类型自动推断 + 对比原 run 的 state diff,
+**v0.3.0 起** fork 重跑不再需要手改 JSON —— 点分路径 + 类型自动推断 + 对比原 run 的 state diff,
 一行命令:
 
 ```bash

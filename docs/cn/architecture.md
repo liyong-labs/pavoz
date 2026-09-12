@@ -52,9 +52,9 @@ async def s_quality_loop(ctx):
 ```
 
 框架只有 3 能力: **DAG (线性图) + per-node retries + checkpoint**. 无
-sub_dag/retry_budget/escalation/watchdog 原语.
+sub_dag/retry_budget/escalation/watchdog 原语。
 参考: 最成熟引擎 (Airflow/Temporal/Prefect) 都没有 cross-stage retry 原语 —
-循环和 gate 用 workflow 代码表达.
+循环和 gate 用 workflow 代码表达。
 
 #### 扩展面: 一个 stage 就是扩展点
 
