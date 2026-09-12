@@ -202,7 +202,7 @@ Extensions pin a compatible core range (e.g. `pavoz>=0.3,<0.4`); during 0.x, min
 ## Docs & development
 
 - [Architecture](docs/en/architecture.md) · [API reference](docs/en/api.md) · [Quickstart](docs/en/quickstart.md) · [Storage backends](docs/storage.md)
-- [Contributing](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Roadmap](ROADMAP.md) · MIT License
+- [Contributing](CONTRIBUTING.md) · [Releasing](RELEASING.md) · [Changelog](CHANGELOG.md) · [Roadmap](ROADMAP.md) · MIT License
 
 ---
 

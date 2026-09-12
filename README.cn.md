@@ -264,6 +264,7 @@ sub-DAG 嵌套、业务 wrapper 实现 (LLM/Search/Extract adapter)、业务表 
 | [docs/en/api.md](docs/en/api.md) | API Reference (English) |
 | [docs/en/use-cases/](docs/en/use-cases/) | Reference integrations (English) |
 | [CHANGELOG.md](CHANGELOG.md) | 版本历史 |
+| [RELEASING.md](RELEASING.md) | 发版流程 (维护者): 一次性 PyPI 配置 + 每次 5 步 |
 
 ## 测试
 
