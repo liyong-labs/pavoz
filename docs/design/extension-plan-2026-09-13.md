@@ -2,7 +2,27 @@
 
 **起草**: pavoz PM / 架构师 (Claude)
 **日期**: 2026-09-13 (v1 初稿 → v2 经维护者逐项 grill 定案)
-**状态**: **决策已定, 待开工** (P0 可立即执行; PyPI 前置需维护者一次性动作)
+**状态**: **实施中** — W0/W1/W2/W5 已 ship; W3 首版已 ship; W2.5 待维护者 PyPI 动作
+
+---
+
+## 0. 进度 (2026-09-13)
+
+| 项 | 状态 | 产出 |
+|---|---|---|
+| W0 扩展面文档 | ✅ ship | `docs/{cn,en}/architecture.md` 新增《扩展面》一节 (5 扩展点 + 事件表 + 版本策略); README 事件行校正 |
+| W1 示例升级 | ✅ ship | `examples/agent_loop.py` 多 lens `quality_gate` 版 (min 聚合 + 分数入 `on_event`) + `tests/test_examples_agent_loop.py` 防腐化 |
+| W2 兼容策略 | ✅ ship | 文档化 (不加 API 版本常量); 扩展侧 `pavoz>=0.3,<0.4` + 导入时 stdlib 校验 |
+| W2.5 pavoz 0.3.0 转正 | ⏸ **待维护者** | PyPI 建项目 `pavoz` + Trusted Publisher + GH Environment `pypi` → 然后 tag `v0.3.0` (pyproject/`__version__` 现为 `0.3.0rc1`) |
+| W3 扩展包 | 🟡 首版 ship | `liyong-labs/pavoz-extensions` @ `cee9b75`: `@gate` + `@schema` + 40 tests + pyflakes + 公开 API 结构检查 + 发布 workflow。**版本矩阵待 PyPI 发布后启用**; **他证待发布后** |
+| W4 `@cost_cap` / `@conditional` | ⏸ 延后 | 0.2.0 候选, 契约未定不上 PyPI |
+| W5 索引 | ✅ ship | README (en/cn) "扩展" 一节 + ROADMAP + CHANGELOG `[Unreleased]` |
+
+**验证记录**: pavoz 核心 201 tests ✅ / pyflakes 0;扩展 40 tests ✅ / pyflakes 0 / 结构检查通过(且自证能抓违规);
+干净 venv 按 README 安装路径实测 (`pavoz@git` + `extensions@git --no-deps`) 双包 import 正常。
+
+**顺带修的**: `tests/test_prune_error_progress.py` 未使用 `json` import (存量 CI lint 红灯) · `pavoz/dag.py`
+陈旧 stage 签名 docstring (`(req, ctx)` → `(ctx)`)。
 **输入**: `docs/pavoz-upgrade-plan-2026-09-12.md` (需求方 v2) + `docs/review-pavoz-upgrade-plan-2026-09-13.md` (评审) + `docs/design/handoff-upgrade-plan-v2-2026-09-13.md` (答复)
 **当前版本**: `0.3.0rc1`; 扩展仓 `liyong-labs/pavoz-extensions` 已建 (2026-09-13)
 
