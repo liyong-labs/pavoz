@@ -17,6 +17,8 @@
 | W3 扩展包 | 🟡 首版 ship | `liyong-labs/pavoz-extensions` @ `cee9b75`: `@gate` + `@schema` + 40 tests + pyflakes + 公开 API 结构检查 + 发布 workflow。**版本矩阵待 PyPI 发布后启用**; **他证待发布后** |
 | W4 `@cost_cap` / `@conditional` | ⏸ 延后 | 0.2.0 候选, 契约未定不上 PyPI |
 | W5 索引 | ✅ ship | README (en/cn) "扩展" 一节 + ROADMAP + CHANGELOG `[Unreleased]` |
+| 追加: API 参考补齐 | ✅ ship | `docs/{cn,en}/api.md` 补 8 项滞后能力 (`on_event` / `fork_run` / `set_progress` / `cancelled` / `error_class` / `stage_timings` / `prune` / 参数覆盖) + `tests/test_api_docs_coverage.py` 防漂移 |
+| 追加: 文档工具链 | ✅ ship | `llms.txt` (agent 入口) + `tools/check_doc_links.py` + `tools/check_doc_style.py` + CI 步骤; 两仓 CONTRIBUTING/README 与 CI 实际命令对齐 |
 
 **验证记录**: pavoz 核心 201 tests ✅ / pyflakes 0;扩展 40 tests ✅ / pyflakes 0 / 结构检查通过(且自证能抓违规);
 干净 venv 按 README 安装路径实测 (`pavoz@git` + `extensions@git --no-deps`) 双包 import 正常。

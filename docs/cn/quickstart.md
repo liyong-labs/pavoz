@@ -2,6 +2,13 @@
 
 🇬🇧 [English version](../en/quickstart.md)
 
+## 0. 安装
+
+```bash
+pip install "pavoz @ git+https://github.com/liyong-labs/pavoz@main"   # PyPI 未上线, 先走 git
+# 0.3.0 发布后一行搞定: pip install pavoz
+```
+
 ## 1. 定义 DAG
 
 ```python

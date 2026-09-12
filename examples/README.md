@@ -39,4 +39,4 @@ bash 05_yaml_file.sh <task_id> overrides.yaml
 ## Requirements
 
 - `pavoz >= 0.3.0`
-- For YAML (`05_yaml_file.sh`): `pip install pavoz[yaml]`
+- For YAML (`05_yaml_file.sh`): `pip install "pavoz[yaml] @ git+https://github.com/liyong-labs/pavoz@main"` (once released: `pip install pavoz[yaml]`)

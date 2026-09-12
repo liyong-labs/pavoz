@@ -4,6 +4,27 @@
 
 ## [Unreleased]
 
+### Added (文档工程 — 2026-09-13)
+
+- **`llms.txt`**: 仓库根的 agent 自读入口 — 这是什么 / 从哪读起 / 不可变规则 / 提交前跑什么命令。
+- **`tools/check_doc_links.py` + CI 步骤**: markdown 相对链接必须可解析 (上线即抓出 3 处死链,
+  含 `docs/storage.md` 与 `docs/en/*.md` 的错路径)。
+- **`tools/check_doc_style.py` + CI 步骤**: 只做高精度风格检查 — AI 禁用词、README 装饰性版本号、
+  中文句尾半角句号; 过程类文档 (CLAUDE/CHANGELOG/ROADMAP) 与 `docs/design/` 显式豁免, 误报挡 PR 比漏报贵。
+- **`tests/test_api_docs_coverage.py`**: 断言 `pavoz.__all__` 每个名字都出现在
+  `docs/{cn,en}/api.md` — 防"文档悄悄落后代码"。
+
+### Changed (文档工程 — 2026-09-13)
+
+- **API 参考补齐滞后项** (`docs/cn/api.md` + `docs/en/api.md`): 补上已 ship 但未写进参考的能力 —
+  `Runtime(on_event=...)` / `cancel_check`(含事件表)、`Runtime.fork_run`、
+  `ctx.set_progress` / `cancelled` / `on_event`、`RunResult.error_class` / `stage_timings`、
+  `CheckpointStore.prune`、参数覆盖四个函数 (`parse_set_args` / `parse_set_file` /
+  `merge_overrides` / `apply_overrides`) 与 `__version__`。
+- **CONTRIBUTING 对齐 CI**: 质量门槛改为 CI 实际执行的两条命令 (原写 `ruff check` 与
+  "38+ tests" 均与现状不符); 修正 3 处指向不存在文件的文档链接。
+- **CI lint 范围加入 `examples/` 与 `tools/`**。
+
 ### Changed (扩展面文档 + 示例升级 — 2026-09-13)
 
 - **架构文档新增《扩展面》一节** (`docs/cn/architecture.md` + `docs/en/architecture.md`):

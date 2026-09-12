@@ -160,7 +160,7 @@ See `examples/` directory:
 
 No code changes required. To use new features:
 1. `pip install --upgrade pavoz`
-2. Optionally `pip install pavoz[yaml]` (for YAML support)
+2. Optionally `pip install "pavoz[yaml] @ git+https://github.com/liyong-labs/pavoz@main"` (YAML support; once released: `pip install pavoz[yaml]`)
 3. Optionally replace JSON-string `--overrides` with `--set` / `--set-file`
 
 注意: "嵌套 dict 重置为更少 key" 的用法在 0.3.0 不可表达 (兄弟键总被保留;
