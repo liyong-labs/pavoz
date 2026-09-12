@@ -1,8 +1,8 @@
 """CI guard: mechanical doc-style checks (the greppable subset).
 
-Rules come from the team doc-writing standard (`docs/reference/ansei-doc-writing-standard.md`):
-§13 AI 反幻觉 (cliché words), §6 章节约束 (headings carry no version numbers or
-decorative parentheses), §34 中文自然度 (no ASCII sentence periods in Chinese prose).
+Rules (from the team doc-writing standard): no AI-cliché words; README headings
+carry no version-number decorations (version info goes in the body); Chinese prose
+ends sentences with 。, not an ASCII period.
 
 Only high-precision checks belong here — a false positive that blocks a
 contributor's PR costs more than the rule it guards.

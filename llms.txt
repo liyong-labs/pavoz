@@ -1,0 +1,32 @@
+# pavoz
+
+> In-process Python workflow engine: static DAG + per-node retries + checkpoints + single-stage replay and time-travel forks. Standard library only, zero runtime dependencies, no server/scheduler/YAML.
+
+Install (not on PyPI yet): `pip install "pavoz @ git+https://github.com/liyong-labs/pavoz@main"`
+
+## Start here
+
+- [README.md](README.md): what it is, why it exists, 30-second quickstart, feature table
+- [docs/en/quickstart.md](docs/en/quickstart.md) · [docs/cn/quickstart.md](docs/cn/quickstart.md): CLI + code + `ctx.call` + TestPipe
+- [docs/en/architecture.md](docs/en/architecture.md) · [docs/cn/architecture.md](docs/cn/architecture.md): core design decisions, extension surface, event table
+- [docs/en/api.md](docs/en/api.md) · [docs/cn/api.md](docs/cn/api.md): public API reference
+- [docs/storage.md](docs/storage.md): config-driven storage adapters
+- [examples/](examples/): runnable demos (LLM pipeline, convergence loop, resume after crash)
+- [ROADMAP.md](ROADMAP.md) · [CHANGELOG.md](CHANGELOG.md)
+
+## Rules that do not change
+
+- **Core is stdlib-only.** `dependencies = []` in `pyproject.toml`, forever. Never import a third-party package from `pavoz/`.
+- **Loops stay in business code.** No `retry_budget` / `escalation` / scheduler / distributed primitives in core — wrap a stage function in a decorator instead.
+- **Extensions are separate packages.** Core never depends on them; see [pavoz-extensions](https://github.com/liyong-labs/pavoz-extensions) for the reference implementation.
+
+## Before you commit
+
+```bash
+python -m pytest                          # all tests
+python -m pyflakes pavoz tests examples tools
+python tools/check_doc_links.py           # markdown links must resolve
+python tools/check_doc_style.py           # doc style (clichés / versioned headings / punctuation)
+```
+
+Docs in this repo are for humans first: value up front, runnable example early, no dead links.
