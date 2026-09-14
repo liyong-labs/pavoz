@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-09-14
+
+### Changed
+- **版本线对齐**: 延续 stageflow 时代的 0.5.x 版本线 (v0.5.1 → 0.5.2), 不再使用改名后重起的 0.3.x —
+  避免 PyPI 版本序与项目历史割裂。
+- README / quickstart / llms.txt 等全部安装指令从 `git+https://...` 切换为 `pip install pavoz`
+  (0.3.0 已发布 PyPI, CI Trusted Publishing 免密发版流程已验证)。
+
 ## [0.3.0] — 2026-09-14
 
 ### Added (文档工程 — 2026-09-13)
