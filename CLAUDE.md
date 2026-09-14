@@ -2,7 +2,7 @@
 
 > 本文件只放**铁律 + 指针**. 架构细节在 `docs/cn/architecture.md` (英文 `docs/en/`), 阶段路线在 `ROADMAP.md`, 时序决策日志在**仓外** `/home/ai/src/pavoz-dev/`, **使用文档**:
 > - **30 秒上手**: `docs/QUICKSTART.md` (摘要 + 5 行示例 + gotchas)
-> - **架构**: `docs/design/architecture.md` (核心理念 / 模块 / 边界)
+> - **架构**: `docs/cn/architecture.md` (核心理念 / 模块 / 边界)
 > - **⚠️ 版本线 + PyPI handoff (2026-09-14, pavoz@local 必读)**: 开发文档不入开源仓 — 见本地 `/home/ai/src/pavoz-dev/handoff/2026-09-14-pypi-release-and-version-line-handoff.md` (PyPI 已上线, 版本线延续 0.5.x, 下一版 0.5.3; 版本号由主控 agent 管控, 不要自行 bump/tag/发版)
 
 ## 定位 (2026-09-05 user 拍板, 永久生效)
@@ -34,8 +34,8 @@
 
 ## 核心文档索引
 
-- **架构**: `docs/design/architecture.md` — 5 原语 / Protocol 设计 / 边界
-- **5 原语**: `docs/design/dag.md` / `runtime.md` / `state.md` / `checkpoint.md` / `protocols.md`
+- **架构**: `docs/cn/architecture.md` — 5 原语 / Protocol 设计 / 边界
+- **5 原语**: 融合在 `docs/cn/architecture.md` 与 API 文档 (`docs/cn/api.md`)
 - **API 参考**: `docs/api.md`
 - **路线**: `ROADMAP.md` (v0.2 freeze + 后续候选)
 - **决策日志 / 升级计划 / handoff (开发文档, 不入开源仓)**: `/home/ai/src/pavoz-dev/` (本机)
