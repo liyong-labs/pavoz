@@ -5,7 +5,7 @@
 > - **完整 doc**: `docs/handoff/usage.md` (10 节, 含端到端示例 + 决策树)
 > - **架构**: `docs/design/architecture.md` (核心理念 / 模块 / 边界)
 > - **AI 写作指南**: `docs/handoff/ai-writer-style-handoff.md` (供 LLM agent 看)
-> - **⚠️ 版本线 + PyPI handoff (2026-09-14, pavoz@local 必读)**: `docs/handoff/2026-09-14-pypi-release-and-version-line-handoff.md` — PyPI 已上线, 版本线延续 0.5.x, 下一版 0.5.3; 版本号由主控 agent 管控, 不要自行 bump/tag/发版
+> - **⚠️ 版本线 + PyPI handoff (2026-09-14, pavoz@local 必读)**: 开发文档不入开源仓 — 见本地 `/home/ai/src/pavoz-dev/handoff/2026-09-14-pypi-release-and-version-line-handoff.md` (PyPI 已上线, 版本线延续 0.5.x, 下一版 0.5.3; 版本号由主控 agent 管控, 不要自行 bump/tag/发版)
 
 ## 定位 (2026-09-05 user 拍板, 永久生效)
 
