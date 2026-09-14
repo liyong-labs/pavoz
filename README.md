@@ -36,7 +36,7 @@ pavoz pulls **graph execution** out of your business code and gives you durable,
 
 ```bash
 # not on PyPI yet — install from git:
-pip install "pavoz @ git+https://github.com/liyong-labs/pavoz@main"
+pip install pavoz
 # once 0.3.0 is released this collapses to:  pip install pavoz
 ```
 

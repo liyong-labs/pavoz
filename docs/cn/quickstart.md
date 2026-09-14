@@ -5,7 +5,7 @@
 ## 0. 安装
 
 ```bash
-pip install "pavoz @ git+https://github.com/liyong-labs/pavoz@main"   # PyPI 未上线, 先走 git
+pip install pavoz
 # 0.3.0 发布后一行搞定: pip install pavoz
 ```
 

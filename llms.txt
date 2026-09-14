@@ -2,7 +2,7 @@
 
 > In-process Python workflow engine: static DAG + per-node retries + checkpoints + single-stage replay and time-travel forks. Standard library only, zero runtime dependencies, no server/scheduler/YAML.
 
-Install (not on PyPI yet): `pip install "pavoz @ git+https://github.com/liyong-labs/pavoz@main"`
+Install (not on PyPI yet): `pip install pavoz`
 
 ## Start here
 
