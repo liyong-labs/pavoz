@@ -216,7 +216,7 @@ async def _cmd_fork_run(args) -> int:
     优先级 (后写覆盖前写): --set > --set-file > --overrides > --input
     (--overrides > --input 是 v0.8 组合使用时的既有胜者, 保持不变).
     """
-    from pavoz.state import parse_set_args, parse_set_file, merge_overrides, _state_diff
+    from pavoz.state import _state_diff, merge_overrides, parse_set_args, parse_set_file
 
     dag = _load_dag(args.dag)
 

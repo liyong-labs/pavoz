@@ -30,7 +30,6 @@ from .dag import DAG, CycleError, Stage, UnknownDepError
 from .events import EventRecorder
 from .policy import EnginePolicy
 from .runtime import CallResult, Ctx, Runtime
-from .viz import to_graph_json, to_mermaid
 from .state import (
     ReadOnlyStateView,
     StateConflictError,
@@ -43,6 +42,7 @@ from .storage import FileStorage, StorageBackend
 from .storage_loader import PavozStorageError, load_storage
 from .testing import TestPipe
 from .types import FatalError, RetryableError, RunResult, StageError
+from .viz import to_graph_json, to_mermaid
 
 __version__ = "0.5.4"
 
@@ -53,33 +53,33 @@ __all__ = [
     "Checkpoint",
     "CheckpointMismatchError",
     "CheckpointStore",
-    "diff_runs",
     "Ctx",
     "CycleError",
-    "NotKillable",
     "EnginePolicy",
     "EventRecorder",
     "FatalError",
     "FileStorage",
+    "NotKillable",
+    "PavozStorageError",
     "ReadOnlyStateView",
     "RetryableError",
     "RunResult",
     "Runtime",
     "Stage",
     "StageError",
-    "PavozStorageError",
     "StateConflictError",
     "StorageBackend",
     "TestPipe",
     "UnknownDepError",
     "__version__",
-    "to_graph_json",
-    "to_mermaid",
     "apply_overrides",
+    "diff_runs",
     "load_storage",
     "merge_overrides",
     "parse_set_args",
     "parse_set_file",
     "stage_input_hash",
+    "to_graph_json",
+    "to_mermaid",
     "workflow_hash",
 ]

@@ -1,5 +1,5 @@
 """v0.9: fork_run overrides 深合并语义 (behavior fix — 兄弟键保留)."""
-from pavoz import CheckpointStore, DAG, FileStorage, Runtime
+from pavoz import DAG, CheckpointStore, FileStorage, Runtime
 
 
 def _mk(task_id, tmp_path):

@@ -14,11 +14,11 @@ from typing import Any
 __all__ = [
     "ReadOnlyStateView",
     "StateConflictError",
+    "apply_overrides",
+    "merge_overrides",
     "merge_state",
     "parse_set_args",
     "parse_set_file",
-    "merge_overrides",
-    "apply_overrides",
 ]
 
 # json.dumps 能处理的类型白名单 (naobao 调研: set/datetime/Path/bytes 全要 raise)

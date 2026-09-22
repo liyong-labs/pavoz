@@ -1,14 +1,19 @@
 """v0.9: state.py apply_overrides utilities tests."""
 
 import pytest
+
 from pavoz.state import (
-    _validate_path, _infer_type, _deep_set, _deep_merge,
+    _deep_merge,
+    _deep_set,
+    _infer_type,
+    _validate_path,
 )
 
 
 class TestParseSetFile:
     def test_json_file(self, tmp_path):
         import json
+
         from pavoz.state import parse_set_file
         f = tmp_path / "override.json"
         f.write_text(json.dumps({"llm": {"model": "longcat"}}))
@@ -39,6 +44,7 @@ class TestParseSetFile:
 
     def test_non_dict_top_level_rejected(self, tmp_path):
         import json
+
         from pavoz.state import parse_set_file
         f = tmp_path / "list.json"
         f.write_text(json.dumps([1, 2, 3]))
@@ -47,6 +53,7 @@ class TestParseSetFile:
 
     def test_dunder_in_file_rejected(self, tmp_path):
         import json
+
         from pavoz.state import parse_set_file
         f = tmp_path / "evil.json"
         f.write_text(json.dumps({"__proto__": {"x": 1}}))
