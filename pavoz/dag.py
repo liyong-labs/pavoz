@@ -43,6 +43,8 @@ class Stage:
     timeout: float | None = None  # 本 stage 硬超时 (秒); None = 继承 run 的 absolute deadline
     # R2 (0.5.3): False = 即使输入 hash 未变也强制重跑 (副作用 stage 标记).
     skip_unchanged: bool = True
+    # R1a (0.5.3, id=137): False = 拒绝硬杀 (CancelRegistry.cancel(mode="hard") 抛 NotKillable).
+    killable: bool = True
 
 
 class DAG:
@@ -64,6 +66,7 @@ class DAG:
         retries: int = 0,
         timeout: float | None = None,
         skip_unchanged: bool = True,
+        killable: bool = True,
     ) -> Callable[[NodeFn], NodeFn]:
         """@dag.stage() 装饰器. stage fn 签名: async def fn(ctx) -> dict (v1 统一 ctx-only)."""
 
@@ -82,6 +85,7 @@ class DAG:
                 retries=retries,
                 timeout=timeout,
                 skip_unchanged=skip_unchanged,
+                killable=killable,
             )
             self._definition_order.append(name)
             return fn

@@ -17,6 +17,7 @@ per-node retry + absolute deadline) + Checkpoint (断点续跑) + TestPipe (回�
     StorageBackend / FileStorage / CheckpointStore
 """
 
+from .cancel import CancelRegistry, NotKillable
 from .checkpoint import (
     Checkpoint,
     CheckpointMismatchError,
@@ -46,11 +47,13 @@ __version__ = "0.5.2"
 __all__ = [
     "DAG",
     "CallResult",
+    "CancelRegistry",
     "Checkpoint",
     "CheckpointMismatchError",
     "CheckpointStore",
     "Ctx",
     "CycleError",
+    "NotKillable",
     "EnginePolicy",
     "EventRecorder",
     "FatalError",

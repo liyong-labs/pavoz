@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ._id import new_id
+from .cancel import CancelRegistry
 from .checkpoint import (
     Checkpoint,
     CheckpointMismatchError,
@@ -183,6 +184,7 @@ class Runtime:
     on_event: Callable[[str, dict], None] | None = None  # v0.9: 生命周期事件钩子
     cancel_check: Callable[[str], bool] | None = None  # v0.9: task_id → 已取消?
     debug_dir: str | None = None  # W2: 每 stage 后落 state 快照 JSON (调试)
+    cancel_registry: CancelRegistry | None = None  # R1a: graceful|hard 取消登记处
     policy: EnginePolicy | None = None  # W3: run 级策略 (additive, 显式参数优先)
     _run_sem: asyncio.Semaphore | None = field(
         default=None, init=False, repr=False, compare=False)  # W3: 并发闸 (懒建)
@@ -199,13 +201,15 @@ class Runtime:
 
     def _is_cancelled(self, task_id: str) -> bool:
         """查取消状态. checker 异常 → 视为未取消 (fail-open, 检查器 bug 不杀业务 run)."""
-        if self.cancel_check is None:
-            return False
-        try:
-            return bool(self.cancel_check(task_id))
-        except Exception:
-            logger.exception("cancel_check 异常 (视为未取消) task=%s", task_id)
-            return False
+        if self.cancel_check is not None:
+            try:
+                if bool(self.cancel_check(task_id)):
+                    return True
+            except Exception:
+                logger.exception("cancel_check 异常 (视为未取消) task=%s", task_id)
+        if self.cancel_registry is not None:
+            return self.cancel_registry.is_cancelled(task_id)
+        return False
 
     # ── 主入口 ──────────────────────────────────────────
     async def run(
@@ -228,6 +232,29 @@ class Runtime:
             resume: True → 从该 task 最新 checkpoint 续跑 (复用原 run_id).
                      无 cp / 已全部完成 → RuntimeError. 重跑用 resume=False.
         """
+        # task_id: 省略 → UUID4; 显式传值 → A3 校验 (直接进 storage key 路径)
+        if task_id is None:
+            task_id = new_id()
+        _validate_task_id(task_id)
+        # R1a: 登记运行句柄 (registry 硬杀靠它 cancel 本 asyncio Task)
+        if self.cancel_registry is not None:
+            self.cancel_registry._register(task_id, asyncio.current_task())
+        try:
+            return await self._run_impl(
+                dag, task_id, initial_state, resume, skip_unchanged)
+        finally:
+            if self.cancel_registry is not None:
+                self.cancel_registry._unregister(task_id)
+
+    async def _run_impl(
+        self,
+        dag: DAG,
+        task_id: str,
+        initial_state: dict | None,
+        resume: bool,
+        skip_unchanged: bool | None,
+    ) -> RunResult:
+        """run() 的闸门层 (W3): task_id 已解析, registry 已登记."""
         # W3: 有效 deadline = 显式参数优先, 缺省看 policy; 绝对时刻在 _run_inner
         # 获得并发闸门后才起算 (排队不烧 deadline).
         _pto = self.policy.default_timeout if self.policy else None
@@ -253,10 +280,6 @@ class Runtime:
         skip_unchanged: bool | None,
     ) -> RunResult:
         """run() 主体 (W3 拆出): 并发闸门之内. 语义与拆分前完全一致."""
-        # task_id: 省略 → UUID4; 显式传值 → A3 校验 (直接进 storage key 路径)
-        if task_id is None:
-            task_id = new_id()
-        _validate_task_id(task_id)
 
         dag.validate()
         result = RunResult(task_id=task_id, dag_name=dag.name)
@@ -411,12 +434,39 @@ class Runtime:
                 )
 
             _st0 = time.time()
+            # R1a: 记当前 stage (含 killable) — registry 硬杀时判定可否杀
+            if self.cancel_registry is not None:
+                self.cancel_registry._set_stage(task_id, name, stage.killable)
             input_hashes[name] = stage_input_hash(stage.fn, state)  # R2: 执行前记
-            status, new_state, err, err_class, producers, delta, attempts = \
-                await self._run_stage(
-                    dag, stage.fn, name, task_id, run_id, state, stage.retries,
-                    stage_deadline, producers,
+            try:
+                status, new_state, err, err_class, producers, delta, attempts = \
+                    await self._run_stage(
+                        dag, stage.fn, name, task_id, run_id, state, stage.retries,
+                        stage_deadline, producers,
+                    )
+            except asyncio.CancelledError:
+                # R1a: registry 来源的硬杀 → 落 cp 返 cancelled RunResult;
+                # 非 registry 来源 (外部 task.cancel) → 照旧上抛, 行为保持.
+                if self.cancel_registry is None \
+                        or not self.cancel_registry.is_cancelled(task_id):
+                    raise
+                stage_statuses[name] = "cancelled"
+                result.stage_statuses = stage_statuses
+                result.state = state
+                result.status = "cancelled"
+                result.error = "killed (hard kill by CancelRegistry)"
+                result.error_class = None
+                _fill_error_context(result, name, None, state)
+                self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
+                              producers, stage_deltas, initial_state_saved, stage_ts,
+                              _fork_overrides, input_hashes)
+                self._emit("run_end", {"task_id": task_id, "run_id": run_id,
+                                       "dag": dag.name, "status": "cancelled"})
+                logger.warning(
+                    "task=%s run=%s hard-killed at stage=%s (已完成 %d stages 已落 cp)",
+                    task_id, run_id[:8], name, len(done_stages),
                 )
+                return result
             steps_used += attempts
             result.stage_timings[name] = time.time() - _st0
             state = new_state

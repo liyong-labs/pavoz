@@ -293,6 +293,22 @@ policy = EnginePolicy(
 rt = Runtime(policy=policy)     # additive: 不传 policy 行为与旧版完全一致
 ```
 
+## CancelRegistry (v0.5.3)
+
+```python
+reg = CancelRegistry()
+rt = Runtime(cancel_registry=reg)
+task = asyncio.create_task(rt.run(dag, "t1"))
+reg.cancel("t1")                  # graceful: stage 边界拦截 (同 v0.9 cancel_check)
+reg.cancel("t1", mode="hard")     # 硬杀: 立即打断当前 stage (前提 stage 幂等)
+# 当前 stage 标了 @dag.stage(killable=False) → hard 抛 NotKillable
+await task   # → RunResult(status="cancelled", failed_stage=..., retryable=None)
+```
+
+- graceful 走 stage 间/重试间检查点; hard 对运行中 stage 注入 CancelledError,
+  run() 捕获后落 checkpoint 并返回 cancelled 结果 (caller 须保证 stage 幂等)
+- 非 registry 来源的外部 task.cancel() 仍照旧抛 CancelledError
+
 ## EventRecorder (v0.5.3)
 
 ```python

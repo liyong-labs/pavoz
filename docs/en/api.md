@@ -316,6 +316,23 @@ policy = EnginePolicy(
 rt = Runtime(policy=policy)     # additive: without a policy, behavior is unchanged
 ```
 
+## `CancelRegistry` (v0.5.3)
+
+```python
+reg = CancelRegistry()
+rt = Runtime(cancel_registry=reg)
+task = asyncio.create_task(rt.run(dag, "t1"))
+reg.cancel("t1")                  # graceful: boundary interception (same as v0.9 cancel_check)
+reg.cancel("t1", mode="hard")     # hard kill: interrupt the running stage now (stages must be idempotent)
+# current stage marked @dag.stage(killable=False) → hard raises NotKillable
+await task   # → RunResult(status="cancelled", failed_stage=..., retryable=None)
+```
+
+- graceful uses the stage/retry checkpoints; hard injects CancelledError into
+  the running stage — the run saves its checkpoint and returns a cancelled
+  result (callers must guarantee stage idempotency)
+- External `task.cancel()` from outside the registry still raises CancelledError
+
 ## EventRecorder (v0.5.3)
 
 ```python
