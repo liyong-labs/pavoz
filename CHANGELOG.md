@@ -4,6 +4,35 @@
 
 ## [Unreleased]
 
+### Added (0.5.3 — caller 观测/操控面, 2026-09-22)
+
+- **RunResult 错误上下文 (W1)**: 失败/取消时带 `failed_stage` / `retryable`
+  (RetryableError/TimeoutError → True) / `state_summary` (state 截断 JSON ≤2048 字符) —
+  caller 接到结果即有"哪个 stage 错、能否重试、state 现场"。
+- **`EventRecorder` (W2)**: `Runtime(on_event=EventRecorder(sink_path=...))` —
+  事件流收集 + 可选 JSONL 落盘。
+- **`Runtime(debug_dir=...)` (W2)**: 每 stage 后落 `<debug_dir>/<task_id>/<n>_<stage>_<status>.json`
+  state 快照 (失败不杀 run); 落盘失败仅 log。
+- **`EnginePolicy` (W3, additive)**: run 级策略外置 — `default_timeout` (显式参数优先) /
+  `max_steps` (attempt 总数熔断, error_class=MaxStepsExceeded) / `backoff_max` (替代硬编码 30) /
+  `max_concurrent_runs` (进程内并发闸) / `skip_unchanged`。不传 policy 行为与旧版完全一致。
+- **stage input hash + `fork_run(skip_unchanged=True)` (R2)**: 每 stage 执行前记录
+  `stage_input_hashes` (fn 源码 + 执行前 state 的 sha256); fork 续跑时逐 stage 比对,
+  命中即重放历史 delta — 改 1 个 prompt 只重跑受影响链路。副作用 stage 标
+  `Stage.skip_unchanged=False` 拒跳。
+- **`CancelRegistry` graceful|hard (R1a)**: `cancel(task_id, mode="hard")` 立即打断运行中
+  stage (前提幂等), run 落 cp 后返回 cancelled 结果; `Stage.killable=False` 拒硬杀 →
+  `NotKillable`。外部 `task.cancel()` 行为不变。
+- **`Runtime.get_state(task_id)` + `CheckpointStore.list_tasks()` (R1b)**: 程序化查询
+  最新 run 全量 state / 跨 task 巡检。
+- **R3 端到端测试**: `fork_run` 即 rerun_from_stage 原语 (v0.6 已有), 补 prompt override +
+  history 保留验证。
+- **docs**: `docs/{cn,en}/api.md` 补 EnginePolicy / EventRecorder / CancelRegistry /
+  stage_input_hash 四节 (api_docs_coverage 测试钉住)。
+
+### Fixed
+- README 移除失效的 ROADMAP.md 链接 (017fdb9 移出仓遗留, CI 文档检查红)。
+
 ## [0.5.2] — 2026-09-14
 
 ### Changed

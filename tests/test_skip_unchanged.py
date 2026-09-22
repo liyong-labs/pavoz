@@ -167,3 +167,34 @@ async def test_fork_skip_respects_stage_opt_out(tmp_path):
         dag, "fu4", from_stage="s_side_effect", skip_unchanged=True)
     assert r.status == "done"
     assert ran == ["side"], "标了 skip_unchanged=False 的 stage 必须重跑"
+
+
+async def test_r3_rerun_from_stage_end_to_end(tmp_path):
+    """R3 (id=135): run_id + stage + prompt override → 只重跑受影响链路.
+
+    fork_run (v0.6) 即 rerun_from_stage 原语: 原 run checkpoint 不动
+    (history 保留), fork 新 run_id 成 latest. skip_unchanged 下无下游.
+    """
+    store = CheckpointStore(FileStorage(str(tmp_path / "r3")))
+    dag = DAG("r3")
+
+    @dag.stage()
+    async def s_a(ctx):
+        return {"prompt": "v1"}
+
+    @dag.stage(depends_on=["s_a"])
+    async def s_b(ctx):
+        return {"answer": "ans:" + ctx.state.get("prompt", "")}
+
+    rt = Runtime(checkpoint_store=store)
+    r1 = await rt.run(dag, "r3")
+    orig_run_id = r1.run_id
+    assert r1.state["answer"] == "ans:v1"
+
+    r2 = await rt.fork_run(dag, "r3", from_stage="s_b",
+                           overrides={"prompt": "v2"})
+    assert r2.status == "done"
+    assert r2.state["answer"] == "ans:v2"
+    assert r2.run_id != orig_run_id                    # fork 新 run_id
+    assert store.load("r3", orig_run_id) is not None   # 原 run history 保留
+    assert store.load_latest("r3").run_id == r2.run_id
