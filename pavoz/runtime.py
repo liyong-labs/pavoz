@@ -64,15 +64,18 @@ async def _noop_caller(kind: str, op: str, params: dict, meta: CallMeta) -> dict
 
 
 def _fill_error_context(result: RunResult, stage_name: str,
-                        err_class: str | None, state: dict) -> None:
-    """W1 (0.5.3): caller-friendly 错误上下文.
+                        err_class: str | None, state: dict,
+                        err_category: str | None = None) -> None:
+    """W1 (0.5.3) + D1.5 (0.5.4): caller-friendly 错误上下文.
 
-    失败/取消时填 failed_stage / retryable / state_summary — caller 接到
-    RunResult 即有"哪个 stage 错、能否重试、state 现场", 不必重跑诊断.
+    失败/取消时填 failed_stage / retryable / state_summary / error_category —
+    caller 接到 RunResult 即有"哪个 stage 错、能否重试、state 现场、业务类别",
+    不必重跑诊断.
     """
     result.failed_stage = stage_name
     result.retryable = None if err_class is None else err_class in (
         "RetryableError", "TimeoutError")
+    result.error_category = err_category
     try:
         result.state_summary = json.dumps(
             state, ensure_ascii=False, default=str)[:2048]
@@ -439,7 +442,7 @@ class Runtime:
                 self.cancel_registry._set_stage(task_id, name, stage.killable)
             input_hashes[name] = stage_input_hash(stage.fn, state)  # R2: 执行前记
             try:
-                status, new_state, err, err_class, producers, delta, attempts = \
+                status, new_state, err, err_class, err_category, producers, delta, attempts = \
                     await self._run_stage(
                         dag, stage.fn, name, task_id, run_id, state, stage.retries,
                         stage_deadline, producers,
@@ -494,7 +497,7 @@ class Runtime:
                 result.status = "failed"
                 result.error = err
                 result.error_class = err_class
-                _fill_error_context(result, name, err_class, state)
+                _fill_error_context(result, name, err_class, state, err_category)
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas, initial_state_saved, stage_ts,
                               _fork_overrides, input_hashes)
@@ -611,7 +614,7 @@ class Runtime:
                 else run_deadline
             )
 
-        status, new_state, err, err_class, _producers, _delta, _attempts = \
+        status, new_state, err, err_class, err_category, _producers, _delta, _attempts = \
             await self._run_stage(
                 dag, stage.fn, stage_name, task_id, run_id, state, stage.retries,
                 stage_deadline, producers, emit=False,
@@ -622,12 +625,12 @@ class Runtime:
             result.status = "failed"
             result.error = err
             result.error_class = err_class
-            _fill_error_context(result, stage_name, err_class, new_state)
+            _fill_error_context(result, stage_name, err_class, new_state, err_category)
         elif status == "cancelled":
             result.status = "cancelled"
             result.error = err
             result.error_class = err_class
-            _fill_error_context(result, stage_name, err_class, new_state)
+            _fill_error_context(result, stage_name, err_class, new_state, err_category)
         else:
             result.status = "done"
         return result
@@ -760,11 +763,14 @@ class Runtime:
         stage_deadline: float | None,
         producers: dict[str, str],
         emit: bool = True,
-    ) -> tuple[str, dict, str | None, str | None, dict, dict | None, int]:
-        """跑一个 stage (含 retry). 返 (status, new_state, error, error_class, producers, delta, attempts).
+    ) -> tuple[str, dict, str | None, str | None, str | None, dict, dict | None, int]:
+        """跑一个 stage (含 retry). 返 (status, new_state, error, error_class, error_category, producers, delta, attempts).
 
         error_class = 原始异常类名 (R2): 未知异常保真 (业务 PipelineError ≠ 引擎
         FatalError, 消费者分诊用); StageError/FatalError → 自身类名; cancelled → None.
+
+        error_category = caller raise 时传的业务类别 (D1.5, 0.5.4), 未传/未知异常
+        /cancelled → None. 透传到 RunResult.error_category.
 
         delta = stage 的 return dict (成功, 可能 {}), 失败 = None.
         ctx.attempt = 1-based 当前尝试次数, RetryableError 重试时 +1.
@@ -783,7 +789,7 @@ class Runtime:
                                              "status": "cancelled",
                                              "duration": time.time() - _t0,
                                              "error": "cancelled by caller"})
-                return "cancelled", state, "stage 已取消 (cancelled by caller)", None, producers, None, attempt
+                return "cancelled", state, "stage 已取消 (cancelled by caller)", None, None, producers, None, attempt
             attempt += 1
             if emit:
                 self._emit("stage_start", {"task_id": task_id, "run_id": run_id,
@@ -823,7 +829,7 @@ class Runtime:
                     self._emit("stage_end", {"task_id": task_id, "run_id": run_id, "stage": name,
                                              "attempt": attempt, "status": "done",
                                              "duration": time.time() - _t0, "error": None})
-                return "done", new_state, None, None, producers, delta, attempt
+                return "done", new_state, None, None, None, producers, delta, attempt
 
             except (StageError, FatalError) as e:
                 # 业务错误 / 程序 bug: 不重试
@@ -835,7 +841,7 @@ class Runtime:
                     self._emit("stage_end", {"task_id": task_id, "run_id": run_id, "stage": name,
                                              "attempt": attempt, "status": "failed",
                                              "duration": time.time() - _t0, "error": str(e)})
-                return "failed", state, str(e), type(e).__name__, producers, None, attempt
+                return "failed", state, str(e), type(e).__name__, getattr(e, "category", None), producers, None, attempt
             except (RetryableError, TimeoutError) as e:
                 if attempt <= retries:
                     # v0.9: full jitter (AWS 惯例) — 多 task 同步重试防雷群
@@ -861,14 +867,14 @@ class Runtime:
                     self._emit("stage_end", {"task_id": task_id, "run_id": run_id, "stage": name,
                                              "attempt": attempt, "status": "failed",
                                              "duration": time.time() - _t0, "error": str(e)})
-                return "failed", state, str(e), type(e).__name__, producers, None, attempt
+                return "failed", state, str(e), type(e).__name__, getattr(e, "category", None), producers, None, attempt
             except Exception as e:  # 未知异常 → FatalError 语义
                 logger.exception("task=%s run=%s stage=%s 未预期异常", task_id, run_id[:8], name)
                 if emit:
                     self._emit("stage_end", {"task_id": task_id, "run_id": run_id, "stage": name,
                                              "attempt": attempt, "status": "failed",
                                              "duration": time.time() - _t0, "error": str(e)})
-                return "failed", state, f"FatalError: {e}", type(e).__name__, producers, None, attempt
+                return "failed", state, f"FatalError: {e}", type(e).__name__, None, producers, None, attempt
 
     # ── timeout wrapper ─────────────────────────────────
     async def _with_timeout(self, fn, _req_unused, ctx, deadline, name, task_id):

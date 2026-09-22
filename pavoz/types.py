@@ -3,21 +3,35 @@
 __all__ = ["FatalError", "RetryableError", "RunResult", "StageError"]
 
 
-class StageError(Exception):
+class PavozError(Exception):
+    """pavoz 异常基类: 可携带 caller-friendly category (D1.5, 0.5.4).
+
+    category 是自由 string (建议值: LLM_TIMEOUT / SEARCH_NO_RESULT / CODE_BUG /
+    NETWORK / AUTH / INFRA / CHECKPOINT_LOAD_FAIL / STATE_VALIDATION /
+    PROTOCOL_BREACH — 9 类, ai@home id=188 ack). 不传 → None, runtime 透传到
+    RunResult.error_category, caller 据此分流重试/通知策略.
+    """
+
+    def __init__(self, *args, category: str | None = None):
+        super().__init__(*args)
+        self.category = category
+
+
+class StageError(PavozError):
     """业务错误. 不重试, runtime 直接走 fail 终态.
 
     例: 搜索结果为空 (业务上不可重试), 校验不通过.
     """
 
 
-class RetryableError(Exception):
+class RetryableError(PavozError):
     """可重试错误 (网络 / 超时 / 429 / 5xx). 扣 per-node retries 后重试.
 
     budget 耗尽仍未成功 → stage fail.
     """
 
 
-class FatalError(Exception):
+class FatalError(PavozError):
     """程序 bug (框架 / stage 代码错误). 立即终, 不重试, 不消耗 retries.
 
     例: state 类型不兼容, stage 签名错误.
@@ -48,12 +62,15 @@ class RunResult:
             未知异常 → False; done/cancelled → None.
         state_summary: 失败时 state 的截断 JSON (≤2048 字符, W1, 0.5.3) — caller
             接错即看现场, 不必重跑; done/cancelled → None.
+        error_category: 失败的业务类别 (D1.5, 0.5.4) — caller raise 时传
+            StageError(..., category="LLM_TIMEOUT") 等, runtime 透传; 未传 /
+            未知异常 / done / cancelled → None.
     """
 
     __slots__ = (
-        "dag_name", "error", "error_class", "failed_stage", "retryable",
-        "run_id", "stage_statuses", "stage_timings", "state", "state_summary",
-        "status", "task_id",
+        "dag_name", "error", "error_category", "error_class", "failed_stage",
+        "retryable", "run_id", "stage_statuses", "stage_timings", "state",
+        "state_summary", "status", "task_id",
     )
 
     def __init__(self, task_id: str, dag_name: str, run_id: str = ""):
@@ -69,6 +86,7 @@ class RunResult:
         self.failed_stage: str | None = None   # W1: 失败/取消所在的 stage
         self.retryable: bool | None = None     # W1: 失败是否可重试语义 (done/cancelled=None)
         self.state_summary: str | None = None  # W1: 失败时 state 截断 JSON (≤2048 字符)
+        self.error_category: str | None = None  # D1.5: caller 传的业务类别 (未传=None)
 
     def __repr__(self) -> str:
         short = self.run_id[:8] if self.run_id else "?"

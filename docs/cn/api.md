@@ -114,6 +114,10 @@ task 的 latest。
 - `error_class`: 失败时的原始异常类名 (如 `ValueError` / 业务 `PipelineError`),
   用于分诊 — 业务失败→调参重跑, 代码 bug→找人。done / cancelled 为 `None`。
   类名可随重构变化, 不作跨版本契约
+- `error_category`: 失败的业务类别 (v0.5.4) — caller `raise StageError(..., category="LLM_TIMEOUT")` 透传;
+  建议值 9 类: LLM_TIMEOUT / SEARCH_NO_RESULT / CODE_BUG / NETWORK / AUTH / INFRA /
+  CHECKPOINT_LOAD_FAIL / STATE_VALIDATION / PROTOCOL_BREACH (自由 string, 不强制枚举);
+  未传 / 未知异常 / done / cancelled 为 `None`
 - `stage_timings`: `{stage: 墙钟秒}` (含 retry 退避 sleep; 只含已执行的 stage)
 
 ### 失败语义 (不抛异常, 返回 failed)

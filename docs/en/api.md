@@ -129,6 +129,11 @@ run_id and becomes the task's latest.
   or a business `PipelineError`) — for triage: business failure → re-run with
   tweaked parameters, code bug → find the owner. `None` when done/cancelled. Class
   names may change across refactors; not a cross-version contract
+- `error_category`: business category of the failure (v0.5.4) — passed through from
+  `raise StageError(..., category="LLM_TIMEOUT")`; 9 suggested values: LLM_TIMEOUT /
+  SEARCH_NO_RESULT / CODE_BUG / NETWORK / AUTH / INFRA / CHECKPOINT_LOAD_FAIL /
+  STATE_VALIDATION / PROTOCOL_BREACH (free-form string, not an enforced enum);
+  `None` when not passed / unknown exception / done / cancelled
 - `stage_timings`: `{stage: wall-clock seconds}` (includes retry backoff sleeps;
   executed stages only)
 
