@@ -29,6 +29,8 @@
   history 保留验证。
 - **docs**: `docs/{cn,en}/api.md` 补 EnginePolicy / EventRecorder / CancelRegistry /
   stage_input_hash 四节 (api_docs_coverage 测试钉住)。
+- **docs**: 新增根级 `MIGRATION.md` — 0.5.2 → 0.5.3 升级指南 (additive 清单 +
+  各新能力最小用法, caller 0 必改项)。
 
 ### Fixed
 - README 移除失效的 ROADMAP.md 链接 (017fdb9 移出仓遗留, CI 文档检查红)。
