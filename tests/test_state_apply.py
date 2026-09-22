@@ -53,10 +53,10 @@ class TestParseSetFile:
         with pytest.raises(ValueError, match="禁词"):
             parse_set_file(str(f))
 
-    def test_nonexistent_file_rejected(self):
+    def test_nonexistent_file_rejected(self, tmp_path):
         from pavoz.state import parse_set_file
         with pytest.raises(ValueError, match="不存在"):
-            parse_set_file("/tmp/pavoz_nonexistent_file_42.json")
+            parse_set_file(str(tmp_path / "definitely_missing.json"))
 
     def test_json_nonfinite_literal_rejected(self, tmp_path):
         """裁决 #2 回归: JSON NaN/Infinity 字面量必须被 parse_constant 拒."""

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pavoz"
-version = "0.5.3"
+version = "0.5.4"
 description = "Micro/in-process Python DAG workflow engine — stdlib only, zero runtime deps, in your process"
 authors = [{ name = "liyong-labs" }]
 readme = "README.md"

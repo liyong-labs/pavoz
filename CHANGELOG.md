@@ -4,6 +4,32 @@
 
 ## [Unreleased]
 
+## [0.5.4] — 2026-09-22
+
+### Added (0.5.4 — diff/观测/viz/错误分类, 2026-09-22)
+
+- **`diff_runs` (R4)**: 两 run 的 stage 级 structured diff —
+  `CheckpointStore.diff_runs(task_id, run_id_a, run_id_b="")` 便捷形式 + 底层
+  `diff_runs(cp_a, cp_b)` (可跨 task)。输出全 JSON-serializable
+  (workflow_hash_changed / stages[].status,input_hash_changed,output_diff /
+  state_diff), 不做 AI 摘要 — 消费者自行解读。
+- **`pavoz.viz` (D1)**: `to_mermaid(dag)` / `to_graph_json(dag)` — DAG 只读导出
+  (mermaid 文本 / nodes+edges+topo_order), 零依赖 ≤51 行; pavoz 出数据不出 UI。
+- **`StageError.category` + `RunResult.error_category` (D1.5)**: caller raise 时
+  传业务类别 (9 类建议值 LLM_TIMEOUT/SEARCH_NO_RESULT/CODE_BUG/NETWORK/AUTH/
+  INFRA/CHECKPOINT_LOAD_FAIL/STATE_VALIDATION/PROTOCOL_BREACH, 自由 string 不强制
+  枚举), runtime 透传; 未传/未知异常/done/cancelled → None。additive 0 迁移。
+- **docs (D2+D2.5)**: 根级 `MIGRATION.md` (0.5.2 → 0.5.3 升级指南) +
+  `docs/cn/diff-runs.md` (diff_runs 使用指南, 含 ai-writing paper flow 真实案例
+  与薄委托 wrapper 指纹陷阱) + EnginePolicy docstring 补字段默认值/何时覆写。
+
+### Fixed
+
+- tests: `test_state_apply` 负路径测试字面量 `/tmp/...` 迁 `tmp_path` (B3 e2e
+  复测附带, 硬编码路径扫描归零)。
+
+## [0.5.3] — 2026-09-22
+
 ### Added (0.5.3 — caller 观测/操控面, 2026-09-22)
 
 - **RunResult 错误上下文 (W1)**: 失败/取消时带 `failed_stage` / `retryable`
