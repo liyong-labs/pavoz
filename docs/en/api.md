@@ -333,6 +333,16 @@ await task   # → RunResult(status="cancelled", failed_stage=..., retryable=Non
   result (callers must guarantee stage idempotency)
 - External `task.cancel()` from outside the registry still raises CancelledError
 
+### `diff_runs(cp_a, cp_b) -> dict` / `CheckpointStore.diff_runs(task, run_a, run_b="")`
+
+Stage-level structured diff of two runs (R4). Output is fully
+JSON-serializable, no AI summarization: `workflow_hash_changed` / `stages`
+(per-stage `status [a, b]`, `input_hash_changed`, path-level `output_diff`) /
+`state_diff` (final merged state, path-level). The store wrapper's
+`run_b=""` resolves the latest pointer (same convention as load_compatible);
+a missing checkpoint raises RuntimeError. Consumers (AI agents) read it to
+decide "what changed, which stages were affected, what to rerun".
+
 ## EventRecorder (v0.5.3)
 
 ```python

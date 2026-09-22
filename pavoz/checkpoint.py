@@ -18,13 +18,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .dag import DAG
-from .state import apply_overrides
+from .state import _state_diff, apply_overrides
 from .storage import StorageBackend
 
 __all__ = [
     "Checkpoint",
     "CheckpointMismatchError",
     "CheckpointStore",
+    "diff_runs",
     "stage_input_hash",
     "workflow_hash",
 ]
@@ -78,6 +79,38 @@ def stage_input_hash(fn, before_state: dict) -> str:
 
 class CheckpointMismatchError(Exception):
     """checkpoint 的 DAG hash ≠ 当前 DAG hash. 结构变了, 不能续跑."""
+
+
+def diff_runs(cp_a: Checkpoint, cp_b: Checkpoint) -> dict:
+    """两个 run 的 stage 级 structured diff (R4, 0.5.4; id=135 ai-writing).
+
+    输入: 同一 task (或任意) 两个 run 的 checkpoint. 输出全 JSON-serializable
+    (R5 闭合), 不做 AI 摘要 — 消费者 (AI agent / 人) 自行解读:
+      - workflow_hash_changed: 结构指纹是否不同 (不同则 stage 语义可能不可比)
+      - stages: stage 名 → {status: [a, b], input_hash_changed, output_diff}
+        (output_diff = 各 stage return delta 的 path 级差异, 复用 _state_diff)
+      - state_diff: 最终 merged state 的 path 级差异
+    """
+    names = set(cp_a.stage_deltas) | set(cp_b.stage_deltas) \
+        | set(cp_a.done_stages) | set(cp_b.done_stages)
+    stages: dict[str, dict] = {}
+    for name in sorted(names):
+        ha = cp_a.stage_input_hashes.get(name)
+        hb = cp_b.stage_input_hashes.get(name)
+        stages[name] = {
+            "status": [cp_a.stage_statuses.get(name), cp_b.stage_statuses.get(name)],
+            "input_hash_changed": (ha != hb) if ha and hb else None,
+            "output_diff": _state_diff(
+                cp_a.stage_deltas.get(name) or {}, cp_b.stage_deltas.get(name) or {}),
+        }
+    return {
+        "run_id_a": cp_a.run_id,
+        "run_id_b": cp_b.run_id,
+        "dag_name": cp_a.dag_name,
+        "workflow_hash_changed": cp_a.workflow_hash != cp_b.workflow_hash,
+        "stages": stages,
+        "state_diff": _state_diff(cp_a.state, cp_b.state),
+    }
 
 
 @dataclass
@@ -299,6 +332,21 @@ class CheckpointStore:
             if len(parts) >= 3:
                 out.add(parts[1])
         return sorted(out)
+
+    def diff_runs(self, task_id: str, run_id_a: str, run_id_b: str = "") -> dict:
+        """两个 run 的 stage 级 diff (R4, 0.5.4). run_id_b="" → latest 指针.
+
+        diff_runs(cp_a, cp_b) 的便捷包装: 加载两个 checkpoint 后委托.
+        任一 run 无 checkpoint → RuntimeError (caller 明确收到, 不静默空 diff).
+        """
+        cp_a = self.load(task_id, run_id_a)
+        cp_b = self.load(task_id, run_id_b) if run_id_b else self.load_latest(task_id)
+        if cp_a is None or cp_b is None:
+            missing = run_id_a if cp_a is None else (run_id_b or "latest")
+            raise RuntimeError(
+                f"task_id={task_id} run={missing} 无 checkpoint, 无法 diff"
+            )
+        return diff_runs(cp_a, cp_b)
 
     def load_latest(self, task_id: str) -> Checkpoint | None:
         """按指针文件加载该 task 最新 run 的 checkpoint.

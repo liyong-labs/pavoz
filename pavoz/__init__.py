@@ -22,6 +22,7 @@ from .checkpoint import (
     Checkpoint,
     CheckpointMismatchError,
     CheckpointStore,
+    diff_runs,
     stage_input_hash,
     workflow_hash,
 )
@@ -51,6 +52,7 @@ __all__ = [
     "Checkpoint",
     "CheckpointMismatchError",
     "CheckpointStore",
+    "diff_runs",
     "Ctx",
     "CycleError",
     "NotKillable",

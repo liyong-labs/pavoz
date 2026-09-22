@@ -309,6 +309,15 @@ await task   # → RunResult(status="cancelled", failed_stage=..., retryable=Non
   run() 捕获后落 checkpoint 并返回 cancelled 结果 (caller 须保证 stage 幂等)
 - 非 registry 来源的外部 task.cancel() 仍照旧抛 CancelledError
 
+### `diff_runs(cp_a, cp_b) -> dict` / `CheckpointStore.diff_runs(task, run_a, run_b="")`
+
+两个 run 的 stage 级 structured diff (R4)。输出全 JSON-serializable, 不做 AI 摘要:
+`workflow_hash_changed` / `stages` (每 stage 的 `status [a, b]`、
+`input_hash_changed`、`output_diff` path 级差异) / `state_diff` (最终 state
+path 级差异)。Store 包装的 `run_b=""` 取 latest 指针 (同 load_compatible 惯例);
+任一 run 无 checkpoint → RuntimeError。消费者 (AI agent) 据此判断"改了什么、
+哪些 stage 受影响、要不要重跑"。
+
 ## EventRecorder (v0.5.3)
 
 ```python
