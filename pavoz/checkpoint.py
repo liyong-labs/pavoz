@@ -45,11 +45,23 @@ def workflow_hash(dag: DAG) -> str:
 
 
 def _stage_source_id(fn) -> str:
-    """stage fn 的源码指纹. 动态构造 (getsource 失败) 退化为字节码 hex."""
+    """stage fn 的源码指纹. 动态构造 (getsource 失败) 退化为字节码指纹.
+
+    剥掉装饰器行: getsource 返回的块含 @dag.stage(...) — DAG 变量名/装饰
+    参数文本会污染指纹 (改个变量名 → 无谓 hash 变化 → 无谓重跑).
+    fallback 用 co_code + co_consts + co_names (仅 co_code 会对不同函数体
+    产生相同字节码序列, 常量/名字不在其中).
+    """
     try:
-        return inspect.getsource(fn)
+        src = inspect.getsource(fn)
     except (OSError, TypeError):
-        return fn.__code__.co_code.hex()
+        c = fn.__code__
+        return c.co_code.hex() + "|" + repr(c.co_consts) + "|" + repr(c.co_names)
+    lines = src.splitlines(keepends=True)
+    for i, ln in enumerate(lines):
+        if ln.lstrip().startswith(("async def", "def ")):
+            return "".join(lines[i:])
+    return src
 
 
 def stage_input_hash(fn, before_state: dict) -> str:

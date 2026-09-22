@@ -41,6 +41,8 @@ class Stage:
     depends_on: tuple[str, ...]
     retries: int = 0            # RetryableError 可重试次数
     timeout: float | None = None  # 本 stage 硬超时 (秒); None = 继承 run 的 absolute deadline
+    # R2 (0.5.3): False = 即使输入 hash 未变也强制重跑 (副作用 stage 标记).
+    skip_unchanged: bool = True
 
 
 class DAG:
@@ -61,6 +63,7 @@ class DAG:
         depends_on: list[str] | tuple[str, ...] | None = None,
         retries: int = 0,
         timeout: float | None = None,
+        skip_unchanged: bool = True,
     ) -> Callable[[NodeFn], NodeFn]:
         """@dag.stage() 装饰器. stage fn 签名: async def fn(ctx) -> dict (v1 统一 ctx-only)."""
 
@@ -78,6 +81,7 @@ class DAG:
                 depends_on=tuple(depends_on or ()),
                 retries=retries,
                 timeout=timeout,
+                skip_unchanged=skip_unchanged,
             )
             self._definition_order.append(name)
             return fn

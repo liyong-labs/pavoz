@@ -215,6 +215,7 @@ class Runtime:
         *,
         initial_state: dict | None = None,
         resume: bool = False,
+        skip_unchanged: bool | None = None,
     ) -> RunResult:
         """执行 DAG 一次 run.
 
@@ -238,8 +239,9 @@ class Runtime:
                 self._run_sem = asyncio.Semaphore(self.policy.max_concurrent_runs)
             async with self._run_sem:
                 return await self._run_inner(
-                    dag, task_id, initial_state, resume, eff_timeout)
-        return await self._run_inner(dag, task_id, initial_state, resume, eff_timeout)
+                    dag, task_id, initial_state, resume, eff_timeout, skip_unchanged)
+        return await self._run_inner(
+            dag, task_id, initial_state, resume, eff_timeout, skip_unchanged)
 
     async def _run_inner(
         self,
@@ -248,6 +250,7 @@ class Runtime:
         initial_state: dict | None,
         resume: bool,
         eff_timeout: float | None,
+        skip_unchanged: bool | None,
     ) -> RunResult:
         """run() 主体 (W3 拆出): 并发闸门之内. 语义与拆分前完全一致."""
         # task_id: 省略 → UUID4; 显式传值 → A3 校验 (直接进 storage key 路径)
@@ -340,10 +343,40 @@ class Runtime:
 
         order = dag.topo_order()
         steps_used = 0  # W3: stage attempt 总数 (max_steps 熔断计数)
+        # R2: skip_replay — 非 done 的 stage 若历史 status=done 且输入 hash
+        # 命中 (fn 源码 + 执行前 state 均未变) → 重放历史 delta, 不重跑.
+        # 只信历史 status="done" (失败 stage 永远重跑); 副作用 stage 用
+        # Stage.skip_unchanged=False 拒跳.
+        skip_replay = skip_unchanged if skip_unchanged is not None else (
+            self.policy.skip_unchanged if self.policy else False)
         for name in order:
             if name in done_stages:
                 continue
             stage = dag.stages[name]
+
+            # R2: 重放命中 (在 pre-exec 记录覆写 input_hashes 之前比对)
+            if skip_replay and stage.skip_unchanged \
+                    and stage_statuses.get(name) == "done" \
+                    and input_hashes.get(name) == stage_input_hash(stage.fn, state):
+                _dl = stage_deltas.get(name) or {}
+                state.update(_dl)
+                for _k in _dl:
+                    producers[_k] = name
+                done_stages.append(name)
+                result.stage_statuses = stage_statuses
+                result.state = state
+                self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
+                              producers, stage_deltas, initial_state_saved, stage_ts,
+                              _fork_overrides, input_hashes)
+                self._emit("stage_end", {"task_id": task_id, "run_id": run_id,
+                                         "stage": name, "attempt": 0,
+                                         "status": "skipped", "duration": 0.0,
+                                         "error": None})
+                logger.info(
+                    "task=%s run=%s stage=%s 输入 hash 命中, 重放历史结果 (skip_unchanged)",
+                    task_id, run_id[:8], name,
+                )
+                continue
 
             # W3: max_steps 熔断 — attempt 预算耗尽, 当前 stage 记 failed 终止
             if self.policy and self.policy.max_steps is not None \
@@ -545,6 +578,7 @@ class Runtime:
         from_stage: str,
         overrides: dict | None = None,
         run_id: str | None = None,
+        skip_unchanged: bool | None = None,
     ) -> RunResult:
         """从历史 run 的 from_stage 分支续跑: 前序 stage 结果复用 (不重跑),
         from_stage 及其后继用注入的 overrides 重跑. 原 run 的 checkpoint 不动,
@@ -559,6 +593,14 @@ class Runtime:
             pavoz fork-run --task-id X --from-stage s_b --input in.json
         from_stage 可以是: ① 已完成的 stage (截断重跑) ② 失败/未完成的 stage
         (其依赖已完成 — 修输入重跑失败点, 等价注入式 resume).
+
+        skip_unchanged (R2, 0.5.3): True 时从 from_stage 起沿 topo 序逐 stage
+        比对输入 hash (stage_input_hash = fn 源码 + 执行前 state) — 命中且该
+        stage 未标 skip_unchanged=False → 复用历史结果不重跑; 首个未命中处
+        截断, 其后全部重跑. from_stage 退化为"起点提示" (自身 hash 命中也被
+        跳过); overrides 注入会改变输入 hash → 必然重跑. None (缺省) 取
+        EnginePolicy.skip_unchanged. 副作用 stage 请标 skip_unchanged=False,
+        或自行保证幂等 — 跳过 = 副作用不发生.
 
         Returns: RunResult (fork run 的最终状态). 调用方可用 checkpoint
         state_stats / CLI state 查看 fork 分支.
@@ -603,6 +645,12 @@ class Runtime:
                 kept_deltas[_d] = _dl
                 for _k in _dl:
                     producers[_k] = _d
+
+        # R2: fork_cp 携带全量历史 (deltas/statuses/ts/hashes 含 from_stage 之后的)
+        # — run 循环在 skip_unchanged 开启时逐 stage 比对, 命中即重放. done_stages
+        # 仍截到 keep: 历史 status="done" 的条目由 run 循环重放判定, 失败/未跑的重跑.
+        _skip = skip_unchanged if skip_unchanged is not None else (
+            self.policy.skip_unchanged if self.policy else False)
         if overrides:
             # v0.9 深合并: v0.8 的 state.update 顶层浅替换会把嵌套 dict 的兄弟键抹掉
             # (--set llm.model=x → temperature/chain 全丢). apply_overrides 只覆盖
@@ -613,20 +661,19 @@ class Runtime:
                 producers[_k] = "<fork>"  # 仍按顶层 override key 记 producer
         deep_validate_state(state)
 
-        statuses = {s: st for s, st in cp.stage_statuses.items() if s in keep}
         fork_cp = Checkpoint(
             task_id=task_id,
             run_id=run_id or new_id(),
             dag_name=cp.dag_name,
             workflow_hash=cur_hash,
-            stage_statuses=statuses,
+            stage_statuses=dict(cp.stage_statuses),
             done_stages=keep,
             producers=producers,
             initial_state=dict(cp.initial_state),
-            stage_deltas=kept_deltas,
-            stage_ts={s: cp.stage_ts.get(s, 0.0) for s in keep},
+            stage_deltas=dict(cp.stage_deltas),
+            stage_ts=dict(cp.stage_ts),
             fork_overrides=dict(overrides or {}),
-            stage_input_hashes={s: cp.stage_input_hashes.get(s, "") for s in keep},
+            stage_input_hashes=dict(cp.stage_input_hashes),
         )
         self.checkpoint_store.save(fork_cp)  # save 同时把 latest 指针移到 fork
         logger.info(
@@ -635,7 +682,7 @@ class Runtime:
             fork_cp.run_id[:8], cp.run_id[:8], len(keep),
         )
         # 续跑: resume=True 读 latest (= fork cp), 跳过 keep, 从 from_stage 顺序执行
-        return await self.run(dag, task_id, resume=True)
+        return await self.run(dag, task_id, resume=True, skip_unchanged=_skip)
 
     # ── 单 stage ────────────────────────────────────────
     async def _run_stage(
