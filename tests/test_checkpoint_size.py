@@ -48,13 +48,13 @@ def _mk_cp() -> Checkpoint:
 
 
 def test_to_dict_has_no_state_key():
-    """v0.8: 序列化层无 state — 体积减半的核心."""
+    """v0.8: 序列化层无 state — 体积减半的核心. (R2: +stage_input_hashes)"""
     d = _mk_cp().to_dict()
     assert "state" not in d
     assert set(d) == {"task_id", "run_id", "dag_name", "workflow_hash",
                       "stage_statuses", "done_stages", "producers",
                       "initial_state", "stage_deltas", "stage_ts",
-                      "fork_overrides"}
+                      "fork_overrides", "stage_input_hashes"}
 
 
 def test_from_dict_rebuilds_state_equivalent():

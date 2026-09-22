@@ -17,7 +17,13 @@ per-node retry + absolute deadline) + Checkpoint (断点续跑) + TestPipe (回�
     StorageBackend / FileStorage / CheckpointStore
 """
 
-from .checkpoint import Checkpoint, CheckpointMismatchError, CheckpointStore, workflow_hash
+from .checkpoint import (
+    Checkpoint,
+    CheckpointMismatchError,
+    CheckpointStore,
+    stage_input_hash,
+    workflow_hash,
+)
 from .dag import DAG, CycleError, Stage, UnknownDepError
 from .events import EventRecorder
 from .policy import EnginePolicy
@@ -66,5 +72,6 @@ __all__ = [
     "merge_overrides",
     "parse_set_args",
     "parse_set_file",
+    "stage_input_hash",
     "workflow_hash",
 ]

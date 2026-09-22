@@ -34,6 +34,7 @@ from .checkpoint import (
     Checkpoint,
     CheckpointMismatchError,
     CheckpointStore,
+    stage_input_hash,
     workflow_hash,
 )
 from .dag import DAG
@@ -294,6 +295,8 @@ class Runtime:
         # v0.8: fork overrides 随每次 save 携带 — fork_cp 首写外, resume 续跑
         # 的每轮 _save_cp 都必须带上, 否则 overrides 只活到第一次 save 就被丢
         _fork_overrides: dict = {}
+        # R2 (0.5.3): stage 名 → 执行输入 hash, 随 cp 持久化 (fork skip_unchanged 用)
+        input_hashes: dict[str, str] = {}
 
         # ── resume: 恢复 checkpoint 状态 ──
         if cp is not None:
@@ -313,6 +316,7 @@ class Runtime:
             stage_ts = dict(cp.stage_ts)              # v0.7: resume 续记
             initial_state_saved = dict(cp.initial_state)
             _fork_overrides = dict(cp.fork_overrides)  # fork 分支续保
+            input_hashes = dict(cp.stage_input_hashes)  # R2: resume 续记
             result.state = state
             logger.info(
                 "task=%s run=%s resume: 已完成 %d stages",
@@ -355,7 +359,7 @@ class Runtime:
                 _fill_error_context(result, name, "MaxStepsExceeded", state)
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas, initial_state_saved, stage_ts,
-                              _fork_overrides)
+                              _fork_overrides, input_hashes)
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": "failed"})
                 logger.warning(
@@ -374,6 +378,7 @@ class Runtime:
                 )
 
             _st0 = time.time()
+            input_hashes[name] = stage_input_hash(stage.fn, state)  # R2: 执行前记
             status, new_state, err, err_class, producers, delta, attempts = \
                 await self._run_stage(
                     dag, stage.fn, name, task_id, run_id, state, stage.retries,
@@ -409,7 +414,7 @@ class Runtime:
                 _fill_error_context(result, name, err_class, state)
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas, initial_state_saved, stage_ts,
-                              _fork_overrides)
+                              _fork_overrides, input_hashes)
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": result.status})
                 return result
@@ -420,7 +425,7 @@ class Runtime:
             done_stages.append(name)
             self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                           producers, stage_deltas, initial_state_saved, stage_ts,
-                          _fork_overrides)
+                          _fork_overrides, input_hashes)
             logger.info(
                 "task=%s run=%s stage=%s done (len state=%d)",
                 task_id, run_id[:8], name, len(state),
@@ -621,6 +626,7 @@ class Runtime:
             stage_deltas=kept_deltas,
             stage_ts={s: cp.stage_ts.get(s, 0.0) for s in keep},
             fork_overrides=dict(overrides or {}),
+            stage_input_hashes={s: cp.stage_input_hashes.get(s, "") for s in keep},
         )
         self.checkpoint_store.save(fork_cp)  # save 同时把 latest 指针移到 fork
         logger.info(
@@ -789,7 +795,8 @@ class Runtime:
                  stage_deltas: dict | None = None,
                  initial_state: dict | None = None,
                  stage_ts: dict | None = None,
-                 fork_overrides: dict | None = None) -> None:
+                 fork_overrides: dict | None = None,
+                 input_hashes: dict | None = None) -> None:
         if self.checkpoint_store is None:
             return
         try:
@@ -805,6 +812,7 @@ class Runtime:
                 stage_deltas=dict(stage_deltas or {}),
                 stage_ts=dict(stage_ts or {}),
                 fork_overrides=dict(fork_overrides or {}),
+                stage_input_hashes=dict(input_hashes or {}),
             )
             self.checkpoint_store.save(cp)
         except Exception:

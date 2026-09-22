@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 from dataclasses import dataclass, field
 from typing import Any
@@ -20,7 +21,13 @@ from .dag import DAG
 from .state import apply_overrides
 from .storage import StorageBackend
 
-__all__ = ["Checkpoint", "CheckpointMismatchError", "CheckpointStore", "workflow_hash"]
+__all__ = [
+    "Checkpoint",
+    "CheckpointMismatchError",
+    "CheckpointStore",
+    "stage_input_hash",
+    "workflow_hash",
+]
 
 
 def workflow_hash(dag: DAG) -> str:
@@ -34,6 +41,26 @@ def workflow_hash(dag: DAG) -> str:
         s = dag.stages[name]
         rows.append(f"{name}:dep={','.join(s.depends_on)}:retry={s.retries}:to={s.timeout}")
     raw = "\n".join(rows)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def _stage_source_id(fn) -> str:
+    """stage fn 的源码指纹. 动态构造 (getsource 失败) 退化为字节码 hex."""
+    try:
+        return inspect.getsource(fn)
+    except (OSError, TypeError):
+        return fn.__code__.co_code.hex()
+
+
+def stage_input_hash(fn, before_state: dict) -> str:
+    """stage 执行输入指纹 = fn 源码 + 执行前全量 state (R2, 0.5.3).
+
+    改 fn (如改 prompt) 或上游产出变化 → hash 变 → fork/resume 侧判定需重跑;
+    两者都没变 → 下游可安全跳过 (skip_unchanged). 纯函数语义由 caller 保证
+    (副作用 stage 标 Stage.skip_unchanged=False 拒跳).
+    """
+    raw = _stage_source_id(fn) + "|" + json.dumps(
+        before_state, ensure_ascii=False, sort_keys=True, default=str)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -68,6 +95,9 @@ class Checkpoint:
     # 曾靠全量 state 落盘持久化; state 不落盘后 overrides 必须显式存, 否则
     # fork resume 时 rebuild 丢 overrides → 从 from_stage 重跑用旧输入 (bug).
     fork_overrides: dict[str, Any] = field(default_factory=dict)
+    # R2 (0.5.3): stage 名 → 执行输入 hash (fn 源码 + 执行前 state). fork
+    # skip_unchanged 判定用; 旧 cp 无记录时跳过逻辑自然退化为"全重跑" (A7 .get 默认).
+    stage_input_hashes: dict[str, str] = field(default_factory=dict)
 
     @property
     def state(self) -> dict[str, Any]:
@@ -90,6 +120,7 @@ class Checkpoint:
             "stage_deltas": self.stage_deltas,
             "stage_ts": self.stage_ts,
             "fork_overrides": self.fork_overrides,
+            "stage_input_hashes": self.stage_input_hashes,
         }
 
     @classmethod
@@ -107,6 +138,7 @@ class Checkpoint:
             stage_deltas=dict(d.get("stage_deltas") or {}),
             stage_ts=dict(d.get("stage_ts") or {}),
             fork_overrides=dict(d.get("fork_overrides") or {}),
+            stage_input_hashes=dict(d.get("stage_input_hashes") or {}),
         )
 
     def rebuild_state(self) -> dict[str, Any]:

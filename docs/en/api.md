@@ -295,6 +295,14 @@ assert result2.state == cp.state       # same stage outputs in → same graph be
 
 ## `EnginePolicy` (v0.5.3)
 
+### `stage_input_hash(fn, before_state) -> str`
+
+Fingerprint of a stage's execution inputs (first 16 hex of sha256) =
+fn source + the full pre-execution state. Recorded automatically into the
+checkpoint's `stage_input_hashes` before each stage runs; `fork_run(skip_unchanged=True)`
+uses it to skip downstream stages whose inputs are unchanged (side-effecting
+stages opt out with `Stage.skip_unchanged=False`).
+
 ```python
 from pavoz import EnginePolicy, Runtime
 

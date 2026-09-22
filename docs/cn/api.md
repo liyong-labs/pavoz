@@ -273,6 +273,13 @@ assert result2.state == cp.state       # 相同 stage 输出进 → 相同图行
 
 ## EnginePolicy (v0.5.3)
 
+### `stage_input_hash(fn, before_state) -> str`
+
+stage 执行输入指纹 (sha256 前 16 hex) = fn 源码 + 执行前全量 state。run 期间
+每个 stage 执行前自动记录进 checkpoint 的 `stage_input_hashes`，fork_run
+`skip_unchanged=True` 时据此跳过输入未变的下游 stage（副作用 stage 用
+`Stage.skip_unchanged=False` 拒跳）。
+
 ```python
 from pavoz import EnginePolicy, Runtime
 
