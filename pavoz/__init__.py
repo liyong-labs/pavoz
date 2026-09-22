@@ -30,6 +30,7 @@ from .dag import DAG, CycleError, Stage, UnknownDepError
 from .events import EventRecorder
 from .policy import EnginePolicy
 from .runtime import CallResult, Ctx, Runtime
+from .viz import to_graph_json, to_mermaid
 from .state import (
     ReadOnlyStateView,
     StateConflictError,
@@ -72,6 +73,8 @@ __all__ = [
     "TestPipe",
     "UnknownDepError",
     "__version__",
+    "to_graph_json",
+    "to_mermaid",
     "apply_overrides",
     "load_storage",
     "merge_overrides",

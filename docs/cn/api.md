@@ -271,6 +271,30 @@ assert result2.state == cp.state       # 相同 stage 输出进 → 相同图行
   `CheckpointMismatchError`; pre-M2 (v0.5.0) cp 无 `stage_deltas` →
   `RuntimeError` (重跑一次)。真实 run 的手写 mock 回归可被它替代
 
+## DAG viz export (v0.5.4)
+
+```python
+from pavoz import to_mermaid, to_graph_json
+
+# 嵌入 README / 飞书
+print(to_mermaid(dag))
+# → graph LR
+#     s_a["s_a"]
+#     s_b["s_b"]
+#     s_a --> s_b
+
+# 前端 Vue / dagre / cytoscape 渲染
+import json
+graph = to_graph_json(dag)
+# {"dag_name": ..., "nodes": [{id, name, depends_on, retries, timeout}, ...],
+#  "edges": [{from, to}, ...], "topo_order": [...]}
+```
+
+- **只出数据**, caller 自渲染 (pavez 出 UI/drag-drop/server = 触 #4 红线)
+- `to_mermaid(direction="LR"|"TD")` 第二个参数可调布局方向
+- `to_graph_json()` 全 JSON-serializable, 喂 wire 协议/前端免中间层
+- 零依赖, pavoz core 不动
+
 ## EnginePolicy (v0.5.3)
 
 ### `stage_input_hash(fn, before_state) -> str`

@@ -293,6 +293,30 @@ assert result2.state == cp.state       # same stage outputs in → same graph be
   checkpoint without `stage_deltas` raises `RuntimeError` (re-run once).
   Hand-written mocks for real runs can be replaced by replaying the checkpoint.
 
+## DAG viz export (v0.5.4)
+
+```python
+from pavoz import to_mermaid, to_graph_json
+
+# embed in README / Feishu
+print(to_mermaid(dag))
+# → graph LR
+#     s_a["s_a"]
+#     s_b["s_b"]
+#     s_a --> s_b
+
+# frontend Vue / dagre / cytoscape rendering
+import json
+graph = to_graph_json(dag)
+# {"dag_name": ..., "nodes": [{id, name, depends_on, retries, timeout}, ...],
+#  "edges": [{from, to}, ...], "topo_order": [...]}
+```
+
+- **Data only** — caller renders (pavez shipping UI / drag-drop / server would violate the `独立性` principle)
+- `to_mermaid(direction="LR"|"TD")` second arg picks the layout direction
+- `to_graph_json()` is fully JSON-serializable — feed wire protocols / UI without an intermediate layer
+- Zero deps; pavoz core is untouched
+
 ## `EnginePolicy` (v0.5.3)
 
 ### `stage_input_hash(fn, before_state) -> str`
