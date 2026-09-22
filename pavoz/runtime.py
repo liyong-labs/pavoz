@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import random
 import time
 from collections.abc import Awaitable, Callable
@@ -179,6 +180,7 @@ class Runtime:
     default_timeout: float | None = None  # 整个 run 的 absolute deadline (秒)
     on_event: Callable[[str, dict], None] | None = None  # v0.9: 生命周期事件钩子
     cancel_check: Callable[[str], bool] | None = None  # v0.9: task_id → 已取消?
+    debug_dir: str | None = None  # W2: 每 stage 后落 state 快照 JSON (调试)
 
     # ── 事件 ────────────────────────────────────────────
     def _emit(self, event: str, data: dict) -> None:
@@ -330,6 +332,8 @@ class Runtime:
             stage_statuses[name] = status
             result.stage_statuses = stage_statuses
             result.state = state
+            self._dump_debug(task_id, run_id, name, status, state,
+                             time.time() - _st0)
 
             if status == "cancelled":
                 result.status = "cancelled"
@@ -705,6 +709,24 @@ class Runtime:
             raise TimeoutError(f"stage '{name}' 超时 ({timeout:.0f}s)") from None
 
     # ── checkpoint ──────────────────────────────────────
+    def _dump_debug(self, task_id: str, run_id: str, stage: str,
+                    status: str, state: dict, duration: float) -> None:
+        """W2 (0.5.3): debug_dir 每 stage 快照. 失败不杀 run (与 _save_cp 同语义)."""
+        if self.debug_dir is None:
+            return
+        try:
+            d = os.path.join(self.debug_dir, task_id)
+            os.makedirs(d, exist_ok=True)
+            seq = len([f for f in os.listdir(d) if f.endswith(".json")])
+            path = os.path.join(d, f"{seq:02d}_{stage}_{status}.json")
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump({"task_id": task_id, "run_id": run_id, "stage": stage,
+                           "status": status, "duration": duration, "state": state},
+                          f, ensure_ascii=False, default=str)
+        except Exception:
+            logger.exception("debug_dir 落盘失败 (non-fatal) task=%s stage=%s",
+                             task_id, stage)
+
     def _save_cp(self, task_id: str, run_id: str, dag: DAG,
                  done_stages: list, statuses: dict, producers: dict | None = None,
                  stage_deltas: dict | None = None,
