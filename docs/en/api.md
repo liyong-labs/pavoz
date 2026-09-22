@@ -293,6 +293,21 @@ assert result2.state == cp.state       # same stage outputs in → same graph be
   checkpoint without `stage_deltas` raises `RuntimeError` (re-run once).
   Hand-written mocks for real runs can be replaced by replaying the checkpoint.
 
+## `EnginePolicy` (v0.5.3)
+
+```python
+from pavoz import EnginePolicy, Runtime
+
+policy = EnginePolicy(
+    default_timeout=600,        # whole-run deadline; explicit Runtime.default_timeout wins
+    max_steps=50,               # total stage attempts (incl. retries); exceeded → failed
+    backoff_max=30.0,           # RetryableError backoff cap in seconds
+    max_concurrent_runs=4,      # in-process concurrent run cap per Runtime
+    skip_unchanged=False,       # default for fork_run when not passed explicitly
+)
+rt = Runtime(policy=policy)     # additive: without a policy, behavior is unchanged
+```
+
 ## EventRecorder (v0.5.3)
 
 ```python

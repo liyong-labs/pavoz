@@ -37,6 +37,7 @@ from .checkpoint import (
     workflow_hash,
 )
 from .dag import DAG
+from .policy import EnginePolicy
 from .state import (
     ReadOnlyStateView,
     _validate_dict_keys,
@@ -181,6 +182,9 @@ class Runtime:
     on_event: Callable[[str, dict], None] | None = None  # v0.9: 生命周期事件钩子
     cancel_check: Callable[[str], bool] | None = None  # v0.9: task_id → 已取消?
     debug_dir: str | None = None  # W2: 每 stage 后落 state 快照 JSON (调试)
+    policy: EnginePolicy | None = None  # W3: run 级策略 (additive, 显式参数优先)
+    _run_sem: asyncio.Semaphore | None = field(
+        default=None, init=False, repr=False, compare=False)  # W3: 并发闸 (懒建)
 
     # ── 事件 ────────────────────────────────────────────
     def _emit(self, event: str, data: dict) -> None:
@@ -222,6 +226,29 @@ class Runtime:
             resume: True → 从该 task 最新 checkpoint 续跑 (复用原 run_id).
                      无 cp / 已全部完成 → RuntimeError. 重跑用 resume=False.
         """
+        # W3: 有效 deadline = 显式参数优先, 缺省看 policy; 绝对时刻在 _run_inner
+        # 获得并发闸门后才起算 (排队不烧 deadline).
+        _pto = self.policy.default_timeout if self.policy else None
+        eff_timeout = (
+            self.default_timeout if self.default_timeout is not None else _pto
+        )
+        if self.policy and self.policy.max_concurrent_runs:
+            if self._run_sem is None:
+                self._run_sem = asyncio.Semaphore(self.policy.max_concurrent_runs)
+            async with self._run_sem:
+                return await self._run_inner(
+                    dag, task_id, initial_state, resume, eff_timeout)
+        return await self._run_inner(dag, task_id, initial_state, resume, eff_timeout)
+
+    async def _run_inner(
+        self,
+        dag: DAG,
+        task_id: str | None,
+        initial_state: dict | None,
+        resume: bool,
+        eff_timeout: float | None,
+    ) -> RunResult:
+        """run() 主体 (W3 拆出): 并发闸门之内. 语义与拆分前完全一致."""
         # task_id: 省略 → UUID4; 显式传值 → A3 校验 (直接进 storage key 路径)
         if task_id is None:
             task_id = new_id()
@@ -302,16 +329,40 @@ class Runtime:
 
         deep_validate_state(state)
 
-        run_deadline = time.time() + self.default_timeout if self.default_timeout else None
+        run_deadline = time.time() + eff_timeout if eff_timeout else None
 
         self._emit("run_start", {"task_id": task_id, "run_id": run_id,
                                  "dag": dag.name, "resume": cp is not None})
 
         order = dag.topo_order()
+        steps_used = 0  # W3: stage attempt 总数 (max_steps 熔断计数)
         for name in order:
             if name in done_stages:
                 continue
             stage = dag.stages[name]
+
+            # W3: max_steps 熔断 — attempt 预算耗尽, 当前 stage 记 failed 终止
+            if self.policy and self.policy.max_steps is not None \
+                    and steps_used >= self.policy.max_steps:
+                stage_statuses[name] = "failed"
+                result.stage_statuses = stage_statuses
+                result.state = state
+                result.status = "failed"
+                result.error = (
+                    f"max_steps ({self.policy.max_steps}) exceeded at stage '{name}'"
+                )
+                result.error_class = "MaxStepsExceeded"
+                _fill_error_context(result, name, "MaxStepsExceeded", state)
+                self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
+                              producers, stage_deltas, initial_state_saved, stage_ts,
+                              _fork_overrides)
+                self._emit("run_end", {"task_id": task_id, "run_id": run_id,
+                                       "dag": dag.name, "status": "failed"})
+                logger.warning(
+                    "task=%s run=%s max_steps=%d 熔断 at stage=%s",
+                    task_id, run_id[:8], self.policy.max_steps, name,
+                )
+                return result
 
             # per-stage timeout: min(stage.timeout, remaining run deadline)
             stage_deadline: float | None = None
@@ -323,10 +374,12 @@ class Runtime:
                 )
 
             _st0 = time.time()
-            status, new_state, err, err_class, producers, delta = await self._run_stage(
-                dag, stage.fn, name, task_id, run_id, state, stage.retries,
-                stage_deadline, producers,
-            )
+            status, new_state, err, err_class, producers, delta, attempts = \
+                await self._run_stage(
+                    dag, stage.fn, name, task_id, run_id, state, stage.retries,
+                    stage_deadline, producers,
+                )
+            steps_used += attempts
             result.stage_timings[name] = time.time() - _st0
             state = new_state
             stage_statuses[name] = status
@@ -457,10 +510,11 @@ class Runtime:
                 else run_deadline
             )
 
-        status, new_state, err, err_class, _producers, _delta = await self._run_stage(
-            dag, stage.fn, stage_name, task_id, run_id, state, stage.retries,
-            stage_deadline, producers, emit=False,
-        )
+        status, new_state, err, err_class, _producers, _delta, _attempts = \
+            await self._run_stage(
+                dag, stage.fn, stage_name, task_id, run_id, state, stage.retries,
+                stage_deadline, producers, emit=False,
+            )
         result.state = new_state
         result.stage_statuses = {stage_name: status}
         if status == "failed":
@@ -590,14 +644,15 @@ class Runtime:
         stage_deadline: float | None,
         producers: dict[str, str],
         emit: bool = True,
-    ) -> tuple[str, dict, str | None, str | None, dict, dict | None]:
-        """跑一个 stage (含 retry). 返 (status, new_state, error, error_class, producers, delta).
+    ) -> tuple[str, dict, str | None, str | None, dict, dict | None, int]:
+        """跑一个 stage (含 retry). 返 (status, new_state, error, error_class, producers, delta, attempts).
 
         error_class = 原始异常类名 (R2): 未知异常保真 (业务 PipelineError ≠ 引擎
         FatalError, 消费者分诊用); StageError/FatalError → 自身类名; cancelled → None.
 
         delta = stage 的 return dict (成功, 可能 {}), 失败 = None.
         ctx.attempt = 1-based 当前尝试次数, RetryableError 重试时 +1.
+        attempts = 实际执行 attempt 总数 (W3 max_steps 熔断计数用).
         emit=False → 不发生命周期事件 (单 stage 重放不是正式 run).
         """
         attempt = 0
@@ -612,7 +667,7 @@ class Runtime:
                                              "status": "cancelled",
                                              "duration": time.time() - _t0,
                                              "error": "cancelled by caller"})
-                return "cancelled", state, "stage 已取消 (cancelled by caller)", None, producers, None
+                return "cancelled", state, "stage 已取消 (cancelled by caller)", None, producers, None, attempt
             attempt += 1
             if emit:
                 self._emit("stage_start", {"task_id": task_id, "run_id": run_id,
@@ -652,7 +707,7 @@ class Runtime:
                     self._emit("stage_end", {"task_id": task_id, "run_id": run_id, "stage": name,
                                              "attempt": attempt, "status": "done",
                                              "duration": time.time() - _t0, "error": None})
-                return "done", new_state, None, None, producers, delta
+                return "done", new_state, None, None, producers, delta, attempt
 
             except (StageError, FatalError) as e:
                 # 业务错误 / 程序 bug: 不重试
@@ -664,11 +719,13 @@ class Runtime:
                     self._emit("stage_end", {"task_id": task_id, "run_id": run_id, "stage": name,
                                              "attempt": attempt, "status": "failed",
                                              "duration": time.time() - _t0, "error": str(e)})
-                return "failed", state, str(e), type(e).__name__, producers, None
+                return "failed", state, str(e), type(e).__name__, producers, None, attempt
             except (RetryableError, TimeoutError) as e:
                 if attempt <= retries:
                     # v0.9: full jitter (AWS 惯例) — 多 task 同步重试防雷群
-                    backoff = random.uniform(0, min(2 ** (attempt - 1), 30))
+                    # W3: 退避上限走 EnginePolicy.backoff_max (缺省 30, 原硬编码)
+                    _bmax = self.policy.backoff_max if self.policy else 30.0
+                    backoff = random.uniform(0, min(2 ** (attempt - 1), _bmax))
                     logger.warning(
                         "task=%s run=%s stage=%s attempt=%d/%d %s, 退避 %ss: %s",
                         task_id, run_id[:8], name, attempt, retries + 1,
@@ -688,14 +745,14 @@ class Runtime:
                     self._emit("stage_end", {"task_id": task_id, "run_id": run_id, "stage": name,
                                              "attempt": attempt, "status": "failed",
                                              "duration": time.time() - _t0, "error": str(e)})
-                return "failed", state, str(e), type(e).__name__, producers, None
+                return "failed", state, str(e), type(e).__name__, producers, None, attempt
             except Exception as e:  # 未知异常 → FatalError 语义
                 logger.exception("task=%s run=%s stage=%s 未预期异常", task_id, run_id[:8], name)
                 if emit:
                     self._emit("stage_end", {"task_id": task_id, "run_id": run_id, "stage": name,
                                              "attempt": attempt, "status": "failed",
                                              "duration": time.time() - _t0, "error": str(e)})
-                return "failed", state, f"FatalError: {e}", type(e).__name__, producers, None
+                return "failed", state, f"FatalError: {e}", type(e).__name__, producers, None, attempt
 
     # ── timeout wrapper ─────────────────────────────────
     async def _with_timeout(self, fn, _req_unused, ctx, deadline, name, task_id):

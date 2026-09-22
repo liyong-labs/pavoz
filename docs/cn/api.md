@@ -271,6 +271,21 @@ assert result2.state == cp.state       # 相同 stage 输出进 → 相同图行
   `CheckpointMismatchError`; pre-M2 (v0.5.0) cp 无 `stage_deltas` →
   `RuntimeError` (重跑一次)。真实 run 的手写 mock 回归可被它替代
 
+## EnginePolicy (v0.5.3)
+
+```python
+from pavoz import EnginePolicy, Runtime
+
+policy = EnginePolicy(
+    default_timeout=600,        # 整 run deadline; Runtime.default_timeout 显式给值时优先
+    max_steps=50,               # stage attempt 总数上限 (含重试), 超限熔断 failed
+    backoff_max=30.0,           # RetryableError 退避上限秒
+    max_concurrent_runs=4,      # 同一 Runtime 进程内并发 run 上限
+    skip_unchanged=False,       # fork_run 未显式传时的 skip_unchanged 默认
+)
+rt = Runtime(policy=policy)     # additive: 不传 policy 行为与旧版完全一致
+```
+
 ## EventRecorder (v0.5.3)
 
 ```python
