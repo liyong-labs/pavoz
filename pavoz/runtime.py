@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import random
 import time
@@ -56,6 +57,23 @@ async def _noop_caller(kind: str, op: str, params: dict, meta: CallMeta) -> dict
     必须是 async — Ctx.call 恒 await caller (sync fn 会被 await 崩 TypeError).
     """
     return CallResult(kind=kind, op=op, params=params)
+
+
+def _fill_error_context(result: RunResult, stage_name: str,
+                        err_class: str | None, state: dict) -> None:
+    """W1 (0.5.3): caller-friendly 错误上下文.
+
+    失败/取消时填 failed_stage / retryable / state_summary — caller 接到
+    RunResult 即有"哪个 stage 错、能否重试、state 现场", 不必重跑诊断.
+    """
+    result.failed_stage = stage_name
+    result.retryable = None if err_class is None else err_class in (
+        "RetryableError", "TimeoutError")
+    try:
+        result.state_summary = json.dumps(
+            state, ensure_ascii=False, default=str)[:2048]
+    except (TypeError, ValueError):
+        result.state_summary = None
 
 
 class CallResult(dict):
@@ -317,6 +335,7 @@ class Runtime:
                 result.status = "cancelled"
                 result.error = err
                 result.error_class = err_class
+                _fill_error_context(result, name, err_class, state)
                 result.stage_statuses[name] = "cancelled"
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": "cancelled"})
@@ -330,6 +349,7 @@ class Runtime:
                 result.status = "failed"
                 result.error = err
                 result.error_class = err_class
+                _fill_error_context(result, name, err_class, state)
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas, initial_state_saved, stage_ts,
                               _fork_overrides)
@@ -443,10 +463,12 @@ class Runtime:
             result.status = "failed"
             result.error = err
             result.error_class = err_class
+            _fill_error_context(result, stage_name, err_class, new_state)
         elif status == "cancelled":
             result.status = "cancelled"
             result.error = err
             result.error_class = err_class
+            _fill_error_context(result, stage_name, err_class, new_state)
         else:
             result.status = "done"
         return result

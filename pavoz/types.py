@@ -42,11 +42,18 @@ class RunResult:
             诊断元数据 (消费者据此分派告警: 业务失败→调参重跑, 代码 bug→找人), 类名
             可随重构变化, 不作跨版本稳定契约. cancelled → None; done → None.
             (R2, 2026-09-10 ai-research PR: 引擎吞异常不能连类型一起吞.)
+        failed_stage: 失败/取消所在的 stage 名 (W1, 0.5.3); done → None.
+        retryable: 失败是否具可重试语义 (W1, 0.5.3) — RetryableError/TimeoutError
+            → True (重试耗尽但本质可重试, caller 可择机重跑), StageError/FatalError/
+            未知异常 → False; done/cancelled → None.
+        state_summary: 失败时 state 的截断 JSON (≤2048 字符, W1, 0.5.3) — caller
+            接错即看现场, 不必重跑; done/cancelled → None.
     """
 
     __slots__ = (
-        "dag_name", "error", "error_class", "run_id", "stage_statuses",
-        "stage_timings", "state", "status", "task_id",
+        "dag_name", "error", "error_class", "failed_stage", "retryable",
+        "run_id", "stage_statuses", "stage_timings", "state", "state_summary",
+        "status", "task_id",
     )
 
     def __init__(self, task_id: str, dag_name: str, run_id: str = ""):
@@ -59,6 +66,9 @@ class RunResult:
         self.status: str = "running"
         self.error: str | None = None
         self.error_class: str | None = None
+        self.failed_stage: str | None = None   # W1: 失败/取消所在的 stage
+        self.retryable: bool | None = None     # W1: 失败是否可重试语义 (done/cancelled=None)
+        self.state_summary: str | None = None  # W1: 失败时 state 截断 JSON (≤2048 字符)
 
     def __repr__(self) -> str:
         short = self.run_id[:8] if self.run_id else "?"
