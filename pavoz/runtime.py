@@ -520,6 +520,19 @@ class Runtime:
         return result
 
     # ── 单 stage 重放 (M3 调试) ─────────────────────────
+    def get_state(self, task_id: str) -> dict:
+        """查 task 最新 run 的全量 state (R1b, 0.5.3, 同步只读).
+
+        rebuild 自 initial + deltas + fork overrides (Checkpoint.state property).
+        无 checkpoint_store / 无 checkpoint → RuntimeError.
+        """
+        if self.checkpoint_store is None:
+            raise RuntimeError("get_state requires checkpoint_store")
+        cp = self.checkpoint_store.load_latest(task_id)
+        if cp is None:
+            raise RuntimeError(f"task_id={task_id} 无 checkpoint")
+        return cp.state
+
     async def run_stage(
         self,
         dag: DAG,

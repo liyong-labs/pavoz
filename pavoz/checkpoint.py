@@ -291,6 +291,15 @@ class CheckpointStore:
                 run_ids.append(tail[: -len("/checkpoint")])
         return sorted(run_ids)
 
+    def list_tasks(self) -> list[str]:
+        """列 storage 里出现过的所有 task_id (字典序). 跨 task 巡检/后台用 (R1b)."""
+        out: set[str] = set()
+        for k in self.storage.list_keys("runs/"):
+            parts = k.split("/")
+            if len(parts) >= 3:
+                out.add(parts[1])
+        return sorted(out)
+
     def load_latest(self, task_id: str) -> Checkpoint | None:
         """按指针文件加载该 task 最新 run 的 checkpoint.
 
