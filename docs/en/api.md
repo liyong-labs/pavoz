@@ -293,6 +293,21 @@ assert result2.state == cp.state       # same stage outputs in → same graph be
   checkpoint without `stage_deltas` raises `RuntimeError` (re-run once).
   Hand-written mocks for real runs can be replaced by replaying the checkpoint.
 
+## EventRecorder (v0.5.3)
+
+```python
+rec = EventRecorder()                  # collects (event, data) pairs
+rec = EventRecorder(sink_path="ev.jsonl")  # appends one JSONL line per event
+rt = Runtime(on_event=rec)             # matches the on_event signature
+rec.events   # [(event, data), ...]
+rec.names()  # ["run_start", "stage_start", ...]
+```
+
+- Lifecycle events: `run_start` / `stage_start` / `stage_end` / `stage_retry` /
+  `stage_progress` / `run_end` (same stream as `on_event`)
+- A ready-made observer for callers who don't want a hand-written lambda;
+  the JSONL sink keeps an audit trail for post-mortems
+
 ## CLI
 
 ```bash

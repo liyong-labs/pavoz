@@ -19,6 +19,7 @@ per-node retry + absolute deadline) + Checkpoint (断点续跑) + TestPipe (回�
 
 from .checkpoint import Checkpoint, CheckpointMismatchError, CheckpointStore, workflow_hash
 from .dag import DAG, CycleError, Stage, UnknownDepError
+from .events import EventRecorder
 from .runtime import CallResult, Ctx, Runtime
 from .state import (
     ReadOnlyStateView,
@@ -43,6 +44,7 @@ __all__ = [
     "CheckpointStore",
     "Ctx",
     "CycleError",
+    "EventRecorder",
     "FatalError",
     "FileStorage",
     "ReadOnlyStateView",

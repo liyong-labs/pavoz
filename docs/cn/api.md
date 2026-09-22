@@ -271,6 +271,20 @@ assert result2.state == cp.state       # 相同 stage 输出进 → 相同图行
   `CheckpointMismatchError`; pre-M2 (v0.5.0) cp 无 `stage_deltas` →
   `RuntimeError` (重跑一次)。真实 run 的手写 mock 回归可被它替代
 
+## EventRecorder (v0.5.3)
+
+```python
+rec = EventRecorder()                  # 收集 (event, data) 事件流
+rec = EventRecorder(sink_path="ev.jsonl")  # 每事件追加一行 JSONL
+rt = Runtime(on_event=rec)             # 签名匹配 on_event 回调
+rec.events   # [(event, data), ...]
+rec.names()  # ["run_start", "stage_start", ...]
+```
+
+- 生命周期事件: `run_start` / `stage_start` / `stage_end` / `stage_retry` /
+  `stage_progress` / `run_end` (与 `on_event` 同一事件流)
+- 不想手写收集 lambda 时的现成观察者; 落盘留档供事后排查
+
 ## CLI
 
 ```bash
