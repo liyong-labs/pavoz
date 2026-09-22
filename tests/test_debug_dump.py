@@ -19,10 +19,11 @@ async def test_debug_dir_dumps_per_stage(tmp_path):
     d = tmp_path / "dump"
     r = await Runtime(debug_dir=str(d)).run(dag, "dbg1")
     assert r.status == "done"
-    files = sorted(p.name for p in d.iterdir())
+    tdir = d / "dbg1"  # 快照按 <debug_dir>/<task_id>/ 分层 (id=122 约定)
+    files = sorted(p.name for p in tdir.iterdir())
     assert len(files) == 2
     assert files[0] == "00_s_a_done.json"
-    payload = json.loads((d / files[1]).read_text())
+    payload = json.loads((tdir / files[1]).read_text())
     assert payload["stage"] == "s_b" and payload["state"]["a"] == 1
     assert payload["state"]["b"] == 2 and payload["run_id"] == r.run_id
 
@@ -37,5 +38,5 @@ async def test_debug_dir_on_failure(tmp_path):
     d = tmp_path / "dump"
     r = await Runtime(debug_dir=str(d)).run(dag, "dbg2")
     assert r.status == "failed"
-    files = list(d.iterdir())
+    files = list((d / "dbg2").iterdir())
     assert len(files) == 1 and files[0].name == "00_s_bad_failed.json"
