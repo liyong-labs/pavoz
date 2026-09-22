@@ -2,16 +2,16 @@
 
 import time
 
-from pavoz import CheckpointStore, DAG, FileStorage, Runtime
+from pavoz import DAG, CheckpointStore, FileStorage, Runtime
 
 
-def _mk(tid):
-    return CheckpointStore(FileStorage(f"/tmp/pavoz-stagets-{tid}"))
+def _mk(tmp_path, tid):
+    return CheckpointStore(FileStorage(tmp_path / f"stage-ts-{tid}"))
 
 
-async def test_stage_ts_recorded_and_persisted():
+async def test_stage_ts_recorded_and_persisted(tmp_path):
     tid = "ts1"
-    store = _mk(tid)
+    store = _mk(tmp_path, tid)
     rt = Runtime(checkpoint_store=store)
     dag = DAG("ts")
 
@@ -35,9 +35,9 @@ async def test_stage_ts_recorded_and_persisted():
     assert cp3.stage_ts == cp.stage_ts
 
 
-async def test_resume_and_fork_keep_prefix_stage_ts():
+async def test_resume_and_fork_keep_prefix_stage_ts(tmp_path):
     tid = "ts2"
-    store = _mk(tid)
+    store = _mk(tmp_path, tid)
     rt = Runtime(checkpoint_store=store)
     trace = []
 

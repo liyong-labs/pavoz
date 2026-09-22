@@ -8,11 +8,11 @@ copy+缓存复用). pavoz fork_run: 前序 stage 结果复用, from_stage 及其
 
 import json
 
-from pavoz import CheckpointStore, DAG, FileStorage, Runtime
+from pavoz import DAG, CheckpointStore, FileStorage, Runtime
 
 
-def _mk_storage(task_id):
-    return CheckpointStore(FileStorage(f"/tmp/pavoz-fork-test-{task_id}"))
+def _mk_storage(tmp_path, task_id):
+    return CheckpointStore(FileStorage(tmp_path / f"fork-{task_id}"))
 
 
 def _dag3(trace: list):
@@ -36,10 +36,10 @@ def _dag3(trace: list):
     return dag
 
 
-async def test_fork_reruns_from_stage_with_overrides_keeps_prefix():
+async def test_fork_reruns_from_stage_with_overrides_keeps_prefix(tmp_path):
     """fork from s_b + override topic → s_a 不重跑, s_b/s_c 用新值, 原 cp 不动."""
     tid = "fork1"
-    store = _mk_storage(tid)
+    store = _mk_storage(tmp_path, tid)
     rt = Runtime(checkpoint_store=store)
     trace: list = []
     dag = _dag3(trace)
@@ -56,9 +56,9 @@ async def test_fork_reruns_from_stage_with_overrides_keeps_prefix():
     assert len(store.list_runs(tid)) >= 2
 
 
-async def test_fork_latest_pointer_moves_and_resume_works():
+async def test_fork_latest_pointer_moves_and_resume_works(tmp_path):
     tid = "fork2"
-    store = _mk_storage(tid)
+    store = _mk_storage(tmp_path, tid)
     rt = Runtime(checkpoint_store=store)
     trace: list = []
     dag = _dag3(trace)
@@ -73,10 +73,10 @@ async def test_fork_latest_pointer_moves_and_resume_works():
         pass
 
 
-async def test_fork_from_failed_stage_retries_with_override():
+async def test_fork_from_failed_stage_retries_with_override(tmp_path):
     """失败 stage (依赖已完成) 可 fork: 注入 overrides 修输入重跑失败点."""
     tid = "fork3"
-    store = _mk_storage(tid)
+    store = _mk_storage(tmp_path, tid)
     rt = Runtime(checkpoint_store=store)
     calls = {"a": 0, "b": 0}
 
@@ -104,10 +104,10 @@ async def test_fork_from_failed_stage_retries_with_override():
     assert calls == {"a": 1, "b": 2}  # s_a 未重跑, s_b 重试一次
 
 
-async def test_fork_export_input_roundtrip():
+async def test_fork_export_input_roundtrip(tmp_path):
     """export-input (rebuild_state_before) 输出 = fork overrides 的编辑基座."""
     tid = "fork4"
-    store = _mk_storage(tid)
+    store = _mk_storage(tmp_path, tid)
     rt = Runtime(checkpoint_store=store)
     trace: list = []
     dag = _dag3(trace)
@@ -124,9 +124,9 @@ async def test_fork_export_input_roundtrip():
     assert r.state["c"] == "b:roundtrip:4"
 
 
-async def test_fork_unknown_stage_and_missing_deps_rejected():
+async def test_fork_unknown_stage_and_missing_deps_rejected(tmp_path):
     tid = "fork5"
-    store = _mk_storage(tid)
+    store = _mk_storage(tmp_path, tid)
     rt = Runtime(checkpoint_store=store)
     dag = _dag3([])
     await rt.run(dag, tid)
@@ -137,10 +137,10 @@ async def test_fork_unknown_stage_and_missing_deps_rejected():
         pass
 
 
-async def test_fork_overrides_add_new_key_visible_downstream():
+async def test_fork_overrides_add_new_key_visible_downstream(tmp_path):
     """overrides 可注入前序未产生的新 key — 下游 stage 直接可见 (fork 输入扩展)."""
     tid = "fork6"
-    store = _mk_storage(tid)
+    store = _mk_storage(tmp_path, tid)
     rt = Runtime(checkpoint_store=store)
     trace: list = []
     dag = _dag3(trace)
@@ -154,10 +154,10 @@ async def test_fork_overrides_add_new_key_visible_downstream():
     assert cp.state["topic"] == "orig"  # 前序产物保留
 
 
-async def test_fork_original_run_cp_untouched():
+async def test_fork_original_run_cp_untouched(tmp_path):
     """fork 后原 run 的 checkpoint 文件仍在且 state 不变 (只 latest 指针移走)."""
     tid = "fork7"
-    store = _mk_storage(tid)
+    store = _mk_storage(tmp_path, tid)
     rt = Runtime(checkpoint_store=store)
     trace: list = []
     dag = _dag3(trace)

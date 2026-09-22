@@ -15,10 +15,10 @@ from pavoz import (
 )
 
 
-async def test_cancel_between_stages_then_resume():
+async def test_cancel_between_stages_then_resume(tmp_path):
     """s_a 完成后取消 → cancelled (s_b 未跑); 解除取消 → resume 续跑到 done."""
     tid = "cxl1"
-    store = CheckpointStore(FileStorage(f"/tmp/pavoz-cancel-test-{tid}"))
+    store = CheckpointStore(FileStorage(tmp_path / f"cancel-{tid}"))
     box = {"cancel": False}
     rt = Runtime(checkpoint_store=store, cancel_check=lambda t: box["cancel"])
     ran: list[str] = []
@@ -48,7 +48,7 @@ async def test_cancel_between_stages_then_resume():
     assert ran == ["a", "b"], "resume 应只补跑 s_b"
 
 
-async def test_ctx_cancelled_visible_in_stage():
+async def test_ctx_cancelled_visible_in_stage(tmp_path):
     """stage 内长循环可轮询 ctx.cancelled() 自行退出 (循环留业务层)."""
     calls = {"n": 0}
 
@@ -73,7 +73,7 @@ async def test_ctx_cancelled_visible_in_stage():
     assert seen.get("stopped") is True, "stage 应轮询到取消并提前退出"
 
 
-async def test_cancel_check_exception_treated_as_not_cancelled():
+async def test_cancel_check_exception_treated_as_not_cancelled(tmp_path):
     """cancel_check 抛异常 → 视为未取消 (fail-open), run 正常完成."""
     dag = DAG("cxl3")
 
@@ -88,7 +88,7 @@ async def test_cancel_check_exception_treated_as_not_cancelled():
     assert r.status == "done"
 
 
-async def test_ctx_cancelled_exception_treated_as_not_cancelled():
+async def test_ctx_cancelled_exception_treated_as_not_cancelled(tmp_path):
     """stage 内 ctx.cancelled() 轮询遇 checker 异常 → 视为未取消 (fail-open), run 正常 done."""
     calls = {"n": 0}
     seen: dict = {}
@@ -131,7 +131,7 @@ def test_ctx_cancelled_direct_raising_checker_fail_open():
     assert ctx.cancelled() is False
 
 
-async def test_replay_emits_no_events():
+async def test_replay_emits_no_events(tmp_path):
     """run_stage (单 stage 重放) 全程 0 事件 — replay 不是正式 run (Task 2 契约回归)."""
     import tempfile
 
@@ -157,10 +157,10 @@ async def test_replay_emits_no_events():
     assert events == [], f"replay 不应发事件, 实际 {events}"
 
 
-async def test_run_stage_cancelled_passthrough():
+async def test_run_stage_cancelled_passthrough(tmp_path):
     """run_stage 重放已取消 task 的 stage → 透传 cancelled, 不误报 done."""
     tid = "cxl7"
-    store = CheckpointStore(FileStorage(f"/tmp/pavoz-cancel-test-{tid}"))
+    store = CheckpointStore(FileStorage(tmp_path / f"cancel-{tid}"))
     box = {"cancel": False}
     rt = Runtime(checkpoint_store=store, cancel_check=lambda t: box["cancel"])
     ran: list[str] = []
