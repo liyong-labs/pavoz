@@ -453,6 +453,14 @@ dag.add_conditional_edges(
 - `mapping`: closed set of key → target stage; an undeclared key at runtime
   raises `UnmappedRouteError`. Exceptions raised by route_fn itself propagate
   unchanged (error_class preserved, failed_stage = the router).
+- Termination validity (fail-loud): at normal termination, any declared stage
+  that never executed and is not covered by an *unexpired* executed router's
+  mapping raises `OrphanStagesError` — the run fails listing every orphan.
+  A router is "unexpired" only if nothing outside its chosen target's reachable
+  set executed after its decision (an off-branch stage running after the
+  decision means the loop never closed and nobody re-judged); such a router's
+  mapping no longer exempts its unexecuted targets. A branch simply not taken
+  this run (judge says pass) is a legitimate exemption.
 - `max_visits`: max executions of the router per run; exceeding it raises
   `MaxVisitsExceeded`. validate() requires it when conditional edges form a
   loop (anti-runaway guard); branch-only graphs may omit it.
@@ -462,7 +470,15 @@ dag.add_conditional_edges(
   (branch / loop body).
 - `workflow_hash` includes route_fn source + mapping + max_visits — changing
   routing = structural change; resume/fork refuse stale checkpoints.
-- `fork_run` / `run_stage` are not supported on conditional graphs yet (R2).
+- Single-point isolated debugging on conditional graphs (R2): `run_stage(dag,
+  task_id, stage)` replays one stage (input = per-visit fold up to the stage's
+  first execution; no checkpoint write, latest pointer untouched);
+  `fork_run(dag, task_id, from_stage=..., overrides=...)` truncates at
+  from_stage's first completion + overrides + route-driven continuation (same
+  execution model as resume; from_stage must have executed). Editing a stage
+  body (e.g. an LLM prompt) does not change workflow_hash — no full-chain
+  rerun needed. The `<fork>` pseudo-producer may be overwritten by the
+  continuation (rewriting injected inputs is the point of fork).
 - Events: `route` `{from, key, to}`; `stage_start/stage_end` gain a `visit`
   number (loop iteration, distinct from attempt = retry). Viz: `to_mermaid`
   renders conditional edges as labeled dotted arrows; `to_graph_json` edges

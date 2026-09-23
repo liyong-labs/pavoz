@@ -44,6 +44,7 @@ from .testing import TestPipe
 from .types import (
     FatalError,
     MaxVisitsExceeded,
+    OrphanStagesError,
     RetryableError,
     RunResult,
     StageError,
@@ -68,6 +69,7 @@ __all__ = [
     "FileStorage",
     "MaxVisitsExceeded",
     "NotKillable",
+    "OrphanStagesError",
     "PavozStorageError",
     "ReadOnlyStateView",
     "RetryableError",

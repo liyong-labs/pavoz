@@ -156,6 +156,11 @@ class Checkpoint:
     # R2 (0.5.3): stage 名 → 执行输入 hash (fn 源码 + 执行前 state). fork
     # skip_unchanged 判定用; 旧 cp 无记录时跳过逻辑自然退化为"全重跑" (A7 .get 默认).
     stage_input_hashes: dict[str, str] = field(default_factory=dict)
+    # R2 (0.5.5, ai@home id=272): fork 截断点前各 stage 的出现次数 (keep 计数).
+    # 只在 fork 产生的 cp 上非空. _rebuild_state 据此把截断点后的 done 条目与
+    # visits 列表 *尾部* 对齐 (截断点前顺序对齐) — fork 重跑循环 stage 时
+    # 折叠不串轮 (历史 visit 与新 visit 混排的正确配对).
+    fork_keep_counts: dict[str, int] = field(default_factory=dict)
 
     @property
     def state(self) -> dict[str, Any]:
@@ -192,6 +197,7 @@ class Checkpoint:
             "stage_ts": self.stage_ts,
             "fork_overrides": self.fork_overrides,
             "stage_input_hashes": self.stage_input_hashes,
+            "fork_keep_counts": self.fork_keep_counts,
         }
 
     @classmethod
@@ -214,6 +220,7 @@ class Checkpoint:
             stage_ts=dict(d.get("stage_ts") or {}),
             fork_overrides=dict(d.get("fork_overrides") or {}),
             stage_input_hashes=dict(d.get("stage_input_hashes") or {}),
+            fork_keep_counts=dict(d.get("fork_keep_counts") or {}),
         )
 
     def rebuild_state(self) -> dict[str, Any]:
@@ -273,13 +280,25 @@ class Checkpoint:
         # R1: done_stages 完成序可含重复 (循环) — 逐 visit 消费对应 delta,
         # 保证重建顺序 = 实际执行顺序 (last-write dict 在此会折叠错序)
         visit_idx: dict[str, int] = {}
+        total: dict[str, int] = {}
+        kcounts = self.fork_keep_counts
+        if kcounts:
+            for done in self.done_stages:  # fork cp: 每 stage 总条目数 (尾对齐用)
+                total[done] = total.get(done, 0) + 1
         for done in self.done_stages:
             if done == stop_at:
                 break
             deltas = self.stage_deltas_visits.get(done, [])
-            idx = visit_idx.get(done, 0)
-            visit_idx[done] = idx + 1
-            if idx >= len(deltas):
+            occ = visit_idx.get(done, 0)  # 本 stage 第几个 done 条目 (0 起)
+            visit_idx[done] = occ + 1
+            kc = kcounts.get(done)
+            if kc is not None and occ >= kc:
+                # fork 截断点后的条目: 与 visits 尾部对齐 (该 cp 重跑产生的新
+                # visit 追加在历史之后) — 顺序对齐会错配到截断前的旧 delta.
+                idx = len(deltas) - (total[done] - occ)
+            else:
+                idx = occ  # 截断点前 (或非 fork cp): 顺序对齐
+            if idx < 0 or idx >= len(deltas):
                 continue  # done 记录多于 delta (旧格式/手工残缺) → 跳过该 visit
             delta = deltas[idx]
             if delta:

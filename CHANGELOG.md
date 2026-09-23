@@ -14,7 +14,13 @@
   计入 workflow_hash (改路由 = 结构变, 拒续)。cp 增 `stage_deltas_visits`
   (完成序含重复, 循环 resume 重建正确)。新事件 `route`; stage 事件加
   `visit` 序号; stage_timings 循环累计。viz 渲染条件边 (mermaid 虚线带 key
-  标签 / graph_json kind+key+max_visits)。条件边图暂不支持 fork_run/run_stage
+  标签 / graph_json kind+key+max_visits)。**终止合法性 (fail-loud)**: 正常终止
+  时未执行且未被任何决策未过期的已执行 router 声明覆盖的 stage →
+  `OrphanStagesError` (回路没闭合/分支挂空决不静默报 done)。
+  **条件边图 fork_run / run_stage 已支持 (R2)**: fork = 截断 + overrides +
+  路由续跑; run_stage 单 stage 重放 (before 折叠); 折叠按完成序逐 visit
+  尾对齐 (`fork_keep_counts`) — fork 重跑循环 stage 不串轮; `<fork>` 注入
+  key 可被续跑链改写。
   (R2)。指南: docs/cn/conditional-edges.md。
 
 - **CI 质量门禁**: pytest 覆盖率 `--cov-fail-under=80` + pyright (basic, 0 errors)。

@@ -3,6 +3,7 @@
 __all__ = [
     "FatalError",
     "MaxVisitsExceeded",
+    "OrphanStagesError",
     "RetryableError",
     "RunResult",
     "StageError",
@@ -59,6 +60,15 @@ class MaxVisitsExceeded(Exception):
 
     cond_fn/路由 bug 死循环的安全网. 环图 (条件边构成 logical cycle) 在
     validate() 强制要求显式 max_visits; EnginePolicy.max_steps 仍全局兜底.
+    """
+
+
+class OrphanStagesError(Exception):
+    """条件边图 run 结束时有声明 stage 从未被执行 (R1, 0.5.5).
+
+    路由未选中 + topo 不可达 → stage 被静默跳过 — 这类 wiring 错误 (常见:
+    回路没闭合, 路由走进死胡同) 决不允许报 done. run 以 failed 终止,
+    error 列出全部孤儿 stage 名 (ai@home id=270 BUG 2).
     """
 
 

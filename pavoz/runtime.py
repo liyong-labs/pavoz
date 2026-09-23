@@ -51,6 +51,7 @@ from .state import (
 from .types import (
     FatalError,
     MaxVisitsExceeded,
+    OrphanStagesError,
     RetryableError,
     RunResult,
     StageError,
@@ -391,6 +392,8 @@ class Runtime:
         visits: dict[str, int] = {}  # stage 执行次数 (含 resume 历史; 循环重入累加)
         for n in done_stages:
             visits[n] = visits.get(n, 0) + 1
+        run_exec_order: list[str] = []  # R1: 本 run 完成序 (决策过期检用, 不含历史)
+        last_route: dict[str, tuple[str, int]] = {}  # router → (所选目标, 决策时完成数)
         steps_used = 0  # W3: stage attempt 总数 (max_steps 熔断计数)
         # R2: skip_replay — 非 done 的 stage 若历史 status=done 且输入 hash
         # 命中 (fn 源码 + 执行前 state 均未变) → 重放历史 delta, 不重跑.
@@ -448,6 +451,7 @@ class Runtime:
                     "UnmappedRouteError",
                 )
             to = edge.mapping[key]
+            last_route[name] = (to, len(run_exec_order))  # 决策过期检锚点
             self._emit("route", {"task_id": task_id, "run_id": run_id,
                                  "from": name, "key": key, "to": to})
             return to, None
@@ -493,6 +497,7 @@ class Runtime:
                 for _k in _dl:
                     producers[_k] = name
                 done_stages.append(name)
+                run_exec_order.append(name)
                 result.stage_statuses = stage_statuses
                 result.state = state
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
@@ -618,6 +623,7 @@ class Runtime:
                 stage_deltas_visits.setdefault(name, []).append(delta)  # R1: 按 visit 追加
             stage_ts[name] = time.time()   # v0.7: 完成时刻 (内容过期 TTL 判定用)
             done_stages.append(name)
+            run_exec_order.append(name)
             visits[name] = visit_no
             self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                           producers, stage_deltas_visits, initial_state_saved, stage_ts,
@@ -632,6 +638,52 @@ class Runtime:
             current, fail = _advance(name)
             if fail is not None:
                 return fail
+
+        # R1 (0.5.5, ai@home id=270 BUG 2): 孤儿检查 — 正常终止时若仍有声明
+        # stage 从未执行、且没有任何 *已执行* router 的 mapping 覆盖它, 说明
+        # 路由图没闭合 (回路断了 / 分支挂空), 决不允许报 done. 已执行 router
+        # 声明的 target 属"本次路由未选中", 是合法豁免 (如 judge 直接 pass).
+        covered: set[str] = set()
+        for _edge in cond_edges.values():
+            if _edge.from_node in done_stages:
+                covered.update(_edge.mapping.values())
+        if cond_edges:
+            # (a) 覆盖检: 未执行 stage 必须被某个 *决策未过期* 的已执行 router
+            #     声明 (本次路由未选中 = 合法豁免); 否则是孤儿 (router 没人触发 /
+            #     分支挂空). (b) 决策过期检: router 决策后只允许跑所选目标可达集
+            #     内的 stage — 分支外 stage 在决策后执行 = 回路没闭合, 旧决策已
+            #     过期却无人重判, 其 mapping 不再构成豁免 (ai@home id=270 v1
+            #     wiring: judge 判 revise 后 s_review 在分支外跑完, s_save 永远
+            #     不会被 ship 到 → 决不允许静默 done).
+            reach = dag._execution_reach()  # 同包私有: n → 传递闭包 (静态+条件边)
+            stale: dict[str, list[str]] = {}
+            covered: set[str] = set()
+            for rname, edge in cond_edges.items():
+                if rname not in last_route:
+                    continue  # 未执行的 router 不构成豁免 (其目标若也没跑 → 孤儿)
+                target, decided_at = last_route[rname]
+                allowed = reach[target] | {target}  # 闭包不含自身, 补上所选目标
+                strays = [m for m in run_exec_order[decided_at:]
+                          if m not in allowed]
+                if strays:
+                    stale[rname] = strays
+                else:
+                    covered.update(edge.mapping.values())
+            orphans = [n for n in order
+                       if n not in done_stages and n not in covered]
+            if orphans or stale:
+                detail = "; ".join(
+                    f"router '{r}' 决策 {last_route[r][0]!r} 后分支外执行了 "
+                    f"{ss} (回路未闭合, 无人重判)" for r, ss in stale.items())
+                return _fail_route(
+                    orphans[0] if orphans else next(iter(stale)),
+                    OrphanStagesError(
+                        f"条件边图终止不合法, run 不能报 done: 未执行 stage "
+                        f"{orphans or '无'}; {detail or '路由声明不足以覆盖未执行 stage'}. "
+                        f"常见原因: 回路未闭合 (分支终点没有边/路由接回判断链) "
+                        f"或 router 被 topo 意外入场所致的一次性决策"),
+                    "OrphanStagesError",
+                )
 
         result.status = "done"
         self._emit("run_end", {"task_id": task_id, "run_id": run_id,
@@ -673,13 +725,10 @@ class Runtime:
             task_id: 已有 checkpoint 的 task
             stage_name: 要重放的 stage (已完成过, 或依赖已完成 — 才有 delta 可重建)
         """
-        # R1 (0.5.5): 条件边图不支持单 stage replay — 路由目标在静态重放里会被
-        # 截断 (target 只经路由触发, 重放不走路由). R2 再议.
-        if dag.conditional_edges:
-            raise RuntimeError(
-                "R1: 条件边图暂不支持 run_stage replay (R2). "
-                "调试路由逻辑请直接 run."
-            )
+        # R2 (0.5.5, ai@home id=272): 条件边图单 stage replay 已支持 — 输入
+        # 重建走 rebuild_state_before (完成序逐 visit 折叠到该 stage 首次执行前,
+        # 循环图亦正确). 单点隔离调试: 改 prompt/参数后只重放该 stage 看输出,
+        # 不动 checkpoint (不落盘, latest 指针不变).
         if self.checkpoint_store is None:
             raise RuntimeError("run_stage requires checkpoint_store")
         _validate_task_id(task_id)
@@ -794,13 +843,6 @@ class Runtime:
         Returns: RunResult (fork run 的最终状态). 调用方可用 checkpoint
         state_stats / CLI state 查看 fork 分支.
         """
-        # R1 (0.5.5): 条件边图不支持 fork — fork 续跑走静态 topo, 条件边目标
-        # (只经路由触发) 会被静默截断; 循环重入的多轮 delta 语义也未定义. R2 再议.
-        if dag.conditional_edges:
-            raise RuntimeError(
-                "R1: 条件边图暂不支持 fork_run (R2). "
-                "路由图的重放调试请直接 run + resume."
-            )
         if self.checkpoint_store is None:
             raise RuntimeError("fork_run requires checkpoint_store")
         _validate_task_id(task_id)
@@ -817,6 +859,17 @@ class Runtime:
             raise KeyError(
                 f"stage '{from_stage}' 不在 DAG {dag.name}: {list(dag.stages)}"
             )
+        # R2 (0.5.5, ai@home id=272, user 铁律 "单点调试必须能跑"): 条件边图
+        # fork = 截断到 from_stage 首次完成处 + overrides + 交给 resume 的
+        # 路由续跑 (route-driven, 与 run(resume=True) 同一执行模型). from_stage
+        # 必须已执行过 — 从未跑到的 stage 没有截断点, 明确拒绝 (路由图里
+        # "从 X 重跑" 若 X 没跑过, 续跑路由可能根本不到 X).
+        if dag.conditional_edges and from_stage not in cp.done_stages:
+            raise RuntimeError(
+                f"stage '{from_stage}' 未在该 task 执行过, 无截断点. "
+                f"条件边图 fork 要求 from_stage 已完成 "
+                f"(done_stages={cp.done_stages})"
+            )
         missing = [d for d in dag.stages[from_stage].depends_on if d not in cp.done_stages]
         if missing:
             raise RuntimeError(
@@ -830,13 +883,19 @@ class Runtime:
                 break
             keep.append(_d)
 
-        # state 重建 = initial + 保留 deltas (按序) + overrides (用户注入, 最后生效)
+        # state 重建 = initial + 保留 deltas (完成序逐 visit) + overrides (最后生效).
+        # R1: done_stages 可含重复 (循环) — 不能用 last-write stage_deltas 视图
+        # (截断点的第 1 次 visit 才是现场), 与 Checkpoint._rebuild_state 同序消费.
         state = dict(cp.initial_state)
         producers = {k: "<init>" for k in cp.initial_state}
         kept_deltas: dict[str, dict[str, Any]] = {}
+        _visit_idx: dict[str, int] = {}
         for _d in keep:
-            _dl = cp.stage_deltas.get(_d)
-            if _dl:
+            _visits = cp.stage_deltas_visits.get(_d, [])
+            _vi = _visit_idx.get(_d, 0)
+            _visit_idx[_d] = _vi + 1
+            if _vi < len(_visits) and _visits[_vi]:
+                _dl = _visits[_vi]
                 state.update(_dl)
                 kept_deltas[_d] = _dl
                 for _k in _dl:
@@ -870,6 +929,7 @@ class Runtime:
             stage_ts=dict(cp.stage_ts),
             fork_overrides=dict(overrides or {}),
             stage_input_hashes=dict(cp.stage_input_hashes),
+            fork_keep_counts={n: keep.count(n) for n in set(keep)},
         )
         self.checkpoint_store.save(fork_cp)  # save 同时把 latest 指针移到 fork
         logger.info(
@@ -950,11 +1010,16 @@ class Runtime:
                         f"stage '{name}' 必须返回 dict, got {type(delta).__name__}"
                     )
                 deep_validate_state(delta)
-                # v0.1.1 链式覆盖: producer 是当前 stage 传递上游 → 允许覆盖 (流水线演进)
+                # v0.1.1 链式覆盖: producer 是当前 stage 传递上游 → 允许覆盖 (流水线演进).
+                # R2 (id=272): "<fork>" 是 fork overrides 的伪 producer — 用户
+                # 显式注入的调试输入, 续跑链上 stage 改写它 = "改输入 → 重跑产出
+                # 新输出" 的正常流程, 不按平行 producer 拒. "<init>" 不豁免:
+                # initial_state 同样受单 producer 契约保护 (caller 基线不被静默改).
                 _ow = {
                     k for k in delta
                     if k in state and producers.get(k)
-                    and dag.reachable(producers[k], name)
+                    and (producers[k] == "<fork>"
+                         or dag.reachable(producers[k], name))
                 }
                 new_state = merge_state(state, delta, name, overwrite_keys=_ow)
                 for _k in delta:

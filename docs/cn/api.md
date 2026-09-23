@@ -413,6 +413,11 @@ dag.add_conditional_edges(
 - `mapping`: key → 目标 stage 的封闭集; 运行时返回未声明 key →
   `UnmappedRouteError`。route_fn 自己抛的异常原样传播 (error_class 保留,
   failed_stage = router)。
+- 终止合法性 (BUG 2, fail-loud): 正常终止时若有声明 stage 未被执行、且没被任何
+  *决策未过期* 的已执行 router 声明覆盖 → `OrphanStagesError`, run failed 并列出
+  全部孤儿名单。"决策未过期" = 该 router 决策后只跑了所选目标可达集内的 stage;
+  分支外 stage 在决策后执行 (回路没闭合, 无人重判) → 该 router 的 mapping 不再
+  构成豁免。路由未选中的分支 (judge 直接 pass) 是合法豁免。
 - `max_visits`: router 单次 run 最大执行次数, 超限 → `MaxVisitsExceeded`;
   条件边构成回路时 validate() 强制非 None (防 LLM 循环烧钱), 分支-only 图可不设。
 - validate() 结构规则: 条件边目标不可静态依赖 router; router 的静态下游必须是
@@ -420,7 +425,12 @@ dag.add_conditional_edges(
   (分支/循环体)。
 - `workflow_hash` 计入 route_fn 源码 + mapping + max_visits — 改路由 = 结构变,
   resume/fork 拒续。
-- 条件边图暂不支持 `fork_run` / `run_stage` (R2)。
+- 条件边图的单点隔离调试 (R2): `run_stage(dag, task_id, stage)` 重放单 stage
+  (输入 = 完成序逐 visit 折叠到该 stage 首次执行前; 不落 cp, latest 指针不动);
+  `fork_run(dag, task_id, from_stage=..., overrides=...)` 截断到 from_stage 首次
+  完成处 + overrides + 路由续跑 (与 resume 同一执行模型; from_stage 必须已执行
+  过)。改 stage 函数体 (如 LLM prompt) 不变 workflow_hash — 免全链重跑。fork
+  overrides 的伪 producer `<fork>` 允许被续跑链改写 (改输入重跑是 fork 的本意)。
 - 事件: `route` `{from, key, to}`; `stage_start/stage_end` 增加 `visit` 序号
   (循环第几轮, 区别 attempt=重试)。viz: `to_mermaid` 条件边 = key 标签虚线,
   `to_graph_json` edges 带 `kind`/`key`/`max_visits`。

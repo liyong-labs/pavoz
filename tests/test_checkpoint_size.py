@@ -54,7 +54,8 @@ def test_to_dict_has_no_state_key():
     assert set(d) == {"task_id", "run_id", "dag_name", "workflow_hash",
                       "stage_statuses", "done_stages", "producers",
                       "initial_state", "stage_deltas_visits", "stage_ts",
-                      "fork_overrides", "stage_input_hashes"}
+                      "fork_overrides", "stage_input_hashes",
+                      "fork_keep_counts"}
 
 
 def test_from_dict_rebuilds_state_equivalent():

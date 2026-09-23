@@ -469,18 +469,104 @@ async def test_hash_change_on_route_fn_refuses_resume(tmp_path):
         await rt2.run(build_other(), task_id="t1", resume=True)
 
 
-# ── fork / replay 拒绝 ──────────────────────────────────
+# ── fork / run_stage 条件边支持 (ai@home id=272, user 铁律: 单点调试必须能跑) ──
 
 
-async def test_fork_and_replay_rejected_on_conditional_dag(tmp_path):
-    dag = build_story(pass_round=1)
+async def test_fork_from_stage_reroutes_and_finishes(tmp_path):
+    """fork = 截断到 from_stage 首次完成处 + overrides + 路由续跑.
+
+    pass_round=2 原 run: s_write → s_review(fail) → s_revision → s_review(pass)
+    → s_save. fork 回 s_revision 注入 doc marker → 只重跑其后, 折叠不串轮.
+    """
+    dag = build_story(pass_round=2)
+    store = CheckpointStore(FileStorage(str(tmp_path / "cp")))
+    events: list[tuple] = []
+    rt = Runtime(checkpoint_store=store,
+                 on_event=lambda e, d: events.append((e, d.get("stage"))))
+    r1 = await rt.run(dag, task_id="t1")
+    assert r1.status == "done"
+    n0 = len(events)
+    r2 = await rt.fork_run(dag, "t1", from_stage="s_revision",
+                           overrides={"doc": "fork-marker"})
+    assert r2.status == "done"
+    # 只重跑了 s_revision 起: s_write 不再执行 (单点调试的成本承诺)
+    new_starts = [st for e, st in events[n0:] if e == "stage_start"]
+    assert "s_write" not in new_starts
+    assert "s_revision" in new_starts
+    assert r2.state["doc"] == "revised"   # 重跑的 stage delta 覆盖注入 marker
+    assert r2.state["round"] == 2         # visit 尾对齐: 折叠不把第 2 轮串成第 1 轮
+    assert store.load_latest("t1").run_id == r2.run_id  # fork is latest
+    assert r2.run_id != r1.run_id
+
+
+async def test_fork_from_judge_loop_full_shape(tmp_path):
+    """ai@home R2-B 真实形: route-only judge 回路; fork 从 judge 改判全链重走.
+
+    也是 BUG 1 (producer 冲突) 的实证 dissolution: s_revision 经 2 跳条件边
+    覆写 s_write 的 doc — reachable() 已把 router 计入血缘, 不报冲突.
+    """
+    dag = DAG("story_judge")
+
+    @dag.stage()
+    async def s_write(ctx):
+        return {"doc": "draft"}
+
+    @dag.stage(depends_on=["s_write"])
+    async def s_review(ctx):
+        return {"audit": "ok"}
+
+    @dag.stage()
+    async def s_judge(ctx):
+        return {"route": ctx.state.get("route_override", "ship")}
+
+    @dag.stage()
+    async def s_revision(ctx):
+        return {"doc": "revised", "route_override": "ship"}  # 改判一次后 ship
+
+    @dag.stage()
+    async def s_save(ctx):
+        return {"saved": True}
+
+    dag.add_conditional_edges("s_review", lambda s: "go",
+                              {"go": "s_judge"}, max_visits=5)
+    dag.add_conditional_edges("s_judge", lambda s: s["route"],
+                              {"ship": "s_save", "revise": "s_revision"},
+                              max_visits=3)
+    dag.add_conditional_edges("s_revision", lambda s: "again",
+                              {"again": "s_review"}, max_visits=3)
+
     store = CheckpointStore(FileStorage(str(tmp_path / "cp")))
     rt = Runtime(checkpoint_store=store)
-    await rt.run(dag, task_id="t1")
-    with pytest.raises(RuntimeError, match="fork_run"):
-        await rt.fork_run(dag, "t1", from_stage="s_write")
-    with pytest.raises(RuntimeError, match="run_stage"):
-        await rt.run_stage(dag, "t1", "s_write")
+    r1 = await rt.run(dag, task_id="t1")
+    assert r1.status == "done"
+    assert "s_revision" not in r1.stage_statuses      # 首轮直接 ship
+    r2 = await rt.fork_run(dag, "t1", from_stage="s_judge",
+                           overrides={"route_override": "revise"})
+    assert r2.status == "done"
+    assert r2.stage_statuses.get("s_revision") == "done"  # 这次走了 revise 分支
+    assert r2.state["saved"] is True
+    assert r2.state["doc"] == "revised"
+
+
+async def test_fork_from_never_executed_stage_rejected(tmp_path):
+    """从未执行过的 stage 没有截断点 (路由续跑可能根本不到它) → 明确拒绝."""
+    dag = build_story(pass_round=1)
+    rt, store, r1 = await _run(dag, tmp_path)
+    assert r1.status == "done"
+    with pytest.raises(RuntimeError, match="未在该 task 执行过"):
+        await rt.fork_run(dag, "t1", from_stage="s_revision")
+
+
+async def test_run_stage_replays_single_stage_on_cond_dag(tmp_path):
+    """单点隔离测试 (M3): 改 prompt 后只重放该 stage, 不动 checkpoint."""
+    dag = build_story(pass_round=2)
+    rt, store, r1 = await _run(dag, tmp_path)
+    assert r1.status == "done"
+    r2 = await rt.run_stage(dag, "t1", "s_revision")
+    assert r2.status == "done"
+    assert r2.state["doc"] == "revised"
+    # replay 不落 cp: latest 指针仍是原 run
+    assert store.load_latest("t1").run_id == r1.run_id
 
 
 # ── viz ──────────────────────────────────────────────────
@@ -510,3 +596,74 @@ async def test_diff_runs_on_looped_runs(tmp_path):
     d = store.diff_runs("t1", r1.run_id)
     assert d["workflow_hash_changed"] is False
     assert d["stages"]["s_review"]["input_hash_changed"] in (True, False, None)
+
+
+# ── BUG 2 回归 (ai@home id=270): 孤儿 stage 静默吞 → 必须 fail-loud ──
+
+def _orphan_dag():
+    dag = DAG("story_v1")
+
+    @dag.stage()
+    async def s_write(ctx):
+        return {"doc": "draft"}
+
+    @dag.stage(depends_on=["s_write"])
+    async def s_review(ctx):
+        return {"audit_report": "r1", "round": 1}
+
+    @dag.stage()
+    async def s_route_judge(ctx):
+        return {"route": "revise"}
+
+    @dag.stage()
+    async def s_revision(ctx):
+        return {"article_md": "v2"}
+
+    @dag.stage()
+    async def s_save(ctx):
+        return {"article_path": "/x.md"}
+
+    # 只有 judge 持边, s_review 无出边 — 回路没闭合 (ai@home v1 误 wiring)
+    dag.add_conditional_edges("s_route_judge",
+                              lambda s: s["route"],
+                              {"ship": "s_save", "revise": "s_revision",
+                               "escalate": "s_save"}, max_visits=3)
+    return dag
+
+
+async def test_orphan_stage_fails_run_not_silent_done(tmp_path):
+    """声明的 stage 未被任何路由到达 → run failed (列孤儿), 决不允许 done."""
+    rt, store, r = await _run(_orphan_dag(), tmp_path)
+    assert r.status == "failed"
+    assert r.error_class == "OrphanStagesError"
+    assert "s_save" in (r.error or "")
+
+
+async def test_closed_loop_runs_everything(tmp_path):
+    """回路闭合 (ai@home 修正 wiring) → 全部 stage 执行, done 合法."""
+    dag = DAG("story_ok")
+
+    @dag.stage()
+    async def s_write(ctx):
+        return {"doc": "draft"}
+
+    @dag.stage(depends_on=["s_write"])
+    async def s_review(ctx):
+        return {"audit_report": "r1", "round": 1}
+
+    @dag.stage()
+    async def s_route_judge(ctx):
+        return {"route": "ship"}
+
+    @dag.stage()
+    async def s_save(ctx):
+        return {"article_path": "/x.md"}
+
+    dag.add_conditional_edges("s_review", lambda s: "judge",
+                              {"judge": "s_route_judge"}, max_visits=3)
+    dag.add_conditional_edges("s_route_judge", lambda s: s["route"],
+                              {"ship": "s_save", "revise": "s_route_judge"},
+                              max_visits=3)
+    rt, store, r = await _run(dag, tmp_path)
+    assert r.status == "done"
+    assert r.stage_statuses["s_save"] == "done"
