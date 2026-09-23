@@ -241,7 +241,9 @@ class Runtime:
         _validate_task_id(task_id)
         # R1a: 登记运行句柄 (registry 硬杀靠它 cancel 本 asyncio Task)
         if self.cancel_registry is not None:
-            self.cancel_registry._register(task_id, asyncio.current_task())
+            _ct = asyncio.current_task()
+            assert _ct is not None, "run() 协程体内必有 running task"
+            self.cancel_registry._register(task_id, _ct)
         try:
             return await self._run_impl(
                 dag, task_id, initial_state, resume, skip_unchanged)
@@ -276,13 +278,16 @@ class Runtime:
     async def _run_inner(
         self,
         dag: DAG,
-        task_id: str | None,
+        task_id: str,
         initial_state: dict | None,
         resume: bool,
         eff_timeout: float | None,
         skip_unchanged: bool | None,
     ) -> RunResult:
-        """run() 主体 (W3 拆出): 并发闸门之内. 语义与拆分前完全一致."""
+        """run() 主体 (W3 拆出): 并发闸门之内. 语义与拆分前完全一致.
+
+        task_id 恒为 str — run() 已解析 UUID4 缺省 (_run_impl 签名同).
+        """
 
         dag.validate()
         result = RunResult(task_id=task_id, dag_name=dag.name)
