@@ -10,9 +10,9 @@ def _mk_cp() -> Checkpoint:
         done_stages=["s_a", "s_b"],
         initial_state={"seed": 0},
         # v0.8: state 从 deltas 重建 — 终态 = initial + s_a + s_b
-        stage_deltas={
-            "s_a": {"big_list": list(range(5000))},
-            "s_b": {"article": "字" * 8000},
+        stage_deltas_visits={
+            "s_a": [{"big_list": list(range(5000))}],
+            "s_b": [{"article": "字" * 8000}],
         },
     )
 

@@ -41,7 +41,14 @@ from .state import (
 from .storage import FileStorage, StorageBackend
 from .storage_loader import PavozStorageError, load_storage
 from .testing import TestPipe
-from .types import FatalError, RetryableError, RunResult, StageError
+from .types import (
+    FatalError,
+    MaxVisitsExceeded,
+    RetryableError,
+    RunResult,
+    StageError,
+    UnmappedRouteError,
+)
 from .viz import to_graph_json, to_mermaid
 
 __version__ = "0.5.4"
@@ -59,6 +66,7 @@ __all__ = [
     "EventRecorder",
     "FatalError",
     "FileStorage",
+    "MaxVisitsExceeded",
     "NotKillable",
     "PavozStorageError",
     "ReadOnlyStateView",
@@ -71,6 +79,7 @@ __all__ = [
     "StorageBackend",
     "TestPipe",
     "UnknownDepError",
+    "UnmappedRouteError",
     "__version__",
     "apply_overrides",
     "diff_runs",

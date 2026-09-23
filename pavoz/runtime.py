@@ -48,7 +48,14 @@ from .state import (
     merge_state,
     snapshot,
 )
-from .types import FatalError, RetryableError, RunResult, StageError
+from .types import (
+    FatalError,
+    MaxVisitsExceeded,
+    RetryableError,
+    RunResult,
+    StageError,
+    UnmappedRouteError,
+)
 
 logger = logging.getLogger("pavoz")
 
@@ -322,7 +329,8 @@ class Runtime:
         # v0.1.1 链式覆盖: state key → producer stage
         producers: dict[str, str] = {}
         # v0.5.1 (M2): 每 stage return delta (按完成序) + run 初始 state — M3 replay 重建用
-        stage_deltas: dict[str, dict] = {}
+        # R1 (0.5.5): 值改为 list — 循环多轮按 visit 追加 (见 stage_deltas_visits)
+        stage_deltas_visits: dict[str, list[dict]] = {}
         # v0.7: stage 完成 epoch ts — 恢复侧 TTL 判定 (内容过期 gate) 用
         stage_ts: dict[str, float] = {}
         initial_state_saved: dict = {}
@@ -346,7 +354,8 @@ class Runtime:
             done_stages = list(cp.done_stages)
             stage_statuses = dict(cp.stage_statuses)
             producers = dict(cp.producers)
-            stage_deltas = dict(cp.stage_deltas)      # resume 续收集
+            stage_deltas_visits = {k: list(v) for k, v in cp.stage_deltas_visits.items()}
+            # resume 续收集 (R1: 按 visit 列表)
             stage_ts = dict(cp.stage_ts)              # v0.7: resume 续记
             initial_state_saved = dict(cp.initial_state)
             _fork_overrides = dict(cp.fork_overrides)  # fork 分支续保
@@ -373,6 +382,15 @@ class Runtime:
                                  "dag": dag.name, "resume": cp is not None})
 
         order = dag.topo_order()
+        # R1 (0.5.5): 条件边执行模型 — router stage 完成后由编排器求值 route_fn
+        # 选下一跳 (节点纯数据处置, 边决策归编排器). route-only 目标 (分支目标 /
+        # 无静态父的循环体) 只经路由触发, 不入 topo auto 推进集; 回路头 (有静态父)
+        # 参与 topo 初始触发. 无条件边图: auto_order == order, 行为与 0.5.4 一致.
+        cond_edges = dag.conditional_edges
+        auto_order = [n for n in order if n not in dag.route_only_targets()]
+        visits: dict[str, int] = {}  # stage 执行次数 (含 resume 历史; 循环重入累加)
+        for n in done_stages:
+            visits[n] = visits.get(n, 0) + 1
         steps_used = 0  # W3: stage attempt 总数 (max_steps 熔断计数)
         # R2: skip_replay — 非 done 的 stage 若历史 status=done 且输入 hash
         # 命中 (fn 源码 + 执行前 state 均未变) → 重放历史 delta, 不重跑.
@@ -380,16 +398,97 @@ class Runtime:
         # Stage.skip_unchanged=False 拒跳.
         skip_replay = skip_unchanged if skip_unchanged is not None else (
             self.policy.skip_unchanged if self.policy else False)
-        for name in order:
-            if name in done_stages:
-                continue
+
+        def _next_auto() -> str | None:
+            for n in auto_order:
+                if n not in done_stages:
+                    return n
+            return None
+
+        def _fail_route(stage_name: str, exc: Exception, err_class: str) -> RunResult:
+            """路由失败终态 (设计 §5): router 本身 done, run failed 落在 from_node.
+
+            fail-loud — 无隐式重试无 fallback; error_class 保留原始类型
+            (UnmappedRouteError / MaxVisitsExceeded / route_fn 自己的异常类).
+            """
+            result.status = "failed"
+            result.error = str(exc)
+            result.error_class = err_class
+            result.failed_stage = stage_name
+            _fill_error_context(result, stage_name, err_class, state)
+            result.stage_statuses = stage_statuses
+            result.state = state
+            self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
+                          producers, stage_deltas_visits, initial_state_saved,
+                          stage_ts, _fork_overrides, input_hashes)
+            self._emit("run_end", {"task_id": task_id, "run_id": run_id,
+                                   "dag": dag.name, "status": "failed"})
+            logger.warning(
+                "task=%s run=%s 路由失败 at stage=%s: %s",
+                task_id, run_id[:8], stage_name, exc,
+            )
+            return result
+
+        def _eval_route(name: str) -> tuple[str | None, RunResult | None]:
+            """求值 router 的条件边 → 目标 stage 名. 非 router → (None, None)."""
+            edge = cond_edges.get(name)
+            if edge is None:
+                return None, None
+            try:
+                key = edge.route_fn(ReadOnlyStateView(state))
+            except Exception as exc:
+                # route_fn 自己的 bug → 原样传播 error_class (编排器不包装不吞)
+                return None, _fail_route(name, exc, type(exc).__name__)
+            if key not in edge.mapping:
+                return None, _fail_route(
+                    name,
+                    UnmappedRouteError(
+                        f"route_fn 返回未声明 key {key!r} (router '{name}', "
+                        f"声明 keys={sorted(edge.mapping)})"),
+                    "UnmappedRouteError",
+                )
+            to = edge.mapping[key]
+            self._emit("route", {"task_id": task_id, "run_id": run_id,
+                                 "from": name, "key": key, "to": to})
+            return to, None
+
+        def _advance(name: str) -> tuple[str | None, RunResult | None]:
+            """stage 完成后的下一跳: router → 条件边求值; 否则 topo auto 推进."""
+            if name in cond_edges:
+                return _eval_route(name)
+            return _next_auto(), None
+
+        # 起点: resume 且最后完成 stage 是 router → 按其条件边重路由 (route_fn
+        # 纯函数, 同 state 同路由); 否则 topo auto 序首个未完成 stage
+        current: str | None = None
+        if cp is not None and done_stages and done_stages[-1] in cond_edges:
+            current, fail = _eval_route(done_stages[-1])
+            if fail is not None:
+                return fail
+        if current is None:
+            current = _next_auto()
+
+        while current is not None:
+            name = current
             stage = dag.stages[name]
+            edge = cond_edges.get(name)
+
+            # R1: router 执行次数上限 (条件回路的烧钱护栏). 分支-only 图不限.
+            if edge is not None and edge.max_visits is not None \
+                    and visits.get(name, 0) >= edge.max_visits:
+                return _fail_route(
+                    name,
+                    MaxVisitsExceeded(
+                        f"router '{name}' 已执行 {visits.get(name, 0)} 次 "
+                        f"(max_visits={edge.max_visits})"),
+                    "MaxVisitsExceeded",
+                )
 
             # R2: 重放命中 (在 pre-exec 记录覆写 input_hashes 之前比对)
             if skip_replay and stage.skip_unchanged \
                     and stage_statuses.get(name) == "done" \
                     and input_hashes.get(name) == stage_input_hash(stage.fn, state):
-                _dl = stage_deltas.get(name) or {}
+                _dl = (stage_deltas_visits.get(name) or [{}])[-1]
                 state.update(_dl)
                 for _k in _dl:
                     producers[_k] = name
@@ -397,16 +496,19 @@ class Runtime:
                 result.stage_statuses = stage_statuses
                 result.state = state
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
-                              producers, stage_deltas, initial_state_saved, stage_ts,
+                              producers, stage_deltas_visits, initial_state_saved, stage_ts,
                               _fork_overrides, input_hashes)
                 self._emit("stage_end", {"task_id": task_id, "run_id": run_id,
-                                         "stage": name, "attempt": 0,
+                                         "stage": name, "attempt": 0, "visit": 0,
                                          "status": "skipped", "duration": 0.0,
                                          "error": None})
                 logger.info(
                     "task=%s run=%s stage=%s 输入 hash 命中, 重放历史结果 (skip_unchanged)",
                     task_id, run_id[:8], name,
                 )
+                current, fail = _advance(name)
+                if fail is not None:
+                    return fail
                 continue
 
             # W3: max_steps 熔断 — attempt 预算耗尽, 当前 stage 记 failed 终止
@@ -422,7 +524,7 @@ class Runtime:
                 result.error_class = "MaxStepsExceeded"
                 _fill_error_context(result, name, "MaxStepsExceeded", state)
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
-                              producers, stage_deltas, initial_state_saved, stage_ts,
+                              producers, stage_deltas_visits, initial_state_saved, stage_ts,
                               _fork_overrides, input_hashes)
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": "failed"})
@@ -446,11 +548,12 @@ class Runtime:
             if self.cancel_registry is not None:
                 self.cancel_registry._set_stage(task_id, name, stage.killable)
             input_hashes[name] = stage_input_hash(stage.fn, state)  # R2: 执行前记
+            visit_no = visits.get(name, 0) + 1  # R1: 本次执行序 (1 起; 事件/retry 外层不变)
             try:
                 status, new_state, err, err_class, err_category, producers, delta, attempts = \
                     await self._run_stage(
                         dag, stage.fn, name, task_id, run_id, state, stage.retries,
-                        stage_deadline, producers,
+                        stage_deadline, producers, visit=visit_no,
                     )
             except asyncio.CancelledError:
                 # R1a: registry 来源的硬杀 → 落 cp 返 cancelled RunResult;
@@ -466,7 +569,7 @@ class Runtime:
                 result.error_class = None
                 _fill_error_context(result, name, None, state)
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
-                              producers, stage_deltas, initial_state_saved, stage_ts,
+                              producers, stage_deltas_visits, initial_state_saved, stage_ts,
                               _fork_overrides, input_hashes)
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": "cancelled"})
@@ -476,7 +579,8 @@ class Runtime:
                 )
                 return result
             steps_used += attempts
-            result.stage_timings[name] = time.time() - _st0
+            result.stage_timings[name] = result.stage_timings.get(name, 0) + (
+                time.time() - _st0)  # R1: 循环多轮累计 (单轮图数值不变)
             state = new_state
             stage_statuses[name] = status
             result.stage_statuses = stage_statuses
@@ -504,23 +608,30 @@ class Runtime:
                 result.error_class = err_class
                 _fill_error_context(result, name, err_class, state, err_category)
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
-                              producers, stage_deltas, initial_state_saved, stage_ts,
+                              producers, stage_deltas_visits, initial_state_saved, stage_ts,
                               _fork_overrides, input_hashes)
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": result.status})
                 return result
 
             if delta:
-                stage_deltas[name] = delta  # 收集 (完成序)
+                stage_deltas_visits.setdefault(name, []).append(delta)  # R1: 按 visit 追加
             stage_ts[name] = time.time()   # v0.7: 完成时刻 (内容过期 TTL 判定用)
             done_stages.append(name)
+            visits[name] = visit_no
             self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
-                          producers, stage_deltas, initial_state_saved, stage_ts,
+                          producers, stage_deltas_visits, initial_state_saved, stage_ts,
                           _fork_overrides, input_hashes)
             logger.info(
                 "task=%s run=%s stage=%s done (len state=%d)",
                 task_id, run_id[:8], name, len(state),
             )
+
+            # R1: 下一跳 — router 走条件边, 其余 topo auto 推进 (循环重入 =
+            # 路由再次命中, 不受 done_stages 拦)
+            current, fail = _advance(name)
+            if fail is not None:
+                return fail
 
         result.status = "done"
         self._emit("run_end", {"task_id": task_id, "run_id": run_id,
@@ -562,6 +673,13 @@ class Runtime:
             task_id: 已有 checkpoint 的 task
             stage_name: 要重放的 stage (已完成过, 或依赖已完成 — 才有 delta 可重建)
         """
+        # R1 (0.5.5): 条件边图不支持单 stage replay — 路由目标在静态重放里会被
+        # 截断 (target 只经路由触发, 重放不走路由). R2 再议.
+        if dag.conditional_edges:
+            raise RuntimeError(
+                "R1: 条件边图暂不支持 run_stage replay (R2). "
+                "调试路由逻辑请直接 run."
+            )
         if self.checkpoint_store is None:
             raise RuntimeError("run_stage requires checkpoint_store")
         _validate_task_id(task_id)
@@ -676,6 +794,13 @@ class Runtime:
         Returns: RunResult (fork run 的最终状态). 调用方可用 checkpoint
         state_stats / CLI state 查看 fork 分支.
         """
+        # R1 (0.5.5): 条件边图不支持 fork — fork 续跑走静态 topo, 条件边目标
+        # (只经路由触发) 会被静默截断; 循环重入的多轮 delta 语义也未定义. R2 再议.
+        if dag.conditional_edges:
+            raise RuntimeError(
+                "R1: 条件边图暂不支持 fork_run (R2). "
+                "路由图的重放调试请直接 run + resume."
+            )
         if self.checkpoint_store is None:
             raise RuntimeError("fork_run requires checkpoint_store")
         _validate_task_id(task_id)
@@ -741,7 +866,7 @@ class Runtime:
             done_stages=keep,
             producers=producers,
             initial_state=dict(cp.initial_state),
-            stage_deltas=dict(cp.stage_deltas),
+            stage_deltas_visits={k: list(v) for k, v in cp.stage_deltas_visits.items()},
             stage_ts=dict(cp.stage_ts),
             fork_overrides=dict(overrides or {}),
             stage_input_hashes=dict(cp.stage_input_hashes),
@@ -768,6 +893,7 @@ class Runtime:
         stage_deadline: float | None,
         producers: dict[str, str],
         emit: bool = True,
+        visit: int = 0,
     ) -> tuple[str, dict, str | None, str | None, str | None, dict, dict | None, int]:
         """跑一个 stage (含 retry). 返 (status, new_state, error, error_class, error_category, producers, delta, attempts).
 
@@ -780,6 +906,7 @@ class Runtime:
         delta = stage 的 return dict (成功, 可能 {}), 失败 = None.
         ctx.attempt = 1-based 当前尝试次数, RetryableError 重试时 +1.
         attempts = 实际执行 attempt 总数 (W3 max_steps 熔断计数用).
+        visit = 本 stage 在本 run 内的第几次执行 (R1, 1 起; 循环重入 >1) — 事件观测用.
         emit=False → 不发生命周期事件 (单 stage 重放不是正式 run).
         """
         attempt = 0
@@ -791,6 +918,7 @@ class Runtime:
                 if emit:
                     self._emit("stage_end", {"task_id": task_id, "run_id": run_id,
                                              "stage": name, "attempt": attempt,
+                                             "visit": visit,
                                              "status": "cancelled",
                                              "duration": time.time() - _t0,
                                              "error": "cancelled by caller"})
@@ -798,7 +926,8 @@ class Runtime:
             attempt += 1
             if emit:
                 self._emit("stage_start", {"task_id": task_id, "run_id": run_id,
-                                           "stage": name, "attempt": attempt})
+                                           "stage": name, "attempt": attempt,
+                                           "visit": visit})
             try:
                 # 每 attempt 深拷贝 state (防 stage 意外 mutate 污染后续重试)
                 ctx = Ctx(
@@ -832,7 +961,8 @@ class Runtime:
                     producers[_k] = name
                 if emit:
                     self._emit("stage_end", {"task_id": task_id, "run_id": run_id, "stage": name,
-                                             "attempt": attempt, "status": "done",
+                                             "attempt": attempt, "visit": visit,
+                                             "status": "done",
                                              "duration": time.time() - _t0, "error": None})
                 return "done", new_state, None, None, None, producers, delta, attempt
 
@@ -844,7 +974,8 @@ class Runtime:
                 )
                 if emit:
                     self._emit("stage_end", {"task_id": task_id, "run_id": run_id, "stage": name,
-                                             "attempt": attempt, "status": "failed",
+                                             "attempt": attempt, "visit": visit,
+                                             "status": "failed",
                                              "duration": time.time() - _t0, "error": str(e)})
                 return "failed", state, str(e), type(e).__name__, getattr(e, "category", None), producers, None, attempt
             except (RetryableError, TimeoutError) as e:
@@ -870,7 +1001,8 @@ class Runtime:
                 )
                 if emit:
                     self._emit("stage_end", {"task_id": task_id, "run_id": run_id, "stage": name,
-                                             "attempt": attempt, "status": "failed",
+                                             "attempt": attempt, "visit": visit,
+                                             "status": "failed",
                                              "duration": time.time() - _t0, "error": str(e)})
                 return "failed", state, str(e), type(e).__name__, getattr(e, "category", None), producers, None, attempt
             except Exception as e:  # 未知异常 → FatalError 语义
@@ -913,7 +1045,7 @@ class Runtime:
 
     def _save_cp(self, task_id: str, run_id: str, dag: DAG,
                  done_stages: list, statuses: dict, producers: dict | None = None,
-                 stage_deltas: dict | None = None,
+                 stage_deltas_visits: dict[str, list] | None = None,
                  initial_state: dict | None = None,
                  stage_ts: dict | None = None,
                  fork_overrides: dict | None = None,
@@ -930,7 +1062,8 @@ class Runtime:
                 done_stages=list(done_stages),
                 producers=dict(producers or {}),
                 initial_state=dict(initial_state or {}),
-                stage_deltas=dict(stage_deltas or {}),
+                stage_deltas_visits={
+                    k: list(v) for k, v in (stage_deltas_visits or {}).items()},
                 stage_ts=dict(stage_ts or {}),
                 fork_overrides=dict(fork_overrides or {}),
                 stage_input_hashes=dict(input_hashes or {}),

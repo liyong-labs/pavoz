@@ -6,6 +6,17 @@
 
 ### Added
 
+- **`DAG.add_conditional_edges(from_node, route_fn, mapping, *, max_visits=None)`
+  (R1)**: 条件路由 — 编排器持所有边, 节点纯数据处置。route_fn 同步纯函数
+  (state → key), mapping 封闭集 (未声明 key → `UnmappedRouteError`);
+  回路边目标必须显式 max_visits (超限 → `MaxVisitsExceeded`),
+  EnginePolicy.max_steps 仍全局兜底。route_fn 源码 + mapping + max_visits
+  计入 workflow_hash (改路由 = 结构变, 拒续)。cp 增 `stage_deltas_visits`
+  (完成序含重复, 循环 resume 重建正确)。新事件 `route`; stage 事件加
+  `visit` 序号; stage_timings 循环累计。viz 渲染条件边 (mermaid 虚线带 key
+  标签 / graph_json kind+key+max_visits)。条件边图暂不支持 fork_run/run_stage
+  (R2)。指南: docs/cn/conditional-edges.md。
+
 - **CI 质量门禁**: pytest 覆盖率 `--cov-fail-under=80` + pyright (basic, 0 errors)。
   dev extras 收编 pytest-cov / pyflakes / pyyaml / pyright (CI 免散装安装)。
   测试铁律的 "覆盖率 ≥80% / pyright 0 errors" 从文档声明变为机器可执行

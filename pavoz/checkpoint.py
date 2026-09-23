@@ -32,15 +32,25 @@ __all__ = [
 
 
 def workflow_hash(dag: DAG) -> str:
-    """DAG 结构的稳定指纹: stage 名 + 依赖 + retries + timeout.
+    """DAG 结构的稳定指纹: stage 名 + 依赖 + retries + timeout + 条件边 (R1).
 
     任何影响执行语义的结构改动 → hash 变 → 旧 checkpoint 拒 resume.
     只改 stage 函数体 (fn) 不改结构 → hash 不变 (resume 兼容, fn 重新 import 即新代码).
+    条件边 (R1, 0.5.5): route_fn 源码 + mapping + max_visits 全计入 — 改路由 =
+    结构变 (skip_unchanged/fork 拿陈旧路由是这个特性最大的雷). 无条件边 DAG 的
+    hash 行集与 0.5.4 完全一致.
     """
     rows = []
     for name in dag.topo_order():
         s = dag.stages[name]
         rows.append(f"{name}:dep={','.join(s.depends_on)}:retry={s.retries}:to={s.timeout}")
+    edges = dag.conditional_edges
+    for fname in sorted(edges):
+        e = edges[fname]
+        mapping = ",".join(f"{k}->{v}" for k, v in sorted(e.mapping.items()))
+        rows.append(
+            f"{fname}:cond={mapping}:mv={e.max_visits}:fn={_stage_source_id(e.route_fn)}"
+        )
     raw = "\n".join(rows)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
@@ -131,9 +141,12 @@ class Checkpoint:
     done_stages: list[str]  # 按完成顺序
     # v0.1.1: state key → producer stage. 链式覆盖判定用.
     producers: dict[str, str] = field(default_factory=dict)
-    # v0.5.1 (M2): 每 stage 的原始 return delta (按完成序) + run 的初始 state.
+    # v0.5.1 (M2): 每 stage 的原始 return delta + run 的初始 state.
     initial_state: dict[str, Any] = field(default_factory=dict)
-    stage_deltas: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # R1 (0.5.5): stage 名 → 历次执行的 delta 列表 (追加序 = 执行序). 循环里同一
+    # stage 多轮执行各有 delta — resume 重建按 done_stages 完成序逐 visit 折叠,
+    # last-write dict 会把中间轮顺序折叠错. 无循环图每 stage 恰 1 条, 体积不变.
+    stage_deltas_visits: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     # v0.7: stage 完成 epoch ts — 恢复侧内容过期 (TTL) gate 判定用.
     stage_ts: dict[str, float] = field(default_factory=dict)
     # v0.8: fork_run 的 overrides — fork cp 专用 (前序 keep 之上最后 merge).
@@ -146,11 +159,24 @@ class Checkpoint:
 
     @property
     def state(self) -> dict[str, Any]:
-        """全量 merge 后 state — 从 initial_state + stage_deltas 惰性重建.
+        """全量 merge 后 state — 从 initial_state + stage_deltas_visits 惰性重建.
 
         不落盘 (v0.8 瘦身), 每次访问现算 (纯内存 dict merge, 2MB 级 ~10ms).
         """
         return self._rebuild_state()[0]
+
+    @property
+    def stage_deltas(self) -> dict[str, dict[str, Any]]:
+        """每 stage 最后一次执行的 delta (last-write 视图).
+
+        skip_unchanged 重放 / diff_runs / M3 单 stage replay 按名取 delta 用.
+        循环多轮的完整历史在 stage_deltas_visits (R1) — state 重建必须走
+        done_stages 完成序逐 visit 折叠, 不能用本视图 (顺序错).
+        """
+        return {
+            name: deltas[-1]
+            for name, deltas in self.stage_deltas_visits.items() if deltas
+        }
 
     def to_dict(self) -> dict:
         return {
@@ -162,7 +188,7 @@ class Checkpoint:
             "done_stages": self.done_stages,
             "producers": self.producers,
             "initial_state": self.initial_state,
-            "stage_deltas": self.stage_deltas,
+            "stage_deltas_visits": self.stage_deltas_visits,
             "stage_ts": self.stage_ts,
             "fork_overrides": self.fork_overrides,
             "stage_input_hashes": self.stage_input_hashes,
@@ -171,6 +197,10 @@ class Checkpoint:
     @classmethod
     def from_dict(cls, d: dict) -> Checkpoint:
         # run_id 必填 (旧无 run_id 数据已 hard cut orphan); 以后加新字段一律 .get 默认 (A7)
+        # stage_deltas: 0.5.4 旧格式 (last-write dict) → 包装成单 visit 列表 (R1 兼容读)
+        visits = d.get("stage_deltas_visits") or {}
+        if not visits:
+            visits = {k: [v] for k, v in (d.get("stage_deltas") or {}).items()}
         return cls(
             task_id=d["task_id"],
             run_id=d["run_id"],
@@ -180,7 +210,7 @@ class Checkpoint:
             done_stages=d["done_stages"],
             producers=dict(d.get("producers") or {}),
             initial_state=dict(d.get("initial_state") or {}),
-            stage_deltas=dict(d.get("stage_deltas") or {}),
+            stage_deltas_visits={k: list(v) for k, v in visits.items()},
             stage_ts=dict(d.get("stage_ts") or {}),
             fork_overrides=dict(d.get("fork_overrides") or {}),
             stage_input_hashes=dict(d.get("stage_input_hashes") or {}),
@@ -240,10 +270,18 @@ class Checkpoint:
         """
         rebuilt = dict(self.initial_state)
         producers = {k: "<init>" for k in self.initial_state}
+        # R1: done_stages 完成序可含重复 (循环) — 逐 visit 消费对应 delta,
+        # 保证重建顺序 = 实际执行顺序 (last-write dict 在此会折叠错序)
+        visit_idx: dict[str, int] = {}
         for done in self.done_stages:
             if done == stop_at:
                 break
-            delta = self.stage_deltas.get(done)
+            deltas = self.stage_deltas_visits.get(done, [])
+            idx = visit_idx.get(done, 0)
+            visit_idx[done] = idx + 1
+            if idx >= len(deltas):
+                continue  # done 记录多于 delta (旧格式/手工残缺) → 跳过该 visit
+            delta = deltas[idx]
             if delta:
                 rebuilt.update(delta)
                 for k in delta:

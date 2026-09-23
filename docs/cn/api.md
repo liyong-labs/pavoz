@@ -391,6 +391,41 @@ CLI `pavoz fork-run --set / --set-file` 走的就是这条链;`Runtime.fork_run(
 
 `pavoz.__version__`: 当前版本字符串 (与 `pyproject.toml` / release tag 同步)。
 
+## Conditional edges (v0.5.5)
+
+编排器持所有边 (含条件边), 节点纯数据处置 — stage 只写 state, 不决定下一步;
+判断逻辑在声明期集中写在边上 (同步纯函数, 只读 state)。
+
+### `DAG.add_conditional_edges(from_node, route_fn, mapping, *, max_visits=None)`
+
+```python
+dag.add_conditional_edges(
+    "s_review",
+    lambda s: "ship" if s["verdict"] == "pass" else "fix",  # 同步纯函数
+    {"ship": "s_save", "fix": "s_revision"},                # key → 目标 (封闭集)
+    max_visits=5,
+)
+```
+
+- `route_fn(state) -> key`: 同步纯函数, 同 state 必同 key (重放/resume 可判定)。
+  LLM 判断请做成 judge-stage 写 state (如 `state["route"]`), 边只读 —
+  LangGraph / Temporal / SFN / BPMN 收敛的同型模式。
+- `mapping`: key → 目标 stage 的封闭集; 运行时返回未声明 key →
+  `UnmappedRouteError`。route_fn 自己抛的异常原样传播 (error_class 保留,
+  failed_stage = router)。
+- `max_visits`: router 单次 run 最大执行次数, 超限 → `MaxVisitsExceeded`;
+  条件边构成回路时 validate() 强制非 None (防 LLM 循环烧钱), 分支-only 图可不设。
+- validate() 结构规则: 条件边目标不可静态依赖 router; router 的静态下游必须是
+  mapping 目标; 回路边目标带静态父 → 参与 topo 初始触发 (循环头), 否则 route-only
+  (分支/循环体)。
+- `workflow_hash` 计入 route_fn 源码 + mapping + max_visits — 改路由 = 结构变,
+  resume/fork 拒续。
+- 条件边图暂不支持 `fork_run` / `run_stage` (R2)。
+- 事件: `route` `{from, key, to}`; `stage_start/stage_end` 增加 `visit` 序号
+  (循环第几轮, 区别 attempt=重试)。viz: `to_mermaid` 条件边 = key 标签虚线,
+  `to_graph_json` edges 带 `kind`/`key`/`max_visits`。
+- 完整指南 (含 judge-stage 模式): [conditional-edges.md](conditional-edges.md)。
+
 ## 相关文档
 
 - [quickstart.md](quickstart.md) — 5 分钟跑通

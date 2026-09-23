@@ -428,3 +428,42 @@ The CLI `pavoz fork-run --set / --set-file` flags go through this same chain, an
 - [quickstart.md](quickstart.md) — 5-minute walkthrough
 - [architecture.md](architecture.md) — architecture and design decisions
 - [use-cases/](use-cases/) — reference business integrations
+
+## Conditional edges (v0.5.5)
+
+The orchestrator owns all edges (including conditional ones); nodes are pure
+data processing — a stage only writes state and never decides what runs next.
+Routing logic lives on the edge, declared once, as a sync pure function over state.
+
+### `DAG.add_conditional_edges(from_node, route_fn, mapping, *, max_visits=None)`
+
+```python
+dag.add_conditional_edges(
+    "s_review",
+    lambda s: "ship" if s["verdict"] == "pass" else "fix",  # sync pure function
+    {"ship": "s_save", "fix": "s_revision"},                # key → target (closed set)
+    max_visits=5,
+)
+```
+
+- `route_fn(state) -> key`: sync pure function; same state → same key
+  (replay/resume determinism). For LLM-based judgment use a judge stage that
+  writes state (e.g. `state["route"]`) and read it on the edge — the same
+  pattern converged on by LangGraph / Temporal / Step Functions / BPMN.
+- `mapping`: closed set of key → target stage; an undeclared key at runtime
+  raises `UnmappedRouteError`. Exceptions raised by route_fn itself propagate
+  unchanged (error_class preserved, failed_stage = the router).
+- `max_visits`: max executions of the router per run; exceeding it raises
+  `MaxVisitsExceeded`. validate() requires it when conditional edges form a
+  loop (anti-runaway guard); branch-only graphs may omit it.
+- validate() structural rules: a conditional target must not statically depend
+  on a router; a router's static dependents must be mapping targets; a loop-edge
+  target with a static parent joins topo (loop head), otherwise it is route-only
+  (branch / loop body).
+- `workflow_hash` includes route_fn source + mapping + max_visits — changing
+  routing = structural change; resume/fork refuse stale checkpoints.
+- `fork_run` / `run_stage` are not supported on conditional graphs yet (R2).
+- Events: `route` `{from, key, to}`; `stage_start/stage_end` gain a `visit`
+  number (loop iteration, distinct from attempt = retry). Viz: `to_mermaid`
+  renders conditional edges as labeled dotted arrows; `to_graph_json` edges
+  carry `kind`/`key`/`max_visits`.

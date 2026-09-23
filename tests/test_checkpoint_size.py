@@ -39,10 +39,10 @@ def _mk_cp() -> Checkpoint:
         done_stages=["s_a", "s_b", "s_c"],
         producers={"a": "s_c", "b": "s_b", "c": "s_c"},
         initial_state={"seed": 0},
-        stage_deltas={
-            "s_a": {"a": 1},
-            "s_b": {"b": 2},
-            "s_c": {"c": 3, "a": 99},
+        stage_deltas_visits={
+            "s_a": [{"a": 1}],
+            "s_b": [{"b": 2}],
+            "s_c": [{"c": 3, "a": 99}],
         },
     )
 
@@ -53,7 +53,7 @@ def test_to_dict_has_no_state_key():
     assert "state" not in d
     assert set(d) == {"task_id", "run_id", "dag_name", "workflow_hash",
                       "stage_statuses", "done_stages", "producers",
-                      "initial_state", "stage_deltas", "stage_ts",
+                      "initial_state", "stage_deltas_visits", "stage_ts",
                       "fork_overrides", "stage_input_hashes"}
 
 
@@ -85,7 +85,7 @@ def test_fork_overrides_roundtrip_and_rebuild():
     cp = Checkpoint(
         task_id="t-1", run_id="r-1", dag_name=dag.name, workflow_hash=workflow_hash(dag),
         stage_statuses={"s_a": "done", "s_b": "done"}, done_stages=["s_a", "s_b"],
-        stage_deltas={"s_a": {"a": 1, "topic": "orig"}, "s_b": {"b": 2}},
+        stage_deltas_visits={"s_a": [{"a": 1, "topic": "orig"}], "s_b": [{"b": 2}]},
         fork_overrides={"topic": "edited", "a": 42},
     )
     rt = Checkpoint.from_dict(cp.to_dict())
@@ -105,7 +105,7 @@ def test_big_state_roundtrip_speed_and_size():
     cp = Checkpoint(
         task_id="big", run_id="r1", dag_name="d", workflow_hash="h",
         stage_statuses={"s_filter": "done"}, done_stages=["s_filter"],
-        stage_deltas={"s_filter": {"unique_sources": big}},
+        stage_deltas_visits={"s_filter": [{"unique_sources": big}]},
     )
     ser = json.dumps(cp.to_dict(), ensure_ascii=False)
     # 素材池 ~600×800字 ≈ 1.4MB (delta 本体); 无 state 冗余 → 序列化 ≈ delta 体积

@@ -34,11 +34,13 @@ def _cp(dag, initial=None, deltas=None, done=None):
         done_stages=done or ["s_a", "s_b", "s_c"],
         producers={"a": "s_c", "b": "s_b", "c": "s_c"},  # a 的 producer 是最后写者 s_c
         initial_state=dict(initial or {}),
-        stage_deltas=dict(deltas or {
-            "s_a": {"a": 1},
-            "s_b": {"b": 2},
-            "s_c": {"c": 3, "a": 99},
-        }),
+        stage_deltas_visits={
+            k: [v] for k, v in (deltas or {
+                "s_a": {"a": 1},
+                "s_b": {"b": 2},
+                "s_c": {"c": 3, "a": 99},
+            }).items()
+        },
     )
 
 
@@ -60,10 +62,11 @@ def test_from_dict_tolerates_missing_new_fields():
     dag = _dag()
     d = _cp(dag).to_dict()
     del d["initial_state"]
-    del d["stage_deltas"]
+    del d["stage_deltas_visits"]
     cp = Checkpoint.from_dict(d)
     assert cp.initial_state == {}
     assert cp.stage_deltas == {}
+    assert cp.stage_deltas_visits == {}
 
 
 def test_rebuild_state_before_first_stage_returns_initial():

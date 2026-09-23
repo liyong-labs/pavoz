@@ -133,12 +133,12 @@ def test_load_latest_uses_pointer_file(tmp_path):
     store.save(Checkpoint(
         task_id="t-ptr", run_id="run-1", dag_name="d", workflow_hash=h,
         stage_statuses={"s_x": "done"}, done_stages=["s_x"],
-        stage_deltas={"s_x": {"v": 1}},
+        stage_deltas_visits={"s_x": [{"v": 1}]},
     ))
     store.save(Checkpoint(
         task_id="t-ptr", run_id="run-2", dag_name="d", workflow_hash=h,
         stage_statuses={"s_x": "done"}, done_stages=["s_x"],
-        stage_deltas={"s_x": {"v": 2}},
+        stage_deltas_visits={"s_x": [{"v": 2}]},
     ))
 
     latest = store.load_latest("t-ptr")

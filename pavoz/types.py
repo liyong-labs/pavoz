@@ -1,6 +1,13 @@
 """pavoz 基础类型: 异常契约 + 运行结果."""
 
-__all__ = ["FatalError", "RetryableError", "RunResult", "StageError"]
+__all__ = [
+    "FatalError",
+    "MaxVisitsExceeded",
+    "RetryableError",
+    "RunResult",
+    "StageError",
+    "UnmappedRouteError",
+]
 
 
 class PavozError(Exception):
@@ -35,6 +42,23 @@ class FatalError(PavozError):
     """程序 bug (框架 / stage 代码错误). 立即终, 不重试, 不消耗 retries.
 
     例: state 类型不兼容, stage 签名错误.
+    """
+
+
+class UnmappedRouteError(Exception):
+    """条件路由返回了 mapping 未声明的 key (R1, 0.5.5).
+
+    编排器抛 (route_fn 返回 key ∉ mapping) — 封闭集在声明期由 mapping 定义,
+    运行时强制. fail-loud, 无 default 无静默. 注意与 route_fn 自己抛的异常区分:
+    后者原样传播 (是 route_fn 的 bug, 编排器不包装).
+    """
+
+
+class MaxVisitsExceeded(Exception):
+    """router stage 单次 run 内执行次数超过 max_visits (R1, 0.5.5).
+
+    cond_fn/路由 bug 死循环的安全网. 环图 (条件边构成 logical cycle) 在
+    validate() 强制要求显式 max_visits; EnginePolicy.max_steps 仍全局兜底.
     """
 
 
