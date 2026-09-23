@@ -21,12 +21,14 @@ jobs:
           pip install -e ".[dev]"
       - name: Lint (pyflakes)
         run: |
-          pip install pyflakes
           python -m pyflakes pavoz tests examples tools
+      - name: Type check (pyright basic)
+        run: |
+          python -m pyright
       - name: Doc links + style
         run: |
           python tools/check_doc_links.py
           python tools/check_doc_style.py
-      - name: Test
+      - name: Test (coverage gate 80%)
         run: |
-          python -m pytest tests/ -q
+          python -m pytest tests/ -q --cov=pavoz --cov-fail-under=80

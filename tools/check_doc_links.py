@@ -13,7 +13,7 @@ import pathlib
 import re
 import sys
 
-SKIP_DIRS = (".git", "docs/design")
+SKIP_DIRS = (".git", ".venv", "docs/design")
 SKIP_PREFIXES = ("http://", "https://", "mailto:", "#")
 LINK = re.compile(r"\[[^\]]*\]\(([^)#][^)]*)\)")
 

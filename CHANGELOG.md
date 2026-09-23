@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- **CI 质量门禁**: pytest 覆盖率 `--cov-fail-under=80` + pyright (basic, 0 errors)。
+  dev extras 收编 pytest-cov / pyflakes / pyyaml / pyright (CI 免散装安装)。
+  测试铁律的 "覆盖率 ≥80% / pyright 0 errors" 从文档声明变为机器可执行
+  (实测基线: 覆盖率 88%, runtime.py 12 处 `str | None` 过时注解已收窄)。
+
 ## [0.5.4] — 2026-09-22
 
 ### Added (0.5.4 — diff/观测/viz/错误分类, 2026-09-22)
