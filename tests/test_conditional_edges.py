@@ -10,17 +10,17 @@ from __future__ import annotations
 import pytest
 
 from pavoz import (
+    DAG,
     CheckpointMismatchError,
     CheckpointStore,
     CycleError,
-    DAG,
     EventRecorder,
     FileStorage,
     MaxVisitsExceeded,
     Runtime,
     StageError,
-    UnmappedRouteError,
     UnknownDepError,
+    UnmappedRouteError,
     to_graph_json,
     to_mermaid,
     workflow_hash,
@@ -253,7 +253,7 @@ def test_hash_includes_routing():
 
 
 async def test_pass_first_round_goes_straight_to_save(tmp_path):
-    rt, store, r = await _run(build_story(pass_round=1), tmp_path)
+    _rt, _store, r = await _run(build_story(pass_round=1), tmp_path)
     assert r.status == "done"
     assert r.stage_statuses == {
         "s_write": "done", "s_review": "done", "s_save": "done"}
@@ -263,7 +263,7 @@ async def test_pass_first_round_goes_straight_to_save(tmp_path):
 
 
 async def test_fail_fix_pass(tmp_path):
-    rt, store, r = await _run(build_story(pass_round=2), tmp_path)
+    _rt, _store, r = await _run(build_story(pass_round=2), tmp_path)
     assert r.status == "done"
     assert r.stage_statuses["s_save"] == "done"
     assert r.state["round"] == 2
@@ -297,7 +297,7 @@ async def test_force_save_by_route_fn_business_logic(tmp_path):
     )
     dag.add_conditional_edges(
         "s_revision", lambda s: "re", {"re": "s_review"}, max_visits=5)
-    rt, store, r = await _run(dag, tmp_path)
+    _rt, _store, r = await _run(dag, tmp_path)
     assert r.status == "done"
     assert r.state["round"] == 3 and r.state["saved"] is True
 
@@ -318,7 +318,7 @@ async def test_max_visits_exceeded_fails_run(tmp_path):
                               max_visits=2)
     dag.add_conditional_edges("s_b", lambda s: "back", {"back": "s_a"},
                               max_visits=9)
-    rt, store, r = await _run(dag, tmp_path)
+    _rt, _store, r = await _run(dag, tmp_path)
     assert r.status == "failed"
     assert r.error_class == MaxVisitsExceeded.__name__
     assert r.failed_stage == "s_a"
@@ -339,7 +339,7 @@ async def test_unmapped_route_key_fails_loud(tmp_path):
 
     dag2.add_conditional_edges(
         "s_a", lambda s: s["verdict"], {"pass": "s_b"}, max_visits=2)
-    rt, store, r = await _run(dag2, tmp_path)
+    _rt, _store, r = await _run(dag2, tmp_path)
     assert r.status == "failed"
     assert r.error_class == UnmappedRouteError.__name__
     assert r.failed_stage == "s_a"
@@ -362,7 +362,7 @@ async def test_route_fn_exception_propagates_class(tmp_path):
         raise ValueError("boom in router")
 
     dag2.add_conditional_edges("s_a", bad_route, {"go": "s_b"}, max_visits=2)
-    rt, store, r = await _run(dag2, tmp_path)
+    _rt, _store, r = await _run(dag2, tmp_path)
     assert r.status == "failed"
     assert r.error_class == "ValueError"  # 原样保留, 编排器不包装
     assert r.failed_stage == "s_a"
@@ -394,7 +394,7 @@ async def test_route_event_and_visit_numbers(tmp_path):
 
 
 async def test_stage_timings_accumulate_over_loop(tmp_path):
-    rt, store, r = await _run(build_story(pass_round=2), tmp_path)
+    _rt, _store, r = await _run(build_story(pass_round=2), tmp_path)
     assert r.stage_timings["s_review"] > 0
     # timings 是 last-write dict 上累计 — 键唯一 (无 [1] [2] 重复键)
     assert isinstance(r.stage_timings["s_review"], float)
@@ -551,7 +551,7 @@ async def test_fork_from_judge_loop_full_shape(tmp_path):
 async def test_fork_from_never_executed_stage_rejected(tmp_path):
     """从未执行过的 stage 没有截断点 (路由续跑可能根本不到它) → 明确拒绝."""
     dag = build_story(pass_round=1)
-    rt, store, r1 = await _run(dag, tmp_path)
+    rt, _store, r1 = await _run(dag, tmp_path)
     assert r1.status == "done"
     with pytest.raises(RuntimeError, match="未在该 task 执行过"):
         await rt.fork_run(dag, "t1", from_stage="s_revision")
@@ -633,7 +633,7 @@ def _orphan_dag():
 
 async def test_orphan_stage_fails_run_not_silent_done(tmp_path):
     """声明的 stage 未被任何路由到达 → run failed (列孤儿), 决不允许 done."""
-    rt, store, r = await _run(_orphan_dag(), tmp_path)
+    _rt, _store, r = await _run(_orphan_dag(), tmp_path)
     assert r.status == "failed"
     assert r.error_class == "OrphanStagesError"
     assert "s_save" in (r.error or "")
@@ -664,6 +664,6 @@ async def test_closed_loop_runs_everything(tmp_path):
     dag.add_conditional_edges("s_route_judge", lambda s: s["route"],
                               {"ship": "s_save", "revise": "s_route_judge"},
                               max_visits=3)
-    rt, store, r = await _run(dag, tmp_path)
+    _rt, _store, r = await _run(dag, tmp_path)
     assert r.status == "done"
     assert r.stage_statuses["s_save"] == "done"
