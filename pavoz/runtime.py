@@ -884,22 +884,13 @@ class Runtime:
             keep.append(_d)
 
         # state 重建 = initial + 保留 deltas (完成序逐 visit) + overrides (最后生效).
-        # R1: done_stages 可含重复 (循环) — 不能用 last-write stage_deltas 视图
-        # (截断点的第 1 次 visit 才是现场), 与 Checkpoint._rebuild_state 同序消费.
-        state = dict(cp.initial_state)
-        producers = {k: "<init>" for k in cp.initial_state}
-        kept_deltas: dict[str, dict[str, Any]] = {}
-        _visit_idx: dict[str, int] = {}
-        for _d in keep:
-            _visits = cp.stage_deltas_visits.get(_d, [])
-            _vi = _visit_idx.get(_d, 0)
-            _visit_idx[_d] = _vi + 1
-            if _vi < len(_visits) and _visits[_vi]:
-                _dl = _visits[_vi]
-                state.update(_dl)
-                kept_deltas[_d] = _dl
-                for _k in _dl:
-                    producers[_k] = _d
+        # R1: from_stage 已完成 → 折叠到其首次出现前 (visit 序 — 循环图取第 1 次
+        # visit 的现场); from_stage 未执行过 (静态图失败点 fork) → 全量折叠 done
+        # deltas. 折叠实现复用 Checkpoint — 不在 runtime 再写一份同序循环.
+        if from_stage in cp.done_stages:
+            state, producers = cp.rebuild_state_and_producers_before(from_stage)
+        else:
+            state, producers = cp.rebuild_state_and_producers()
 
         # R2: fork_cp 携带全量历史 (deltas/statuses/ts/hashes 含 from_stage 之后的)
         # — run 循环在 skip_unchanged 开启时逐 stage 比对, 命中即重放. done_stages
