@@ -394,6 +394,9 @@ class Runtime:
             visits[n] = visits.get(n, 0) + 1
         run_exec_order: list[str] = []  # R1: 本 run 完成序 (决策过期检用, 不含历史)
         last_route: dict[str, tuple[str, int]] = {}  # router → (所选目标, 决策时完成数)
+        # R2 (id=433 评审): route 重入待重跑集 — 回跳落点的静态下游闭包中被
+        # done_stages 拦截的成员, _next_auto 视为可再执行; 该 stage 重新完成时移出.
+        reset_pending: set[str] = set(cp.reset_pending) if cp is not None else set()
         steps_used = 0  # W3: stage attempt 总数 (max_steps 熔断计数)
         # R2: skip_replay — 非 done 的 stage 若历史 status=done 且输入 hash
         # 命中 (fn 源码 + 执行前 state 均未变) → 重放历史 delta, 不重跑.
@@ -404,8 +407,9 @@ class Runtime:
 
         def _next_auto() -> str | None:
             for n in auto_order:
-                if n not in done_stages:
-                    return n
+                if n in done_stages and n not in reset_pending:
+                    continue  # done 且不在重入重跑集 → 真正完成过, 跳过
+                return n
             return None
 
         def _fail_route(stage_name: str, exc: Exception, err_class: str) -> RunResult:
@@ -423,7 +427,7 @@ class Runtime:
             result.state = state
             self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                           producers, stage_deltas_visits, initial_state_saved,
-                          stage_ts, _fork_overrides, input_hashes)
+                          stage_ts, _fork_overrides, input_hashes, reset_pending)
             self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                    "dag": dag.name, "status": "failed"})
             logger.warning(
@@ -452,6 +456,11 @@ class Runtime:
                 )
             to = edge.mapping[key]
             last_route[name] = (to, len(run_exec_order))  # 决策过期检锚点
+            # R2: 重入 = 显式再入执行流 — 落点静态下游若已 done, 标记待重跑
+            # (循环静态链第二圈全链重跑; router 链环闭包为空集, 行为不变)
+            for _n in dag.static_closure(to):
+                if _n in done_stages:
+                    reset_pending.add(_n)
             self._emit("route", {"task_id": task_id, "run_id": run_id,
                                  "from": name, "key": key, "to": to})
             return to, None
@@ -498,11 +507,12 @@ class Runtime:
                     producers[_k] = name
                 done_stages.append(name)
                 run_exec_order.append(name)
+                reset_pending.discard(name)
                 result.stage_statuses = stage_statuses
                 result.state = state
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes)
+                              _fork_overrides, input_hashes, reset_pending)
                 self._emit("stage_end", {"task_id": task_id, "run_id": run_id,
                                          "stage": name, "attempt": 0, "visit": 0,
                                          "status": "skipped", "duration": 0.0,
@@ -530,7 +540,7 @@ class Runtime:
                 _fill_error_context(result, name, "MaxStepsExceeded", state)
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes)
+                              _fork_overrides, input_hashes, reset_pending)
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": "failed"})
                 logger.warning(
@@ -575,7 +585,7 @@ class Runtime:
                 _fill_error_context(result, name, None, state)
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes)
+                              _fork_overrides, input_hashes, reset_pending)
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": "cancelled"})
                 logger.warning(
@@ -614,7 +624,7 @@ class Runtime:
                 _fill_error_context(result, name, err_class, state, err_category)
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes)
+                              _fork_overrides, input_hashes, reset_pending)
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": result.status})
                 return result
@@ -624,10 +634,11 @@ class Runtime:
             stage_ts[name] = time.time()   # v0.7: 完成时刻 (内容过期 TTL 判定用)
             done_stages.append(name)
             run_exec_order.append(name)
+            reset_pending.discard(name)
             visits[name] = visit_no
             self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                           producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                          _fork_overrides, input_hashes)
+                          _fork_overrides, input_hashes, reset_pending)
             logger.info(
                 "task=%s run=%s stage=%s done (len state=%d)",
                 task_id, run_id[:8], name, len(state),
@@ -1105,7 +1116,8 @@ class Runtime:
                  initial_state: dict | None = None,
                  stage_ts: dict | None = None,
                  fork_overrides: dict | None = None,
-                 input_hashes: dict | None = None) -> None:
+                 input_hashes: dict | None = None,
+                 reset_pending: set[str] | None = None) -> None:
         if self.checkpoint_store is None:
             return
         try:
@@ -1123,6 +1135,7 @@ class Runtime:
                 stage_ts=dict(stage_ts or {}),
                 fork_overrides=dict(fork_overrides or {}),
                 stage_input_hashes=dict(input_hashes or {}),
+                reset_pending=sorted(reset_pending or ()),
             )
             self.checkpoint_store.save(cp)
         except Exception:

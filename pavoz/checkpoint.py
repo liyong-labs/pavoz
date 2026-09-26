@@ -161,6 +161,10 @@ class Checkpoint:
     # visits 列表 *尾部* 对齐 (截断点前顺序对齐) — fork 重跑循环 stage 时
     # 折叠不串轮 (历史 visit 与新 visit 混排的正确配对).
     fork_keep_counts: dict[str, int] = field(default_factory=dict)
+    # R2 (id=433 评审): route 重入待重跑集 — router 回跳已执行 stage 时, 其静态
+    # 下游闭包中被 done_stages 拦截的成员 (循环静态链第二圈要重跑). 运行态为 set,
+    # 落盘转 list (JSON). resume 中段续跑依赖它; 非 loop run 恒空 (A7 默认).
+    reset_pending: list[str] = field(default_factory=list)
 
     @property
     def state(self) -> dict[str, Any]:
@@ -198,6 +202,7 @@ class Checkpoint:
             "fork_overrides": self.fork_overrides,
             "stage_input_hashes": self.stage_input_hashes,
             "fork_keep_counts": self.fork_keep_counts,
+            "reset_pending": self.reset_pending,
         }
 
     @classmethod
@@ -221,6 +226,7 @@ class Checkpoint:
             fork_overrides=dict(d.get("fork_overrides") or {}),
             stage_input_hashes=dict(d.get("stage_input_hashes") or {}),
             fork_keep_counts=dict(d.get("fork_keep_counts") or {}),
+            reset_pending=list(d.get("reset_pending") or []),
         )
 
     def rebuild_state(self) -> dict[str, Any]:

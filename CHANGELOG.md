@@ -17,6 +17,10 @@
   标签 / graph_json kind+key+max_visits)。**终止合法性 (fail-loud)**: 正常终止
   时未执行且未被任何决策未过期的已执行 router 声明覆盖的 stage →
   `OrphanStagesError` (回路没闭合/分支挂空决不静默报 done)。
+  **循环静态链重入 (R2)**: 环头无环外静态父 → 豁免为首圈入口 (原判定把环内
+  静态链误当入口, 环头被错标 route-only); router 回跳已执行 stage → 其静态下游
+  闭包重跑 (新 visit, cp 增 `reset_pending`, resume 断点续跑) — 修复"第二圈静态链
+  不重跑却静默报 done"。
   **条件边图 fork_run / run_stage 已支持 (R2)**: fork = 截断 + overrides +
   路由续跑; run_stage 单 stage 重放 (before 折叠); 折叠按完成序逐 visit
   尾对齐 (`fork_keep_counts`) — fork 重跑循环 stage 不串轮; `<fork>` 注入

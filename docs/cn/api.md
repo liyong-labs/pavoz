@@ -413,6 +413,10 @@ dag.add_conditional_edges(
 - `mapping`: key → 目标 stage 的封闭集; 运行时返回未声明 key →
   `UnmappedRouteError`。route_fn 自己抛的异常原样传播 (error_class 保留,
   failed_stage = router)。
+- 循环静态链 (R2): 回边目标所在环若没有任何成员持有 *环外* 静态父, 首个声明的
+  环成员豁免为环入口 (第一圈从它起跑)。router 回跳已执行的 stage = 显式重入:
+  落点的静态下游闭包重新执行 (每个重跑 stage 记新 visit), `max_visits` 熔断照常
+  生效; router 链环 (环体靠路由跳转) 行为不变。中途失败 resume 从断点续跑。
 - 终止合法性 (BUG 2, fail-loud): 正常终止时若有声明 stage 未被执行、且没被任何
   *决策未过期* 的已执行 router 声明覆盖 → `OrphanStagesError`, run failed 并列出
   全部孤儿名单。"决策未过期" = 该 router 决策后只跑了所选目标可达集内的 stage;

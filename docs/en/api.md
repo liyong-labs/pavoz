@@ -453,6 +453,13 @@ dag.add_conditional_edges(
 - `mapping`: closed set of key → target stage; an undeclared key at runtime
   raises `UnmappedRouteError`. Exceptions raised by route_fn itself propagate
   unchanged (error_class preserved, failed_stage = the router).
+- Loop with a static chain (R2): if a loop-edge target's cycle has no member with
+  a *cycle-external* static parent, the first-declared cycle member is exempted as
+  the loop entry (round 1 starts there). A router jumping back to an executed
+  stage is an explicit re-entry: the target's static-downstream closure re-executes
+  (each rerun records a fresh visit); `max_visits` fusing still applies; router-chain
+  loops (body reached via route jumps) are unchanged. Mid-loop failures resume from
+  the breakpoint.
 - Termination validity (fail-loud): at normal termination, any declared stage
   that never executed and is not covered by an *unexpired* executed router's
   mapping raises `OrphanStagesError` — the run fails listing every orphan.

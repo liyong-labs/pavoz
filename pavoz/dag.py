@@ -270,8 +270,11 @@ class DAG:
         边 F→T 分型 (自动推导, zeroflow is_loopback 的自动版):
         - 前向边 (T 不可达 F — 分支): T 只经路由. 否则未命中的分支也会 topo 触发.
         - 回路边 (T 可达 F — 回路): T 有静态父 → 参与 topo 初始触发 (循环头);
-          无静态父 → 只经路由 (循环体), 除非其所在环**完全没有**带静态父的成员 —
-          那种纯路由环豁免首个声明成员当入口 (否则环不可达).
+          无静态父 → 只经路由 (循环体), 除非其所在环**没有任何成员持有 SCC 外部
+          静态父** — 那种纯路由环豁免首个声明成员当入口 (否则环不可达).
+          R2 (id=433 评审): "有入口"原判定 `any(成员有 depends_on)` 把环内静态链
+          (A→B→C→A 的链边) 误当外部入口, 环头被错标 route-only, 第一圈不从环头
+          起跑. 环内链边不构成进入环的边, 入口必须来自环外.
         """
         reach = self._execution_reach()
         scc_of = self._execution_scc()
@@ -282,8 +285,12 @@ class DAG:
                 if fname in reach.get(t, set()):  # 回路边
                     if not self._stages[t].depends_on:
                         scc = scc_of.get(t, frozenset({t}))
-                        if any(self._stages[m].depends_on for m in scc):
-                            route_only.add(t)  # 环有入口, 循环体只经路由
+                        has_external_entry = any(
+                            p not in scc_of.get(m, frozenset({m}))
+                            for m in scc for p in self._stages[m].depends_on
+                        )
+                        if has_external_entry:
+                            route_only.add(t)  # 环有外部入口, 循环体只经路由
                         else:
                             exempted.add(t)  # 纯路由环 → 稍后豁免一个入口
                 else:  # 前向边 (分支)
@@ -293,6 +300,27 @@ class DAG:
             route_only.discard(entry)
             route_only |= (exempted - {entry})
         return route_only
+
+    def static_closure(self, name: str) -> set[str]:
+        """静态下游传递闭包: 只沿 depends_on 正向, 不含条件边 (R2).
+
+        route 重入 reset 判定用: router 跳向已执行 stage = 显式再入执行流,
+        其静态下游将经 topo auto 推进再次到达 → 需要重跑 (否则 done_stages
+        拦截, 第二圈静默跳过). 条件边目标不含 — 那些由路由显式决定.
+        """
+        children: dict[str, set[str]] = {n: set() for n in self._stages}
+        for s in self._stages.values():
+            for dep in s.depends_on:
+                children[dep].add(s.name)
+        seen: set[str] = set()
+        queue = list(children[name])
+        while queue:
+            n = queue.pop()
+            if n in seen:
+                continue
+            seen.add(n)
+            queue.extend(children[n] - seen)
+        return seen
 
     def _execution_reach(self) -> dict[str, set[str]]:
         """执行方向可达集: n → 静态下游 ∪ 条件边目标. 回路判定用 (含条件边,
