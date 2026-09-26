@@ -381,16 +381,31 @@ async def test_route_event_and_visit_numbers(tmp_path):
     routes = [d for e, d in rec.events if e == "route"]
     assert routes == [
         {"task_id": "t1", "run_id": r.run_id, "from": "s_review",
-         "key": "fix", "to": "s_revision"},
+         "key": "fix", "to": "s_revision", "declared": ["fix", "ship"]},
         {"task_id": "t1", "run_id": r.run_id, "from": "s_revision",
-         "key": "re_review", "to": "s_review"},
+         "key": "re_review", "to": "s_review", "declared": ["re_review"]},
         {"task_id": "t1", "run_id": r.run_id, "from": "s_review",
-         "key": "ship", "to": "s_save"},
+         "key": "ship", "to": "s_save", "declared": ["fix", "ship"]},
     ]
     visits = [d["visit"] for e, d in rec.events
               if e == "stage_end" and d["stage"] == "s_review" and d["status"] == "done"]
     assert visits == [1, 2]  # 循环重入第 2 轮
 
+
+
+async def test_route_event_declared_keys_makes_skips_visible(tmp_path):
+    """route 事件带 declared (mapping 全 key) — 本轮未选分支 = declared - [key] 可读,
+    mis-wiring / 静默 skip 第一轮可见 (ai@home id=436 P1)."""
+    rec = EventRecorder()
+    store = CheckpointStore(FileStorage(str(tmp_path / "cp")))
+    rt = Runtime(checkpoint_store=store, on_event=rec)
+    r = await rt.run(build_story(pass_round=1), task_id="t1")
+    assert r.status == "done"
+    routes = [d for e, d in rec.events if e == "route"]
+    assert all(set(d["declared"]) == {"fix", "ship"} for d in routes
+               if d["from"] == "s_review")
+    ship_route = [d for d in routes if d["key"] == "ship"][0]
+    assert set(ship_route["declared"]) - {ship_route["key"]} == {"fix"}  # fix 分支本轮未走
 
 
 async def test_stage_timings_accumulate_over_loop(tmp_path):

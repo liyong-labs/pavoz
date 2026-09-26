@@ -461,8 +461,11 @@ class Runtime:
             for _n in dag.static_closure(to):
                 if _n in done_stages:
                     reset_pending.add(_n)
+            # declared (R2, id=436 P1): mapping 全部 key — 本轮未选分支 =
+            # declared - [key] 可读, mis-wiring / 静默 skip 第一轮可见
             self._emit("route", {"task_id": task_id, "run_id": run_id,
-                                 "from": name, "key": key, "to": to})
+                                 "from": name, "key": key, "to": to,
+                                 "declared": sorted(edge.mapping)})
             return to, None
 
         def _advance(name: str) -> tuple[str | None, RunResult | None]:
