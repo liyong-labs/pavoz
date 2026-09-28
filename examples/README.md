@@ -6,6 +6,7 @@ Runnable, dependency-free demos — each is a complete program:
 |---|---|---|
 | [`llm_pipeline.py`](llm_pipeline.py) | DAG + `ctx.call` caller seam (vendor-neutral LLM/search calls), checkpointed multi-stage pipeline | `python examples/llm_pipeline.py` |
 | [`agent_loop.py`](agent_loop.py) | convergence loop as a plain `while` inside one stage (no framework loop DSL), then the same loop factored into a reusable multi-lens `quality_gate` decorator with score events; + forking the whole loop | `python examples/agent_loop.py` |
+| [`conditional_loop.py`](conditional_loop.py) | conditional edges: declare routes on the DAG (stages stay pure), quality-gate loop with rework re-entry (`max_visits` fuse), single-point debug via `run_stage`/`fork_run`, route events with skipped branches | `python examples/conditional_loop.py` |
 | [`resume_after_crash.py`](resume_after_crash.py) | crash at stage 2 → `--resume` continues from stage 2, upstream stage not re-run | `python examples/resume_after_crash.py` then `python examples/resume_after_crash.py --resume` |
 
 A full business integration (an AI writing pipeline of

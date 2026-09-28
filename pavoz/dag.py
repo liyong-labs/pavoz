@@ -24,6 +24,8 @@ __all__ = ["DAG", "CycleError", "NodeFn", "Stage", "UnknownDepError"]
 
 logger = logging.getLogger(__name__)
 
+_cycle_warned: set[tuple[str, str]] = set()  # (dag, router) 回路提示每进程一次
+
 NodeFn = Callable[..., Coroutine[Any, Any, dict]]
 
 
@@ -214,7 +216,8 @@ class DAG:
                     f"router '{fname}' 的条件边构成回路, 必须显式 max_visits "
                     f"(防死循环; EnginePolicy.max_steps 仍全局兜底)"
                 )
-            if on_cycle:
+            if on_cycle and (self.name, fname) not in _cycle_warned:
+                _cycle_warned.add((self.name, fname))
                 logger.warning(
                     "DAG %s: 条件边 '%s' 构成回路 (受 max_visits=%s 约束)",
                     self.name, fname, edge.max_visits,
