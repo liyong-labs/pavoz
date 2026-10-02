@@ -12,6 +12,11 @@
   `stage_alive {task_id, run_id, stage, visit, attempt, elapsed}` —
   长 stage 无 fraction 汇报 (不调 Ctx.set_progress) 也能观测, 免 caller
   靠 ps 判活。快 stage 零事件; stage 结束心跳即停; 单 stage 重放不发。
+- **源码漂移可见化 (R2, ai@home id=1132 请求)**: cp 增 `stage_fn_sources`
+  (上次真实执行的 fn 源码指纹; 重放不覆盖)。fork_run / run_stage 时比对当前
+  源码, 漂移则 log WARNING 一行 — fn 体不计 workflow_hash 是有意设计
+  (改 prompt 免全链重跑), 本项把"改了代码跑的是新是旧"从静默变可见,
+  不阻断不拒续。
 
 ## [0.5.5] — 2026-09-28
 
