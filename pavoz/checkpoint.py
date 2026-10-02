@@ -165,6 +165,12 @@ class Checkpoint:
     # 下游闭包中被 done_stages 拦截的成员 (循环静态链第二圈要重跑). 运行态为 set,
     # 落盘转 list (JSON). resume 中段续跑依赖它; 非 loop run 恒空 (A7 默认).
     reset_pending: list[str] = field(default_factory=list)
+    # R2 (id=1132): stage 名 → 上次真实执行的 fn 源码指纹 (_stage_source_id).
+    # fn 体不计 workflow_hash 是有意的 (改 prompt 免全链重跑), 代价是"改了代码
+    # 跑的是新是旧"不可见 — 本字段让 fork/replay 能比对漂移, log 一行提示,
+    # 不阻断不拒续. 只在真实执行时更新 (skip_replay 重放不覆盖, 它代表产出
+    # 该结果的代码). 旧 cp 无此字段 → 无漂移检查, A7 默认空.
+    stage_fn_sources: dict[str, str] = field(default_factory=dict)
 
     @property
     def state(self) -> dict[str, Any]:
@@ -203,6 +209,7 @@ class Checkpoint:
             "stage_input_hashes": self.stage_input_hashes,
             "fork_keep_counts": self.fork_keep_counts,
             "reset_pending": self.reset_pending,
+            "stage_fn_sources": self.stage_fn_sources,
         }
 
     @classmethod
@@ -227,6 +234,7 @@ class Checkpoint:
             stage_input_hashes=dict(d.get("stage_input_hashes") or {}),
             fork_keep_counts=dict(d.get("fork_keep_counts") or {}),
             reset_pending=list(d.get("reset_pending") or []),
+            stage_fn_sources=dict(d.get("stage_fn_sources") or {}),
         )
 
     def rebuild_state(self) -> dict[str, Any]:

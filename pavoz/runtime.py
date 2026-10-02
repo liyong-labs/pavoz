@@ -35,6 +35,7 @@ from .checkpoint import (
     Checkpoint,
     CheckpointMismatchError,
     CheckpointStore,
+    _stage_source_id,
     stage_input_hash,
     workflow_hash,
 )
@@ -399,6 +400,8 @@ class Runtime:
         # R2 (id=433 评审): route 重入待重跑集 — 回跳落点的静态下游闭包中被
         # done_stages 拦截的成员, _next_auto 视为可再执行; 该 stage 重新完成时移出.
         reset_pending: set[str] = set(cp.reset_pending) if cp is not None else set()
+        # R2 (id=1132): 各 stage 上次真实执行的 fn 源码指纹 (fork/replay 漂移检查用)
+        fn_sources: dict[str, str] = dict(cp.stage_fn_sources) if cp is not None else {}
         steps_used = 0  # W3: stage attempt 总数 (max_steps 熔断计数)
         # R2: skip_replay — 非 done 的 stage 若历史 status=done 且输入 hash
         # 命中 (fn 源码 + 执行前 state 均未变) → 重放历史 delta, 不重跑.
@@ -429,7 +432,7 @@ class Runtime:
             result.state = state
             self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                           producers, stage_deltas_visits, initial_state_saved,
-                          stage_ts, _fork_overrides, input_hashes, reset_pending)
+                          stage_ts, _fork_overrides, input_hashes, reset_pending, fn_sources)
             self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                    "dag": dag.name, "status": "failed"})
             logger.warning(
@@ -517,7 +520,7 @@ class Runtime:
                 result.state = state
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending)
+                              _fork_overrides, input_hashes, reset_pending, fn_sources)
                 self._emit("stage_end", {"task_id": task_id, "run_id": run_id,
                                          "stage": name, "attempt": 0, "visit": 0,
                                          "status": "skipped", "duration": 0.0,
@@ -545,7 +548,7 @@ class Runtime:
                 _fill_error_context(result, name, "MaxStepsExceeded", state)
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending)
+                              _fork_overrides, input_hashes, reset_pending, fn_sources)
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": "failed"})
                 logger.warning(
@@ -590,7 +593,7 @@ class Runtime:
                 _fill_error_context(result, name, None, state)
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending)
+                              _fork_overrides, input_hashes, reset_pending, fn_sources)
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": "cancelled"})
                 logger.warning(
@@ -629,7 +632,7 @@ class Runtime:
                 _fill_error_context(result, name, err_class, state, err_category)
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending)
+                              _fork_overrides, input_hashes, reset_pending, fn_sources)
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": result.status})
                 return result
@@ -640,10 +643,11 @@ class Runtime:
             done_stages.append(name)
             run_exec_order.append(name)
             reset_pending.discard(name)
+            fn_sources[name] = _stage_source_id(stage.fn)  # 真实执行才更新 (重放不覆盖)
             visits[name] = visit_no
             self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                           producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                          _fork_overrides, input_hashes, reset_pending)
+                          _fork_overrides, input_hashes, reset_pending, fn_sources)
             logger.info(
                 "task=%s run=%s stage=%s done (len state=%d)",
                 task_id, run_id[:8], name, len(state),
@@ -772,6 +776,13 @@ class Runtime:
             raise RuntimeError(
                 "checkpoint 无 stage_deltas — 旧版产物, 请重新 run 一次再重放"
             )
+
+        # R2 (id=1132): 源码漂移可见化 — 与 fork_run 同款, 重放执行当前代码
+        _src = cp.stage_fn_sources.get(stage_name)
+        if _src and _src != _stage_source_id(stage.fn):
+            logger.warning(
+                "task=%s replay: stage '%s' 源码较 checkpoint 记录已变化 — "
+                "本次重放执行当前代码", task_id, stage_name)
 
         # 重建 stage 执行前 state + 执行时点 producers (覆盖判定用 — 不是终态
         # cp.producers: chain-overwrite 下终态 producer 是后写者, 会误拒中间重放):
@@ -908,6 +919,21 @@ class Runtime:
         else:
             state, producers = cp.rebuild_state_and_producers()
 
+        # R2 (id=1132): 源码漂移可见化 — fn 体不计 workflow_hash (改 prompt 免
+        # 全链重跑是有意的), 但复用/重跑 stage 的代码可能已变. 漂移不阻断不拒续,
+        # log 一行把"静默"变"可见": 重跑将执行当前代码, 复用的结果是旧代码产物.
+        _drifted = [
+            _n for _n in cp.stage_fn_sources
+            if _n in dag.stages
+            and cp.stage_fn_sources[_n] != _stage_source_id(dag.stages[_n].fn)
+        ]
+        if _drifted:
+            logger.warning(
+                "task=%s fork: 以下 stage 源码较 checkpoint 记录已变化: %s — "
+                "重跑 stage 将执行当前代码; 复用 stage 的结果是旧代码产物",
+                task_id, _drifted,
+            )
+
         # R2: fork_cp 携带全量历史 (deltas/statuses/ts/hashes 含 from_stage 之后的)
         # — run 循环在 skip_unchanged 开启时逐 stage 比对, 命中即重放. done_stages
         # 仍截到 keep: 历史 status="done" 的条目由 run 循环重放判定, 失败/未跑的重跑.
@@ -937,6 +963,7 @@ class Runtime:
             fork_overrides=dict(overrides or {}),
             stage_input_hashes=dict(cp.stage_input_hashes),
             fork_keep_counts={n: keep.count(n) for n in set(keep)},
+            stage_fn_sources=dict(cp.stage_fn_sources),
         )
         self.checkpoint_store.save(fork_cp)  # save 同时把 latest 指针移到 fork
         logger.info(
@@ -1154,7 +1181,8 @@ class Runtime:
                  stage_ts: dict | None = None,
                  fork_overrides: dict | None = None,
                  input_hashes: dict | None = None,
-                 reset_pending: set[str] | None = None) -> None:
+                 reset_pending: set[str] | None = None,
+                 stage_fn_sources: dict[str, str] | None = None) -> None:
         if self.checkpoint_store is None:
             return
         try:
@@ -1173,6 +1201,7 @@ class Runtime:
                 fork_overrides=dict(fork_overrides or {}),
                 stage_input_hashes=dict(input_hashes or {}),
                 reset_pending=sorted(reset_pending or ()),
+                stage_fn_sources=dict(stage_fn_sources or {}),
             )
             self.checkpoint_store.save(cp)
         except Exception:
