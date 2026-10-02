@@ -8,8 +8,8 @@ featurize→train→evaluate--(未收敛)-->train; 文档流水线同构.
 from __future__ import annotations
 
 from pavoz import (
-    CheckpointStore,
     DAG,
+    CheckpointStore,
     FileStorage,
     Runtime,
 )
@@ -60,7 +60,7 @@ async def test_loop_head_without_external_parent_enters_topo(tmp_path):
     """洞①: 环头无外部静态父 (环内静态链不算入口) → 豁免为环入口, 第一圈从它起跑."""
     dag, _ = build_pipeline()
     assert dag.route_only_targets() == {"s_done"}  # s_fetch 不再被错标 route-only
-    rt, r = await _run(dag, tmp_path)
+    _rt, r = await _run(dag, tmp_path)
     assert r.status == "done"
     assert "s_fetch" in r.stage_statuses  # 第一圈真的跑了环头
 
@@ -68,7 +68,7 @@ async def test_loop_head_without_external_parent_enters_topo(tmp_path):
 async def test_route_reentry_reruns_static_downstream_chain(tmp_path):
     """洞②: judge 回跳已执行环头 → 静态链全链重跑 (新 visit), 不再静默提前 done."""
     dag, calls = build_pipeline()
-    rt, r = await _run(dag, tmp_path)
+    _rt, r = await _run(dag, tmp_path)
     assert r.status == "done"
     assert calls["s_fetch"] == 2 and calls["s_build"] == 2 and calls["s_check"] == 2
     assert r.state["artifact"] == "ar2"       # 第二圈产物覆盖第一圈
@@ -80,7 +80,7 @@ async def test_router_chain_loop_behavior_unchanged(tmp_path):
     """回归: router 链环 (R1 形, 环头有外部静态父) — reset 闭包空集, 行为不变."""
     from tests.test_conditional_edges import build_story
 
-    rt, r = await _run(build_story(pass_round=2), tmp_path)
+    _rt, r = await _run(build_story(pass_round=2), tmp_path)
     assert r.status == "done"
     assert r.state["round"] == 2
     assert r.state["verdict"] == "pass"
@@ -89,7 +89,7 @@ async def test_router_chain_loop_behavior_unchanged(tmp_path):
 async def test_reentry_still_fused_by_max_visits(tmp_path):
     """重入不豁免熔断: judge 永远 redo → max_visits 超限 → failed (熔断非兜底)."""
     dag, _ = build_pipeline(always_redo=True)
-    rt, r = await _run(dag, tmp_path)
+    _rt, r = await _run(dag, tmp_path)
     assert r.status == "failed"
     assert r.error_class == "MaxVisitsExceeded"
 

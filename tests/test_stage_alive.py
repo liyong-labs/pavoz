@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 
 import pavoz.runtime
-from pavoz import CheckpointStore, DAG, EnginePolicy, FileStorage, Runtime
+from pavoz import DAG, CheckpointStore, EnginePolicy, FileStorage, Runtime
 
 INTERVAL = 0.05
 SLOW = 0.18
@@ -101,7 +101,7 @@ async def test_no_policy_uses_engine_default(tmp_path, monkeypatch):
 
 
 async def test_heartbeat_stops_after_run_returns(tmp_path):
-    r, rec = await _run(_policy(), tmp_path)
+    _r, rec = await _run(_policy(), tmp_path)
     n = len(_alive(rec))
     await asyncio.sleep(SLOW)
     assert len(_alive(rec)) == n  # run 结束心跳即停, 无泄漏 task

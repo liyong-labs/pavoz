@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 
-from pavoz import CheckpointStore, DAG, FileStorage, Runtime
+from pavoz import DAG, CheckpointStore, FileStorage, Runtime
 
 
 def build(variant: str):
