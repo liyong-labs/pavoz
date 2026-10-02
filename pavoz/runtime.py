@@ -74,6 +74,30 @@ async def _noop_caller(kind: str, op: str, params: dict, meta: CallMeta) -> dict
     return CallResult(kind=kind, op=op, params=params)
 
 
+def _start_stage_alive_hb(emit_fn, *, task_id: str, run_id: str, stage: str,
+                          visit: int, attempt: int, interval: float
+                          ) -> tuple[asyncio.Event, asyncio.Task]:
+    """R2: stage_alive 心跳 task — 跑满 interval 后每 interval 发一条, stop.set() 即停.
+
+    独立工厂而非调用点闭包: 调用点在重试 while 循环内, 闭包引用循环变量
+    (attempt/visit 等) 会触发 B023 且生命周期纠缠; 显式传参一次绑定.
+    """
+    stop = asyncio.Event()
+    t0 = time.time()
+
+    async def _hb() -> None:
+        while True:
+            await asyncio.sleep(interval)
+            if stop.is_set():
+                return
+            emit_fn("stage_alive", {
+                "task_id": task_id, "run_id": run_id, "stage": stage,
+                "visit": visit, "attempt": attempt,
+                "elapsed": round(time.time() - t0, 3)})
+
+    return stop, asyncio.create_task(_hb())
+
+
 def _fill_error_context(result: RunResult, stage_name: str,
                         err_class: str | None, state: dict,
                         err_category: str | None = None) -> None:
@@ -1046,22 +1070,10 @@ class Runtime:
                         self.policy.stage_alive_interval if self.policy
                         else _DEFAULT_STAGE_ALIVE_INTERVAL)
                     if hb_interval:
-                        hb_stop = asyncio.Event()
-                        _hb_t0 = time.time()
-                        _iv = hb_interval  # 闭包内非 None 别名 (pyright 收敛)
-
-                        async def _hb() -> None:
-                            while True:
-                                await asyncio.sleep(_iv)
-                                if hb_stop is None or hb_stop.is_set():
-                                    return
-                                self._emit("stage_alive", {
-                                    "task_id": task_id, "run_id": run_id,
-                                    "stage": name, "visit": visit,
-                                    "attempt": attempt,
-                                    "elapsed": round(time.time() - _hb_t0, 3)})
-
-                        hb_task = asyncio.create_task(_hb())
+                        hb_stop, hb_task = _start_stage_alive_hb(
+                            self._emit, task_id=task_id, run_id=run_id,
+                            stage=name, visit=visit, attempt=attempt,
+                            interval=hb_interval)
                 try:
                     delta = await self._with_timeout(fn, None, ctx, stage_deadline, name, task_id)
                 finally:
