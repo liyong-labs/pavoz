@@ -33,6 +33,12 @@ class EnginePolicy:
     skip_unchanged: R2 — fork_run 未显式传 skip_unchanged 时用它. 默认 False.
         何时覆写: prompt 迭代期频繁 fork_run 重放 → True 省重跑;
         副作用 stage 必须标 Stage.skip_unchanged=False 拒跳.
+    stage_alive_interval: R2 — stage 存活心跳间隔 (秒). stage 执行超过该间隔后,
+        runtime 经 on_event 每 interval 发一条
+        stage_alive {task_id, run_id, stage, visit, attempt, elapsed} —
+        长 stage 无 fraction 汇报 (Ctx.set_progress 不调用) 也能观测, 免得
+        caller 靠 ps 判活. 默认 30.0; None 关闭; 快 stage (执行 < interval)
+        零事件; stage 结束心跳即停; 单 stage 重放 (run_stage) 不发.
     """
 
     default_timeout: float | None = None
@@ -40,3 +46,4 @@ class EnginePolicy:
     backoff_max: float = 30.0
     max_concurrent_runs: int | None = None
     skip_unchanged: bool = False
+    stage_alive_interval: float | None = 30.0

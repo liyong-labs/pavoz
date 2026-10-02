@@ -2,6 +2,17 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Added
+
+- **stage_alive 心跳事件 (R2, ai@home id=1128 提案)**: stage 执行超过
+  `EnginePolicy.stage_alive_interval` (默认 30s, None 关) 后, runtime 经
+  on_event 每 interval 发一条
+  `stage_alive {task_id, run_id, stage, visit, attempt, elapsed}` —
+  长 stage 无 fraction 汇报 (不调 Ctx.set_progress) 也能观测, 免 caller
+  靠 ps 判活。快 stage 零事件; stage 结束心跳即停; 单 stage 重放不发。
+
 ## [0.5.5] — 2026-09-28
 
 ### Added

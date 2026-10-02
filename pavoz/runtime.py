@@ -60,6 +60,8 @@ from .types import (
 
 logger = logging.getLogger("pavoz")
 
+_DEFAULT_STAGE_ALIVE_INTERVAL = 30.0  # 无 EnginePolicy 时的心跳间隔 (秒)
+
 __all__ = ["CallMeta", "CallResult", "Ctx", "Runtime"]
 
 
@@ -1007,7 +1009,39 @@ class Runtime:
                     cancel_check=(lambda: self._is_cancelled(task_id)) if self.cancel_check else None,
                     on_event=(self._emit if emit else None),
                 )
-                delta = await self._with_timeout(fn, None, ctx, stage_deadline, name, task_id)
+                # R2 (id=1128 提案): stage_alive 心跳 — 长 stage 无 fraction
+                # 汇报时的存活信号. 首条在跑满 interval 后 (快 stage 零噪音),
+                # stage 结束心跳即停; 单 stage 重放 (emit=False) 不发.
+                hb_stop: asyncio.Event | None = None
+                hb_task: asyncio.Task | None = None
+                if emit:
+                    hb_interval = (
+                        self.policy.stage_alive_interval if self.policy
+                        else _DEFAULT_STAGE_ALIVE_INTERVAL)
+                    if hb_interval:
+                        hb_stop = asyncio.Event()
+                        _hb_t0 = time.time()
+                        _iv = hb_interval  # 闭包内非 None 别名 (pyright 收敛)
+
+                        async def _hb() -> None:
+                            while True:
+                                await asyncio.sleep(_iv)
+                                if hb_stop is None or hb_stop.is_set():
+                                    return
+                                self._emit("stage_alive", {
+                                    "task_id": task_id, "run_id": run_id,
+                                    "stage": name, "visit": visit,
+                                    "attempt": attempt,
+                                    "elapsed": round(time.time() - _hb_t0, 3)})
+
+                        hb_task = asyncio.create_task(_hb())
+                try:
+                    delta = await self._with_timeout(fn, None, ctx, stage_deadline, name, task_id)
+                finally:
+                    if hb_stop is not None and hb_task is not None:
+                        hb_stop.set()
+                        hb_task.cancel()
+                        await asyncio.gather(hb_task, return_exceptions=True)
                 if delta is None:
                     delta = {}
                 if not isinstance(delta, dict):
