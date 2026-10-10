@@ -267,6 +267,8 @@ sub-DAG 嵌套、业务 wrapper 实现 (LLM/Search/Extract adapter)、业务表 
 | [docs/cn/quickstart.md](docs/cn/quickstart.md) | 5 分钟跑通 (CLI/代码/ctx.call/TestPipe) |
 | [docs/cn/architecture.md](docs/cn/architecture.md) | 架构与设计决策 |
 | [docs/cn/api.md](docs/cn/api.md) | 公开 API 参考 |
+| [docs/cn/conditional-edges.md](docs/cn/conditional-edges.md) | 条件边 (跨 stage 循环 / judge-stage 模式 / max_visits 熔断) |
+| [docs/cn/diff-runs.md](docs/cn/diff-runs.md) | `diff_runs` 使用指南 (两次 run 的结构化差异) |
 | [docs/cn/use-cases/](docs/cn/use-cases/) | 业务接入参考实现 |
 | [docs/en/quickstart.md](docs/en/quickstart.md) | Quickstart (English) |
 | [docs/en/architecture.md](docs/en/architecture.md) | Architecture (English) |
