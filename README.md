@@ -201,7 +201,7 @@ Extensions pin a compatible core range (e.g. `pavoz>=0.3,<0.4`); during 0.x, min
 
 ## Docs & development
 
-- [Architecture](docs/en/architecture.md) · [API reference](docs/en/api.md) · [Quickstart](docs/en/quickstart.md) · [Storage backends](docs/storage.md)
+- [Architecture](docs/en/architecture.md) · [API reference](docs/en/api.md) · [Quickstart](docs/en/quickstart.md) · [Conditional edges](docs/en/conditional-edges.md) · [Comparing two runs](docs/en/diff-runs.md) · [Storage backends](docs/storage.md)
 - [Contributing](CONTRIBUTING.md) · [Releasing](RELEASING.md) · [Changelog](CHANGELOG.md) · MIT License
 
 ---
