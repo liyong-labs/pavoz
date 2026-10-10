@@ -4,6 +4,7 @@ __all__ = [
     "FatalError",
     "MaxVisitsExceeded",
     "OrphanStagesError",
+    "PavozError",
     "RetryableError",
     "RunResult",
     "StageError",
@@ -13,6 +14,13 @@ __all__ = [
 
 class PavozError(Exception):
     """pavoz 异常基类: 可携带 caller-friendly category (D1.5, 0.5.4).
+
+    库自身抛出的异常都挂在它下面 (StageError / RetryableError / FatalError /
+    UnmappedRouteError / MaxVisitsExceeded / OrphanStagesError), 消费方一个
+    `except PavozError` 就能兜住"编排引擎判的失败"。注意 run() 本身不抛这些 ——
+    stage 失败会转成 RunResult(status="failed", error_class=...); 统一捕获用于
+    包一层 SDK / 转错误码等场景。调用方用错造成的 CheckpointMismatchError
+    不在此树下 (它是 caller bug, 不是引擎判的失败)。
 
     category 是自由 string (建议值: LLM_TIMEOUT / SEARCH_NO_RESULT / CODE_BUG /
     NETWORK / AUTH / INFRA / CHECKPOINT_LOAD_FAIL / STATE_VALIDATION /
@@ -46,7 +54,7 @@ class FatalError(PavozError):
     """
 
 
-class UnmappedRouteError(Exception):
+class UnmappedRouteError(PavozError):
     """条件路由返回了 mapping 未声明的 key (R1, 0.5.5).
 
     编排器抛 (route_fn 返回 key ∉ mapping) — 封闭集在声明期由 mapping 定义,
@@ -55,7 +63,7 @@ class UnmappedRouteError(Exception):
     """
 
 
-class MaxVisitsExceeded(Exception):
+class MaxVisitsExceeded(PavozError):
     """router stage 单次 run 内执行次数超过 max_visits (R1, 0.5.5).
 
     cond_fn/路由 bug 死循环的安全网. 环图 (条件边构成 logical cycle) 在
@@ -63,7 +71,7 @@ class MaxVisitsExceeded(Exception):
     """
 
 
-class OrphanStagesError(Exception):
+class OrphanStagesError(PavozError):
     """条件边图 run 结束时有声明 stage 从未被执行 (R1, 0.5.5).
 
     路由未选中 + topo 不可达 → stage 被静默跳过 — 这类 wiring 错误 (常见:

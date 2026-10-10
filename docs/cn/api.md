@@ -138,6 +138,15 @@ WARNING — fn 体不计 `workflow_hash` 是有意设计(改 prompt 免全链重
 | `RetryableError` | 网络/限流/超时 | 退避重试, 耗尽 fail |
 | `FatalError` / 未知异常 | 代码 bug | fail, 不消耗 retries |
 
+上表三个都继承 `PavozError`;条件边的 `UnmappedRouteError` /
+`MaxVisitsExceeded` / `OrphanStagesError` 也挂在它下面 — 库自身抛出的异常
+统一走这一个基类, 包一层 SDK / 转错误码时 `except PavozError` 一次兜住。
+`CheckpointMismatchError`(cp 与 DAG 结构不匹配 = 调用方用错了)不在此树下。
+
+注意上表说的"不抛异常"指 `run()`:引擎判的失败都转成
+`RunResult(status="failed", error_class=...)`。统一捕获用于 `run()` 之外的
+入口 (CLI / TestPipe 等)。
+
 ## Ctx (stage 参数)
 
 ```python

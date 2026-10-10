@@ -6,6 +6,14 @@
 
 ### Added
 
+- **`PavozError` 顶层导出 + 条件边异常归入基类**: `PavozError` (原先只在
+  `pavoz.types`, 未顶层导出) 现可 `from pavoz import PavozError`;
+  `UnmappedRouteError` / `MaxVisitsExceeded` / `OrphanStagesError` 由直接继承
+  `Exception` 改挂 `PavozError` 下 — 库自身抛出的异常统一走一个基类, 消费方
+  包 SDK / 转错误码时 `except PavozError` 一次兜住。
+  `CheckpointMismatchError` (cp 与 DAG 结构不匹配 = 调用方用错) 刻意留在树外。
+  实际影响面小: `run()` 不抛这些 (引擎判的失败转 `RunResult(status="failed",
+  error_class=...)`), 统一捕获用于 CLI / TestPipe 等 run() 之外的入口。
 - **stage_alive 心跳事件 (R2, ai@home id=1128 提案)**: stage 执行超过
   `EnginePolicy.stage_alive_interval` (默认 30s, None 关) 后, runtime 经
   on_event 每 interval 发一条

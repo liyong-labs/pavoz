@@ -159,6 +159,17 @@ of silent. It never blocks or refuses to continue — it only tells you.
 | `RetryableError` | Network / rate-limit / timeout | Backoff retry, fail when budget exhausted |
 | `FatalError` / unknown exception | Code bug | Fail immediately, does not consume retries |
 
+All three derive from `PavozError`, as do the conditional-edge errors
+`UnmappedRouteError` / `MaxVisitsExceeded` / `OrphanStagesError` — every
+exception the library itself raises shares that one base, so wrapping pavoz in
+an SDK or mapping errors onto your own codes needs a single `except PavozError`.
+`CheckpointMismatchError` (a checkpoint whose structure no longer matches the DAG
+— caller misuse) is deliberately outside that tree.
+
+Note that "no exception raised" above describes `run()`: engine-decided failures
+come back as `RunResult(status="failed", error_class=...)`. Unified catching
+matters for the entry points outside `run()` (CLI, TestPipe, …).
+
 ## Ctx (stage argument)
 
 ```python
