@@ -81,11 +81,24 @@ Step Functions (决策放 Task, Choice 纯求值) 四家收敛的同一分层。
 | 触发 | 回路边目标带静态父 → topo 初始触发 (循环头); 分支目标/循环体 → 只经路由 |
 | workflow_hash | route_fn 源码 + mapping + max_visits 全计入 — 改路由 = 结构变, 拒续 |
 | resume | 从最后完成 stage 的路由重判定 (sync 纯函数 → 同路由续跑); visit 续号 |
-| fork/replay | R1 不支持 (静态续跑会截断路由目标), R2 再议 |
+| fork/replay | 支持 (R2): `fork_run` 截断到 `from_stage` **首次完成处** + overrides 深合并, 路由续跑; visit 尾对齐不串轮; `from_stage` 从未执行过 → 明确拒绝; `run_stage` 单 stage 重放不落 cp |
 | 观测 | `route` 事件 `{from, key, to}`; stage 事件带 `visit`; stage_timings 累计 |
 | viz | mermaid 虚线带 key 标签; graph_json edges 带 kind/key/max_visits |
 
-## 和 fork_run 的关系
+## 和 fork_run 的关系 (R2 起支持)
 
-`fork_run` 是确定性重放原语, 条件边引入执行路径分叉后语义未定义 — R1 在条件边图上
-直接拒绝 (RuntimeError)。分支场景的调试: 改完直接 `run` + `diff_runs` 对比两次结果。
+R1 时本节写的是"条件边图上 `fork_run` 直接拒绝 (RuntimeError)"——**该限制已在 R2 解除**
+(ai@home id=272; user 铁律: 单点调试必须能跑)。现在语义是:
+
+- `fork_run(from_stage=X)`: 截断到 X 的**首次完成处**, `overrides` 深合并注入,
+  其后按路由续跑。要点是**尾对齐**——折叠出的历史 delta 按 visit 对齐, 重跑的那轮
+  不会把第 2 轮串成第 1 轮 (原 run 跑了两轮时, fork 后 `round` 仍是 2 而非 1)
+- X 从未在该 task 执行过 → 明确 `RuntimeError`, 不静默新建 (它没有截断点, 路由
+  续跑可能根本到不了它)
+- `run_stage(X)`: 在重建输入上单 stage 重放, **不落 checkpoint** (latest 指针不动),
+  用于改完 prompt 只验这一个节点
+- 调试分支的推荐姿势: `run_stage` 验单点 → `fork_run` 改输入重走下游 →
+  `diff_runs` 对比两次差异
+
+注意 `fork_run` 仍是**确定性重放**原语: 它复用上游结果, 不重新求值被跳过的 route。
+若要重新判定路由, 改 route_fn 或用 `run` 跑新 run。
