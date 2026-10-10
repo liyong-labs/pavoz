@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+## [0.5.6] — 2026-10-10
+
+### Security
+
+- **FileStorage 路径穿越修复**: `_path` 的守卫只查字符集 `[a-z0-9_/.-]`, 而 `.`
+  在允许集内, 故 `..` 段可穿过过滤。实测 (修复前): `get("../../x/secret")` 可读出
+  storage root 之外的文件, `delete` 可将其删除; `put` 看似被挡, 实为 `os.makedirs`
+  逐段创建时撞上字面量 `..` 目录而**偶然**失败, 非防护, 且只挡 put。
+  现 `_path` 将路径解析为 `realpath` 后断言仍落在 root 内, 对 get/put/delete
+  一视同仁; `list_keys` 的 prefix 原本完全不过滤, 一并收口。
+  **0.5.5 及更早版本带此缺陷**, 建议升级。
+
 ### Added
 
 - **`PavozError` 顶层导出 + 条件边异常归入基类**: `PavozError` (原先只在
@@ -25,6 +37,20 @@
   源码, 漂移则 log WARNING 一行 — fn 体不计 workflow_hash 是有意设计
   (改 prompt 免全链重跑), 本项把"改了代码跑的是新是旧"从静默变可见,
   不阻断不拒续。
+
+### Fixed
+
+- **文档与实际能力不符**: README 中"循环留在业务层 / 框架只提供 3 种能力"的
+  表述与已发布的条件边矛盾 (条件边即框架级跨 stage 循环原语), 改为按真实设计
+  分两层表述; `docs/cn/conditional-edges.md` 停留在 R1, 仍称条件边图上
+  `fork_run` / `run_stage` 不支持 (R2 已交付), 已按实际语义重写。
+- **`docs/en/` 缺条件边与 diff_runs 指南** (中英双侧特性文档现对齐)。
+
+### Tests
+
+- 文档页可达性闸 (抓孤儿页); CLI 解析器契约 (走真实 `main(argv)`, 断言 flag
+  落到 handler 实际读取的属性); `load_compatible` 契约; diff 输出整形与
+  `ReadOnlyStateView` 访问器。覆盖率 89% → 93%。
 
 ## [0.5.5] — 2026-09-28
 

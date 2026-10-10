@@ -53,7 +53,7 @@ from .types import (
 )
 from .viz import to_graph_json, to_mermaid
 
-__version__ = "0.5.5"
+__version__ = "0.5.6"
 
 __all__ = [
     "DAG",
