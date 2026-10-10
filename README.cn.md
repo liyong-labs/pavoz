@@ -55,6 +55,7 @@ async def s_save(ctx):
 | 能力 | 说明 |
 |---|---|
 | **DAG DSL** | `@dag.stage(depends_on, retries, timeout)` 装饰器声明; Kahn 拓扑 + Tarjan 环检测; 声明后冻结 (不支持运行时改图) |
+| **条件边 (跨 stage 循环)** | `dag.add_conditional_edges(src, route_fn, mapping, max_visits=N)` — 边决策归编排器: judge stage 只写数据, "下一步去哪" 由映射表封闭集决定; 环图强制显式 `max_visits` 熔断, 每轮都是可续跑/可观测/diff 的边界 (见 [条件边](docs/cn/conditional-edges.md)) |
 | **异常契约** | `StageError` (业务失败不重试) / `RetryableError` (退避重试) / `FatalError` (程序 bug 立即终) — 不再用裸 `raise` 猜语义 |
 | **断点续跑** | 每 node 完成即 checkpoint; resume 时校验 `workflow_hash` (改函数体不影响, 改结构拒续跑) |
 | **链式数据演进** | 下游 stage 可覆盖传递上游 producer 的 key (流水线模式); 平行 producer 冲突显式报错 |
@@ -224,10 +225,18 @@ See also: [`docs/en/architecture.md`](docs/en/architecture.md) and [`docs/en/api
 
 ## 设计取舍
 
-**循环留在业务层** — 这是 pavoz 最重要的设计决策。审计级联、质量收敛这类
-"同一阶段反复执行直到满足条件"的流程, 用 stage 函数内的普通 Python
-`for`/`while` 表达, 而不是图原语。框架只提供 3 种能力: DAG + per-node
-retries + checkpoint。成熟引擎 (Airflow/Temporal/Prefect) 也没有
+**循环分两层, 各管各的** — 这是 pavoz 最重要的设计决策。审计级联、质量收敛这类
+"同一阶段反复执行直到满足条件"的流程有两种形态, 判据是**轮次是否需要独立边界**:
+
+- **需要每轮可续跑 / 可观测 / 可 diff** (比如"审阅 → 不合格 → 修订 → 再审阅",
+  每轮的产物、耗时、评审结论都要留痕) → 用**条件边**: 循环每一轮都是图上的
+  边界, 中断后可从断点续, 轮次进 checkpoint。环图强制显式 `max_visits` 熔断,
+  不会无限烧钱。
+- **只是业务逻辑上的重复** (拉 20 个源、跑 50 次采样) → 留在 stage 内的普通
+  Python `for`/`while`。它不需要独立边界, 硬拆成节点只会让图变碎、观测变噪声。
+
+判据一句话: **轮次是业务资产 → 上图; 轮次只是循环计数 → 留业务层。**
+框架不提供无界循环原语, 成熟引擎 (Airflow/Temporal/Prefect) 同样没有
 cross-stage retry 原语, 原因相同。
 
 **不做的事 (YAGNI)**: scheduler/cron、UI/可视化、分布式执行、dynamic DAG、
