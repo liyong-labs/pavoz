@@ -53,10 +53,18 @@ class FileStorage(StorageBackend):
         os.makedirs(self.root, exist_ok=True)
 
     def _path(self, key: str) -> str:
-        # key 只允许 [a-z0-9_/.-] — 防路径注入
+        # key 只允许 [a-z0-9_/.-] — 第一道字符集过滤
         if not all(c.isalnum() or c in "_-/." for c in key):
             raise ValueError(f"非法 storage key: {key!r}")
-        return os.path.join(self.root, key + ".json")
+        # 第二道必须做: '.' 在允许集内, 故 '..' 段可穿过字符集过滤。字符集过滤
+        # 挡不住路径穿越 —— 实测 get/delete 可越界读写 root 之外的文件 (put 只是
+        # 被 os.makedirs 撞上字面量 '..' 目录而偶然失败, 不是防护)。这里把路径
+        # 解析成 realpath 再断言仍落在 root 内, 对 get/put/delete 一视同仁。
+        root = os.path.realpath(self.root)
+        path = os.path.realpath(os.path.join(root, key + ".json"))
+        if path != root and not path.startswith(root + os.sep):
+            raise ValueError(f"storage key 越界 (路径穿越): {key!r}")
+        return path
 
     def put(self, key: str, data: dict) -> None:
         path = self._path(key)
@@ -72,7 +80,7 @@ class FileStorage(StorageBackend):
             return json.load(f)
 
     def list_keys(self, prefix: str) -> list[str]:
-        prefix_path = os.path.join(self.root, prefix)
+        prefix_path = self._path(prefix)[:-len(".json")]
         out: list[str] = []
         for dirpath, _dirs, files in os.walk(prefix_path):
             for fn in files:
