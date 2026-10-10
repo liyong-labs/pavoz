@@ -103,6 +103,16 @@ task 的 latest。
 - `run_id`: 指定则在给定 run_id 上 fork (默认新 UUID4)
 - `from_stage` 不在该 task 的 checkpoint 记录里 → 明确报错, 不静默新建
 
+#### 源码漂移提示 (未发布, 见 CHANGELOG [Unreleased])
+
+checkpoint 记 `stage_fn_sources` (上次真实执行的 stage 函数源码指纹; 重放不覆盖)。
+`fork_run` / `run_stage` 复用旧结果时比对当前源码, 不一致则经 `logging` 发一条
+WARNING — fn 体不计 `workflow_hash` 是有意设计(改 prompt 免全链重跑), 本项把
+"改了代码, 跑的是新是旧"从静默变可见。**不阻断、不拒续**, 只提示。
+
+> 注意: 它只覆盖"复用旧结果"场景。全新一次执行里改错了文件(比如改了没人读的
+> 副本), 运行时无从知晓 — 那类要靠业务侧的调用点守卫。
+
 ### RunResult
 
 - `task_id`: caller 提供或自动生成 UUID4
@@ -317,9 +327,17 @@ policy = EnginePolicy(
     backoff_max=30.0,           # RetryableError 退避上限秒
     max_concurrent_runs=4,      # 同一 Runtime 进程内并发 run 上限
     skip_unchanged=False,       # fork_run 未显式传时的 skip_unchanged 默认
+    stage_alive_interval=30.0,  # 心跳: stage 跑满该秒数后每 interval 发一次 stage_alive 事件; None 关闭
 )
 rt = Runtime(policy=policy)     # additive: 不传 policy 行为与旧版完全一致
 ```
+
+### `stage_alive_interval` 事件 (未发布, 见 CHANGELOG [Unreleased])
+
+stage 执行超过该间隔后, runtime 经 `on_event` 发
+`stage_alive {task_id, run_id, stage, visit, attempt, elapsed}` — 长 stage 没有
+`progress` 汇报时的存活信号(LLM 调用、大模型推理等场景常见)。快 stage 零事件;
+不传 policy 时走引擎默认 30.0s; `None` 关闭。run 结束心跳立即停止。
 
 ## CancelRegistry (v0.5.3)
 

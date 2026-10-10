@@ -114,6 +114,20 @@ run_id and becomes the task's latest.
   state (deep merge — sibling keys survive). The CLI `--set` / `--set-file` flags
   go through this same entry (see [replay-params.md](../replay-params.md))
 - `run_id`: fork onto a specific run_id (defaults to a fresh UUID4)
+
+#### Source-drift notice (unreleased, see CHANGELOG [Unreleased])
+
+The checkpoint carries `stage_fn_sources` (a fingerprint of each stage function's
+source as of its last real execution; replays don't overwrite it). When
+`fork_run` / `run_stage` reuse past results, the current source is compared
+against it and a single WARNING is logged on mismatch. Function bodies are
+deliberately excluded from `workflow_hash` (so editing a prompt doesn't force a
+full-chain re-run); this makes "did my edit actually take effect" visible instead
+of silent. It never blocks or refuses to continue — it only tells you.
+
+> Caveat: this only covers reuse of past results. Editing the wrong file outright
+> (say, a copy nothing reads) in a fresh run is invisible at runtime — that class
+> of mistake needs call-site guards on the business side.
 - `from_stage` absent from the task's checkpoint record → explicit error, never a
   silent fresh start
 
@@ -341,9 +355,18 @@ policy = EnginePolicy(
     backoff_max=30.0,           # RetryableError backoff cap in seconds
     max_concurrent_runs=4,      # in-process concurrent run cap per Runtime
     skip_unchanged=False,       # default for fork_run when not passed explicitly
+    stage_alive_interval=30.0,  # heartbeat: emit stage_alive every interval once a stage runs that long; None disables
 )
 rt = Runtime(policy=policy)     # additive: without a policy, behavior is unchanged
 ```
+
+### `stage_alive_interval` events (unreleased, see CHANGELOG [Unreleased])
+
+Once a stage has run longer than this interval, the runtime emits
+`stage_alive {task_id, run_id, stage, visit, attempt, elapsed}` via `on_event` —
+a liveness signal for long stages that never call `Ctx.set_progress` (LLM calls,
+large-model inference). Fast stages emit nothing; without a policy the engine
+default is 30.0s; `None` disables it. The heartbeat stops as soon as the stage ends.
 
 ## `CancelRegistry` (v0.5.3)
 
