@@ -1014,7 +1014,7 @@ class Runtime:
         error_class = 原始异常类名 (R2): 未知异常保真 (业务 PipelineError ≠ 引擎
         FatalError, 消费者分诊用); StageError/FatalError → 自身类名; cancelled → None.
 
-        error_category = caller raise 时传的业务类别 (D1.5, 0.5.4), 未传/未知异常
+        error_category = caller raise 时传的业务类别 (D1.5, 0.5.4); 未传 /
         /cancelled → None. 透传到 RunResult.error_category.
 
         未知异常 (非 StageError/FatalError/RetryableError/TimeoutError) 走 FatalError

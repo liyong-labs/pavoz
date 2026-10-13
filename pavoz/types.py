@@ -106,7 +106,8 @@ class RunResult:
             接错即看现场, 不必重跑; done/cancelled → None.
         error_category: 失败的业务类别 (D1.5, 0.5.4) — caller raise 时传
             StageError(..., category="LLM_TIMEOUT") 等, runtime 透传; 未传 /
-            未知异常 / done / cancelled → None.
+            done / cancelled → None. 任何**自带 .category 属性**的异常都会透传
+            (含非 StageError 的自定义异常), 不要求继承 StageError。
     """
 
     __slots__ = (
