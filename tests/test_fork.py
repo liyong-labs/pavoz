@@ -8,6 +8,8 @@ copy+缓存复用). pavoz fork_run: 前序 stage 结果复用, from_stage 及其
 
 import json
 
+import pytest
+
 from pavoz import DAG, CheckpointStore, FileStorage, Runtime
 
 
@@ -66,11 +68,9 @@ async def test_fork_latest_pointer_moves_and_resume_works(tmp_path):
     r = await rt.fork_run(dag, tid, from_stage="s_c", overrides={"topic": "x"})
     assert r.status == "done"
     # latest → fork run; 再 resume 应报已全部完成 (fork 分支全跑完)
-    try:
+    # match 钉住意图: 若是别的原因抛 RuntimeError (checkpoint 损坏等), 本用例不该绿
+    with pytest.raises(RuntimeError, match="已全部完成"):
         await rt.run(dag, tid, resume=True)
-        assert False, "fork 分支已全完成, resume 应 raise"
-    except RuntimeError:
-        pass
 
 
 async def test_fork_from_failed_stage_retries_with_override(tmp_path):
@@ -130,11 +130,8 @@ async def test_fork_unknown_stage_and_missing_deps_rejected(tmp_path):
     rt = Runtime(checkpoint_store=store)
     dag = _dag3([])
     await rt.run(dag, tid)
-    try:
+    with pytest.raises(KeyError, match="不在 DAG"):
         await rt.fork_run(dag, tid, from_stage="s_nope")
-        assert False
-    except KeyError:
-        pass
 
 
 async def test_fork_overrides_add_new_key_visible_downstream(tmp_path):

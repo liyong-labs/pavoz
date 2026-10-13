@@ -68,11 +68,8 @@ async def test_mock_restored_after_run():
 
 async def test_mock_unknown_stage_raises():
     pipe = TestPipe(_dag())
-    try:
+    with pytest.raises(KeyError, match="不在 DAG"):
         pipe.mock("s_nope", lambda state: {})
-        assert False, "应该 raise"
-    except KeyError:
-        pass
 
 
 async def test_mock_can_be_async():

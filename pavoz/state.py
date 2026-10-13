@@ -62,6 +62,14 @@ class ReadOnlyStateView:
         return self._data.items()
 
     def _readonly_raise(self, *a, **kw):
+        """ctx.state 的只读守卫 — 挂到 __setitem__ / __delitem__ / setdefault /
+        update / pop / clear 上, 任何原地写都抛带指引的 TypeError。
+
+        `*a, **kw` 是刻意的: 吞掉任意位置参数与关键字参数, 让调用方拿到
+        "read-only" 这条有用信息, 而不是 "takes 1 positional argument but 2
+        were given" 这种把人引向错误方向的签名报错。
+        (vulture 会把 `kw` 报成未使用变量 —— 它看不到下面 6 处方法名赋值。)
+        """
         raise TypeError("ctx.state 是 read-only — stage 通过 return dict 写 state, 不要原地改")
 
     __setitem__ = _readonly_raise
@@ -177,6 +185,12 @@ def _infer_type(raw: str, *, infer_types: bool = True) -> Any:
 
     When infer_types=False, never infer — always return raw str. Use this
     when type drift between v0.8 and v0.9 is unacceptable.
+
+    **下面三个 `except ...: pass` 不是吞错, 是类型试探阶梯**: 按
+    int → float → JSON → 原样字符串 的顺序试, 每个 pass 的含义是
+    "这个解释不适用, 试下一种", 兜底是末尾的 `return raw`。
+    记日志/raise 都是错的 —— 每个字符串值都会刷一条噪声。
+    (静默吞错扫描器会报这 3 行, 是已知误报。)
     """
     if not infer_types:
         return raw
