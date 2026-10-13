@@ -127,7 +127,25 @@ WARNING — fn 体不计 `workflow_hash` 是有意设计(改 prompt 免全链重
 - `error_category`: 失败的业务类别 (v0.5.4) — caller `raise StageError(..., category="LLM_TIMEOUT")` 透传;
   建议值 9 类: LLM_TIMEOUT / SEARCH_NO_RESULT / CODE_BUG / NETWORK / AUTH / INFRA /
   CHECKPOINT_LOAD_FAIL / STATE_VALIDATION / PROTOCOL_BREACH (自由 string, 不强制枚举);
-  未传 / 未知异常 / done / cancelled 为 `None`
+  未传 / done / cancelled 为 `None`
+- **`error_category` 与异常类型无关 (未发布, 见 CHANGELOG [Unreleased])**: 只要异常对象
+  带 `.category` 属性就会透传 —— **不要求继承 `StageError`**。自定义异常同理:
+
+  ```python
+  class MyErr(Exception):
+      def __init__(self, msg, category=None):
+          super().__init__(msg)
+          self.category = category      # → RunResult.error_category
+
+  @dag.stage()
+  async def s_x(ctx):
+      raise MyErr("空结果", category="CAT_TRUNCATION")
+  ```
+
+  非 `StageError` / `FatalError` / `RetryableError` / `TimeoutError` 的异常按
+  **FatalError 语义**处理(fail、不重试、终态), `error_class` 为其类名。
+  **携带 category 不改变这一点** —— category 是分流元数据, 不是"可重试"信号。
+  给异常分流时优先用 category, 别去匹配错误消息文本: 文本匹配会随措辞改动静默漂移。
 - `stage_timings`: `{stage: 墙钟秒}` (含 retry 退避 sleep; 只含已执行的 stage)
 
 ### 失败语义 (不抛异常, 返回 failed)

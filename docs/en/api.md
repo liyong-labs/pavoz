@@ -147,7 +147,28 @@ of silent. It never blocks or refuses to continue — it only tells you.
   `raise StageError(..., category="LLM_TIMEOUT")`; 9 suggested values: LLM_TIMEOUT /
   SEARCH_NO_RESULT / CODE_BUG / NETWORK / AUTH / INFRA / CHECKPOINT_LOAD_FAIL /
   STATE_VALIDATION / PROTOCOL_BREACH (free-form string, not an enforced enum);
-  `None` when not passed / unknown exception / done / cancelled
+  `None` when not passed / done / cancelled
+- **`error_category` is independent of the exception type (unreleased, see CHANGELOG
+  [Unreleased])**: any exception carrying a `.category` attribute passes it through —
+  **subclassing `StageError` is not required**. Custom exceptions work the same way:
+
+  ```python
+  class MyErr(Exception):
+      def __init__(self, msg, category=None):
+          super().__init__(msg)
+          self.category = category      # → RunResult.error_category
+
+  @dag.stage()
+  async def s_x(ctx):
+      raise MyErr("empty result", category="CAT_TRUNCATION")
+  ```
+
+  Exceptions that are not `StageError` / `FatalError` / `RetryableError` /
+  `TimeoutError` are handled with **FatalError semantics** (fail, no retry, terminal),
+  and `error_class` is their class name. **Carrying a category does not change that** —
+  category is triage metadata, not a "retryable" signal. Route on the category rather
+  than matching the error message text: text matching drifts silently whenever the
+  wording changes.
 - `stage_timings`: `{stage: wall-clock seconds}` (includes retry backoff sleeps;
   executed stages only)
 

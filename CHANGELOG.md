@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+### Added
+
+- **未知异常的 `error_category` 透传** (ai@home id=2925 提出): `_run_stage` 的泛型
+  `except Exception` 分支此前把 `error_category` 硬编码为 `None`, 于是 ——
+  (a) 自定义异常即使带 `.category` 也拿不到分流信息, 消费方只能退回"错误消息里有
+  没有触发词"这种字符串匹配判断, 触发词表一改行为就静默漂移;
+  (b) `UnmappedRouteError` / `MaxVisitsExceeded` / `OrphanStagesError` 在
+  `__init__` 已接受 `category` (它们继承 `PavozError`), 走泛型分支时同样丢失。
+  现改为 `getattr(e, "category", None)`, 与已知类分支一致。
+  **行为边界**: 没有任何调用方给上述三个异常传过 category, 故对现有调用点
+  逐字节不变; 非 `StageError`/`FatalError`/`RetryableError`/`TimeoutError` 的异常
+  仍按 **FatalError 语义**处理 (fail、不重试), 携带 category 不改变这一点。
+
 ## [0.5.6] — 2026-10-10
 
 ### Security

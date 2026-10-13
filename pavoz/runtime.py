@@ -1021,6 +1021,12 @@ class Runtime:
         error_category = caller raise 时传的业务类别 (D1.5, 0.5.4), 未传/未知异常
         /cancelled → None. 透传到 RunResult.error_category.
 
+        未知异常 (非 StageError/FatalError/RetryableError/TimeoutError) 走 FatalError
+        语义 (fail, 不重试), 但**若它自带 .category 属性则照样透传** —— 不要求
+        必须继承 StageError 才能携带 category (ai@home id=2925 提出: 此前泛型分支
+        硬编码 None, 导致 UnmappedRouteError 这类"支持 category 却没继承
+        StageError"的异常丢失分流信息, 消费方只能退回字符串匹配猜)。
+
         delta = stage 的 return dict (成功, 可能 {}), 失败 = None.
         ctx.attempt = 1-based 当前尝试次数, RetryableError 重试时 +1.
         attempts = 实际执行 attempt 总数 (W3 max_steps 熔断计数用).
@@ -1148,13 +1154,13 @@ class Runtime:
                                              "status": "failed",
                                              "duration": time.time() - _t0, "error": str(e)})
                 return "failed", state, str(e), type(e).__name__, getattr(e, "category", None), producers, None, attempt
-            except Exception as e:  # 未知异常 → FatalError 语义
+            except Exception as e:  # 未知异常 → FatalError 语义 (category 仍透传)
                 logger.exception("task=%s run=%s stage=%s 未预期异常", task_id, run_id[:8], name)
                 if emit:
                     self._emit("stage_end", {"task_id": task_id, "run_id": run_id, "stage": name,
                                              "attempt": attempt, "status": "failed",
                                              "duration": time.time() - _t0, "error": str(e)})
-                return "failed", state, f"FatalError: {e}", type(e).__name__, None, producers, None, attempt
+                return "failed", state, f"FatalError: {e}", type(e).__name__, getattr(e, "category", None), producers, None, attempt
 
     # ── timeout wrapper ─────────────────────────────────
     async def _with_timeout(self, fn, _req_unused, ctx, deadline, name, task_id):
