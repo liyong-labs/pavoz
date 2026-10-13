@@ -686,11 +686,7 @@ class Runtime:
         # R1 (0.5.5, ai@home id=270 BUG 2): 孤儿检查 — 正常终止时若仍有声明
         # stage 从未执行、且没有任何 *已执行* router 的 mapping 覆盖它, 说明
         # 路由图没闭合 (回路断了 / 分支挂空), 决不允许报 done. 已执行 router
-        # 声明的 target 属"本次路由未选中", 是合法豁免 (如 judge 直接 pass).
-        covered: set[str] = set()
-        for _edge in cond_edges.values():
-            if _edge.from_node in done_stages:
-                covered.update(_edge.mapping.values())
+        # 声明的 target 属"本次路由未选中", 是合法豁免 (如 judge 直接 pass)。
         if cond_edges:
             # (a) 覆盖检: 未执行 stage 必须被某个 *决策未过期* 的已执行 router
             #     声明 (本次路由未选中 = 合法豁免); 否则是孤儿 (router 没人触发 /
