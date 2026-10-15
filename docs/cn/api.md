@@ -62,7 +62,11 @@ result: RunResult = await rt.run(
   resume / `load_latest` 的目标
 - `on_event`: 生命周期事件出口 (`fn(event: str, data: dict)`), 只观察不改变执行语义。
   事件: `run_start` / `run_end` (`task_id` / `run_id` / `status`)、`stage_start` /
-  `stage_end` (`stage` / `attempt` / `status` / `duration`)、`stage_retry` (+ `error`)、
+  `stage_end` (`stage` / `attempt` / `status` / `duration`)、`stage_retry` (+ `error`),
+  —— `stage_end` 的 `status` 除了 `done`/`failed`/`cancelled` 还可能是
+  **`"skipped"`**: `skip_unchanged` 命中时复用历史结果, 此时 `RunResult.stage_statuses`
+  仍记 `"done"`(该 stage 的产出确实已在 state 里), **事件流是唯一能分辨"真跑了"与
+  "复用旧结果"的地方** —— 排查"我改了 prompt 却没生效"要从这里看, 别只看 status,
   `stage_progress` (stage 内 `ctx.set_progress()` 触发, best-effort 瞬态信号, **不落
   checkpoint**)。observer 抛异常被隔离 (log + 忽略), 不影响 run。
   这是**扩展面的主入口** — 埋点 / 告警 / 指标都挂这里 (见 [架构 · 扩展面](architecture.md#扩展面-一个-stage-就是扩展点))
@@ -355,10 +359,18 @@ graph = to_graph_json(dag)
 
 ### `stage_input_hash(fn, before_state) -> str`
 
-stage 执行输入指纹 (sha256 前 16 hex) = fn 源码 + 执行前全量 state。run 期间
-每个 stage 执行前自动记录进 checkpoint 的 `stage_input_hashes`，fork_run
+stage 执行输入指纹 (sha256 前 16 hex) = **fn 源码 + 执行前全量 state**, 就这两项。
+run 期间每个 stage 执行前自动记录进 checkpoint 的 `stage_input_hashes`，fork_run
 `skip_unchanged=True` 时据此跳过输入未变的下游 stage（副作用 stage 用
 `Stage.skip_unchanged=False` 拒跳）。
+
+> ⚠️ **覆盖边界: prompt 必须写在 fn 体内**。指纹**不含**闭包变量、模块级配置、
+> 环境变量、文件、时钟 —— 那些改了 hash 不变，于是 `skip_unchanged` 会**静默复用旧
+> 结果**（实测: 把 prompt 从模块级 `PROMPT = "v1"` 改成 `"v2"`，`fn` 源码与
+> 执行前 state 都没变 → fork 照旧返回 v1 的产出，`status=done`）。要改的东西写在
+> stage 函数体里（改函数体 = 改 hash），或给该 stage 标 `skip_unchanged=False`。
+> 纯函数语义之外的外部依赖（LLM 输出随版本漂移等）同样由 caller 用
+> `skip_unchanged=False` 兜底。
 
 ```python
 from pavoz import EnginePolicy, Runtime

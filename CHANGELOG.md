@@ -19,6 +19,19 @@
 
 ### Fixed
 
+- **`skip_unchanged` 的两处事实此前没写在任何地方** (行为本身无误, 是文档与
+  可观测性缺口; 现补文档 + 补 characterization 测试钉住):
+  ① **指纹覆盖边界**: `stage_input_hash` 只含 **fn 源码 + 执行前 state**, 不含
+  闭包变量、模块级配置、环境变量、文件、时钟。而文档只写"改 fn (如改 prompt) →
+  hash 变", 读起来像"改 prompt 就会重跑"。实测: 模块级 `PROMPT` 从 v1 改到 v2,
+  fn 源码与 state 都没变 → fork **静默返回 v1 的产出**, `status=done`。现文档写明
+  这条边界并给出两条出路 (prompt 写进 fn 体内 / 该 stage 标 `skip_unchanged=False`)。
+  ② **"真跑了"与"复用了旧结果"只有一个区分点**: 命中时引擎发
+  `stage_end{status:"skipped"}` 并打 INFO 日志 (实现里本来就有), 但
+  `RunResult.stage_statuses` 仍记 `"done"` (该 stage 产出确实已在 state 里, 语义
+  无误), 而**文档从未写过 `"skipped"` 这个 status 值** —— 于是唯一的信号没人知道
+  去看。现 cn/en api.md 写明: 排查"改了 prompt 没生效"要看事件流, 不要只看 status。
+
 - **`add_conditional_edges` 不拦 `async def route_fn`, 报错还会指错方向**: docs
   两处写 route_fn 是"同步纯函数", 但声明期没有守卫 —— stage fn 那边有
   `iscoroutinefunction` 检查 (要求 async), CLI 的 patch 模块也有 async 拒绝, 唯独

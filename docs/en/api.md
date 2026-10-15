@@ -70,8 +70,13 @@ result: RunResult = await rt.run(
   `run_id` / `status`), `stage_start` / `stage_end` (`stage` / `attempt` / `status` /
   `duration`), `stage_retry` (+ `error`), and `stage_progress` (emitted by
   `ctx.set_progress()` inside a stage — best-effort transient signal, **never
-  checkpointed**). Observer exceptions are isolated (logged and ignored) and never
-  affect the run. This is the **main extension seam** — instrumentation, alerting
+  checkpointed**). Beyond `done`/`failed`/`cancelled`, a `stage_end` `status` can also
+  be **`"skipped"`** — `skip_unchanged` hit, replaying a historical result.
+  `RunResult.stage_statuses` still records `"done"` there (the stage's output *is* in
+  state), so **the event stream is the only place that distinguishes "actually ran"
+  from "reused an old result"** — look there when a prompt change appears to do
+  nothing, not at the statuses. Observer exceptions are isolated (logged and
+  ignored) and never affect the run. This is the **main extension seam** — instrumentation, alerting
   and metrics all hang off it (see [Architecture · extension surface](architecture.md#extension-surface-a-stage-function-is-the-extension-point))
 - `cancel_check`: cooperative cancellation (`task_id → cancelled?`). The runtime
   intercepts at stage and retry boundaries (status="cancelled"; stages already
@@ -394,10 +399,20 @@ graph = to_graph_json(dag)
 ### `stage_input_hash(fn, before_state) -> str`
 
 Fingerprint of a stage's execution inputs (first 16 hex of sha256) =
-fn source + the full pre-execution state. Recorded automatically into the
-checkpoint's `stage_input_hashes` before each stage runs; `fork_run(skip_unchanged=True)`
-uses it to skip downstream stages whose inputs are unchanged (side-effecting
-stages opt out with `Stage.skip_unchanged=False`).
+**fn source + the full pre-execution state** — those two things and nothing else.
+Recorded automatically into the checkpoint's `stage_input_hashes` before each stage
+runs; `fork_run(skip_unchanged=True)` uses it to skip downstream stages whose inputs
+are unchanged (side-effecting stages opt out with `Stage.skip_unchanged=False`).
+
+> ⚠️ **Coverage boundary: the prompt has to live inside the fn body.** The fingerprint
+> does **not** cover closure variables, module-level config, env vars, files, or the
+> clock — changing those leaves the hash identical, so `skip_unchanged` **silently
+> replays the old result**. Measured: with a module-level `PROMPT = "v1"` bumped to
+> `"v2"`, neither the fn source nor the pre-execution state changed, so the fork kept
+> returning the v1 output with `status=done`. Put what you want to change inside the
+> stage function body (editing the body edits the hash), or mark that stage
+> `skip_unchanged=False`. Non-pure external dependencies (an LLM whose output drifts
+> with its version, say) need the same `skip_unchanged=False` opt-out.
 
 ```python
 from pavoz import EnginePolicy, Runtime
