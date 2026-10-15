@@ -84,7 +84,14 @@ async def _cmd_run(args) -> int:
     task_id = args.task_id or f"run-{os.getpid()}"
     initial = {}
     if args.input:
-        initial = json.loads(args.input)
+        # 参数错在解析期, 不在下面那个 try 里 —— 打错一个括号就炸出 15 行
+        # json/decoder.py 内部栈, 真因埋在最后一行。口径对齐 fork-run 的
+        # parse 路径 (那边三个来源都裹了 try/except ValueError → "参数错误: ...")。
+        try:
+            initial = json.loads(args.input)
+        except ValueError as e:
+            print(f"参数错误: --input 不是合法 JSON: {e}")
+            return 1
     # v0.5.1 (R5 fix): 恒 attach store → CLI run 落盘, replay/trace/state 可用
     runtime = Runtime(checkpoint_store=CheckpointStore(_storage(task_id)))
     try:
