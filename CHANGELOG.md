@@ -19,6 +19,16 @@
 
 ### Fixed
 
+- **`add_conditional_edges` 不拦 `async def route_fn`, 报错还会指错方向**: docs
+  两处写 route_fn 是"同步纯函数", 但声明期没有守卫 —— stage fn 那边有
+  `iscoroutinefunction` 检查 (要求 async), CLI 的 patch 模块也有 async 拒绝, 唯独
+  route_fn 漏了。实测 (修复前): 声明一路绿灯 → 运行期 `route(state)` 返回 coroutine
+  对象 → 查 mapping 必 miss → 报 `route_fn 返回未声明 key <coroutine object route
+  at 0x...>`。**这条消息把排查方向带偏**: 不是"返回了未声明的 key", 而是路由压根
+  没被调用; 外加一条 `coroutine was never awaited` 警告。现声明期抛 `TypeError`,
+  并在报错里给出文档推荐的出路 (judge-stage 写 state, 边只读)。
+  同步是硬约束而非风格偏好: docs 给的理由是"同 state 必同 key"(重放/resume 可判定),
+  async 破坏的正是这条。
 - **NaN / ±Inf 能进 state 并落盘成非法 JSON**: `deep_validate_state` 只查值**类型**,
   而 `float` 在白名单里, 于是非有限值一路畅通直到 `json.dump` 写出字面量
   `NaN`/`Infinity` —— 那不是 RFC 8259 的合法 JSON。**本仓内看不出来**: Python 的

@@ -526,7 +526,11 @@ dag.add_conditional_edges(
 ```
 
 - `route_fn(state) -> key`: sync pure function; same state → same key
-  (replay/resume determinism). For LLM-based judgment use a judge stage that
+  (replay/resume determinism). **Enforced at declaration**: an `async def`
+  raises `TypeError` there and now. Left unchecked it only fails at run time —
+  the edge receives a coroutine object, misses the mapping, and reports "returned
+  an undeclared key <coroutine ...>", which points the reader the wrong way (the
+  route was never called). For LLM-based judgment use a judge stage that
   writes state (e.g. `state["route"]`) and read it on the edge — the same
   pattern converged on by LangGraph / Temporal / Step Functions / BPMN.
 - `mapping`: closed set of key → target stage; an undeclared key at runtime

@@ -470,6 +470,9 @@ dag.add_conditional_edges(
 ```
 
 - `route_fn(state) -> key`: 同步纯函数, 同 state 必同 key (重放/resume 可判定)。
+  **声明期强制**: 传 `async def` 直接 `TypeError` —— 不拦的话运行期只会拿到一个
+  coroutine 对象, 查 mapping 必 miss, 报"返回未声明 key <coroutine ...>", 消息会把
+  人引向错误的方向 (路由压根没被调用)。
   LLM 判断请做成 judge-stage 写 state (如 `state["route"]`), 边只读 —
   LangGraph / Temporal / SFN / BPMN 收敛的同型模式。
 - `mapping`: key → 目标 stage 的封闭集; 运行时返回未声明 key →

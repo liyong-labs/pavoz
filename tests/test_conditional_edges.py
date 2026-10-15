@@ -7,6 +7,8 @@ fix: s_revision → 回 s_review}.
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from pavoz import (
@@ -682,3 +684,95 @@ async def test_closed_loop_runs_everything(tmp_path):
     _rt, _store, r = await _run(dag, tmp_path)
     assert r.status == "done"
     assert r.stage_statuses["s_save"] == "done"
+
+# ── add_conditional_edges 的声明期守卫 (2026-10-16 巡检) ────────────────
+#
+# 条件边是 0.5.5 引入的最新 API, 它的输入守卫此前**零覆盖** (coverage 报
+# dag.py 未覆盖行正是这几条 raise)。守卫写错的后果分两种: 拒掉合法声明 = 用户
+# 绕路; 放过非法声明 = 运行期才炸, 且 (async route_fn 那条) 报错还会指错方向。
+
+def _two_stage_dag(name: str = "guard_probe") -> DAG:
+    dag = DAG(name)
+
+    @dag.stage()
+    async def s_a(ctx):
+        return {"score": 1}
+
+    @dag.stage()
+    async def s_yes(ctx):
+        return {"y": 1}
+
+    return dag
+
+
+def test_async_route_fn_rejected_at_declaration():
+    """docs 两处写 route_fn 是"同步纯函数", 声明期必须拦。
+
+    修复前的失败模式 (实测): 声明一路绿灯 → 运行期 route(state) 返回
+    coroutine 对象 → 查 mapping 必 miss → 报 "route_fn 返回未声明 key
+    <coroutine object ...>", **消息指错了方向** (路由压根没被调用), 外加
+    "coroutine was never awaited" 警告。
+    """
+    dag = _two_stage_dag()
+
+    async def route(state):
+        return "yes"
+
+    with pytest.raises(TypeError, match="同步纯函数"):
+        dag.add_conditional_edges("s_a", route, {"yes": "s_yes"}, max_visits=2)
+
+
+def test_sync_route_fn_still_accepted():
+    """反向约束: 守卫不许误伤合法声明。"""
+    dag = _two_stage_dag()
+    dag.add_conditional_edges("s_a", lambda s: "yes", {"yes": "s_yes"}, max_visits=2)
+    dag.validate()          # 结构合法 (目标已声明)
+
+
+async def test_judge_stage_pattern_is_the_documented_workaround(tmp_path):
+    """文档给的替代路径要真的能跑 —— 否则报错里的"请做成 judge-stage"是空话。"""
+    dag = DAG("judge_pattern")
+
+    @dag.stage()
+    async def s_judge(ctx):
+        await asyncio.sleep(0)          # 异步判定发生在这里
+        return {"route": "yes"}
+
+    # s_yes 不能静态依赖 router s_judge (条件边目标不得静态依赖自己的 router,
+    # 由 V 规则拒绝) —— 初始触发靠路由本身, 不靠 depends_on
+    @dag.stage()
+    async def s_yes(ctx):
+        return {"y": 1}
+
+    dag.add_conditional_edges("s_judge", lambda s: s["route"], {"yes": "s_yes"}, max_visits=2)
+    _rt, _store, r = await _run(dag, tmp_path)
+    assert r.status == "done"
+    assert r.stage_statuses == {"s_judge": "done", "s_yes": "done"}
+
+
+def test_non_callable_route_fn_rejected():
+    dag = _two_stage_dag()
+    with pytest.raises(TypeError, match="必须可调用"):
+        dag.add_conditional_edges("s_a", {"yes": "s_yes"}, {"yes": "s_yes"}, max_visits=2)
+
+
+@pytest.mark.parametrize("bad_map", [{}, [], "yes", None])
+def test_mapping_must_be_non_empty_dict(bad_map):
+    dag = _two_stage_dag()
+    with pytest.raises(ValueError, match="非空 dict"):
+        dag.add_conditional_edges("s_a", lambda s: "yes", bad_map, max_visits=2)
+
+
+@pytest.mark.parametrize("bad_map", [{1: "s_yes"}, {"yes": 2}, {"yes": None}])
+def test_mapping_key_and_value_must_be_str(bad_map):
+    dag = _two_stage_dag()
+    with pytest.raises(ValueError, match="key/value 必须都是 str"):
+        dag.add_conditional_edges("s_a", lambda s: "yes", bad_map, max_visits=2)
+
+
+def test_conditional_edge_after_validate_is_rejected():
+    """validate() 通过即冻结 —— 运行中/校验后改图必须响。"""
+    dag = _two_stage_dag()
+    dag.validate()
+    with pytest.raises(RuntimeError, match="已冻结"):
+        dag.add_conditional_edges("s_a", lambda s: "yes", {"yes": "s_yes"}, max_visits=2)

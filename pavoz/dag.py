@@ -136,6 +136,20 @@ class DAG:
             raise RuntimeError(f"DAG {self.name} 已冻结, 不能加条件边 (from {from_node})")
         if not callable(route_fn):
             raise TypeError(f"route_fn 必须可调用 (got {type(route_fn).__name__})")
+        if inspect.iscoroutinefunction(route_fn):
+            # 与 stage fn 的 async 检查同款 (上面 @dag.stage 已要求 async), 但
+            # route_fn 相反: 必须是**同步**纯函数 —— 图结构层判定, 不 await。
+            # 不在声明期拦的后果 (2026-10-16 实测): 声明处一路绿灯, 到运行期
+            # route(state) 返回一个 coroutine 对象, 拿它查 mapping 必然 miss →
+            # 报 "route_fn 返回未声明 key <coroutine object route at 0x...>",
+            # **这条消息指错了方向** (路由压根没被调用), 外加一条
+            # "coroutine was never awaited" 警告。同步还是硬约束: docs 的理由是
+            # "同 state 必同 key"(重放/resume 可判定), async 破坏的正是这条。
+            raise TypeError(
+                f"route_fn 必须是同步纯函数 (got async def "
+                f"{getattr(route_fn, '__name__', route_fn)!r}). "
+                f"需要异步判定请做成 judge-stage 把结论写进 state, 边只读 state"
+            )
         if not isinstance(mapping, dict) or not mapping:
             raise ValueError(f"mapping 必须是非空 dict (router '{from_node}')")
         if any(not isinstance(k, str) or not isinstance(v, str) for k, v in mapping.items()):
