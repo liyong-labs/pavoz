@@ -53,8 +53,11 @@ result: RunResult = await rt.run(
   完成 (done guard) → `RuntimeError` 防静默 no-op。重跑 = `resume=False`
   (起新 run_id)
 - resume 时 `workflow_hash` 不匹配 (DAG 结构变了) → `CheckpointMismatchError`
-- run 级 absolute deadline 只来自 `Runtime(default_timeout=...)` — `run()` 无
-  deadline 参数; stage 级 `timeout` 受 run 剩余 deadline 封顶
+- run 级 absolute deadline 来自 `Runtime(default_timeout=...)`, 缺省回退到
+  `EnginePolicy(default_timeout=...)` — `run()` 无 deadline 参数; stage 级
+  `timeout` 受 run 剩余 deadline 封顶。**同一 deadline 适用于全部三个入口**
+  (`run` / `run_stage` 单 stage 重放 / `fork_run`): 给 policy 设了上限, 重放也
+  受约束 (曾漏过 policy 回退, 导致重放完全不受限且无任何提示)
 - run 完成后 checkpoint **保留** (不删除) — 它是该 task 的最新 run, 是未来
   resume / `load_latest` 的目标
 - `on_event`: 生命周期事件出口 (`fn(event: str, data: dict)`), 只观察不改变执行语义。

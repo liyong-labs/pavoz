@@ -56,9 +56,13 @@ result: RunResult = await rt.run(
   begins a new run_id).
 - On `resume`, a `workflow_hash` mismatch (DAG structure changed) →
   `CheckpointMismatchError`.
-- Run-level absolute deadline comes from `Runtime(default_timeout=...)`; there
-  is no per-`run()` deadline parameter. Per-stage `timeout` is capped by the
-  remaining run deadline.
+- The run-level absolute deadline comes from `Runtime(default_timeout=...)`,
+  falling back to `EnginePolicy(default_timeout=...)`; there is no per-`run()`
+  deadline parameter. Per-stage `timeout` is capped by the remaining run
+  deadline. **The same deadline covers all three entry points** (`run`,
+  single-stage `run_stage` replay, and `fork_run`): a ceiling set on the policy
+  bounds replays too — the policy fallback used to be missing here, leaving
+  replays entirely unbounded and silent about it.
 - On completion the checkpoint is kept (not deleted) — it is the task's latest
   run and the target of future resumes/`load_latest`.
 - `on_event`: lifecycle event sink (`fn(event: str, data: dict)`) — observe only, it

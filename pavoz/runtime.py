@@ -237,6 +237,20 @@ class Runtime:
         except Exception:
             logger.exception("on_event 回调异常 (忽略) event=%s", event)
 
+    def _effective_timeout(self) -> float | None:
+        """有效 run 级 deadline (秒): 显式 `Runtime(default_timeout=)` 优先,
+        缺省回退到 `policy.default_timeout` (W3, id=1132 口径)。
+
+        **必须只有这一处解析**。曾因 `run_stage()` (单 stage 重放) 各自内联读
+        `self.default_timeout` 而漏掉 policy 回退, 导致同一份 EnginePolicy 在
+        run() 上拦得住、在重放上完全失效 —— 且是静默的 (2026-10-16 实测:
+        deadline=0.2s 时 run() 超时报 failed, 同一 policy 的 run_stage() 跑满
+        1s 报 done)。fork_run 最终也走 run(), 故三个入口天然一致。
+        """
+        if self.default_timeout is not None:
+            return self.default_timeout
+        return self.policy.default_timeout if self.policy else None
+
     def _is_cancelled(self, task_id: str) -> bool:
         """查取消状态. checker 异常 → 视为未取消 (fail-open, 检查器 bug 不杀业务 run)."""
         if self.cancel_check is not None:
@@ -297,10 +311,7 @@ class Runtime:
         """run() 的闸门层 (W3): task_id 已解析, registry 已登记."""
         # W3: 有效 deadline = 显式参数优先, 缺省看 policy; 绝对时刻在 _run_inner
         # 获得并发闸门后才起算 (排队不烧 deadline).
-        _pto = self.policy.default_timeout if self.policy else None
-        eff_timeout = (
-            self.default_timeout if self.default_timeout is not None else _pto
-        )
+        eff_timeout = self._effective_timeout()
         if self.policy and self.policy.max_concurrent_runs:
             if self._run_sem is None:
                 self._run_sem = asyncio.Semaphore(self.policy.max_concurrent_runs)
@@ -823,7 +834,8 @@ class Runtime:
         result = RunResult(task_id=task_id, dag_name=dag.name, run_id=run_id)
         result.state = state
 
-        run_deadline = time.time() + self.default_timeout if self.default_timeout else None
+        _to = self._effective_timeout()
+        run_deadline = time.time() + _to if _to else None
         stage_deadline: float | None = None
         if stage.timeout is not None:
             stage_deadline = time.time() + stage.timeout

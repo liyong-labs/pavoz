@@ -19,6 +19,16 @@
 
 ### Fixed
 
+- **`EnginePolicy(default_timeout=)` 对单 stage 重放 (`run_stage`) 静默失效**:
+  `run()` 按"显式 `Runtime(default_timeout=)` 优先, 缺省回退 policy"两级解析
+  run 级 deadline, 而 `run_stage()` 内联只读 `self.default_timeout` → 同一份
+  policy 在 `run()` 上拦得住、在重放上完全不起作用。实测 (修复前): 同一
+  `EnginePolicy(default_timeout=0.2)` 下 `run()` 0.2s 超时报 `failed`,
+  `run_stage()` 跑满 1s 报 `done`, **无任何警告**。现两处统一走
+  `Runtime._effective_timeout()` (单一解析点, 从此不可能再漂移); `fork_run`
+  最终也走 `run()`, 故三个入口一致。
+  **行为边界**: 只影响此前"配了 policy.default_timeout 又跑重放"的调用点 ——
+  那些重放此后会在 policy 上限处超时 (可重试语义), 而不再无限跑。
 - **`state --key` 打错的 key 不再与"值就是 null"输出相同**: `_cmd_state` 走
   `cp.state.get(args.key, None)` — key 不存在与 key 存在但值为 null 时, 输出
   **逐字节相同**且退出码都是 0。接管道时 (`X=$(pavoz state --task-id T --key K)`)
