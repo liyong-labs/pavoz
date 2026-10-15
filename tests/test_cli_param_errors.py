@@ -78,6 +78,22 @@ def test_bad_json_arg_exits_friendly(argv_tpl, dag_file, capsys):
     assert "JSONDecodeError" not in err, f"{desc}: stderr 漏了内部异常类型:\n{err}"
 
 
+def test_prune_negative_keep_last_exits_friendly(capsys):
+    """--keep-last -1 → prune() 内部 raise ValueError, 但 _cmd_prune 当时没接。
+
+    实测 (2026-10-16): 抛出一整段 checkpoint.py:458 的栈。而 prune 是**删数据**
+    的命令 —— 用户敲错一个符号拿到栈而不是"keep_last 必须 >= 0", 是最不该发生的
+    那类体验。
+    """
+    rc = cli.main(["prune", "--task-id", "t1", "--keep-last", "-1"])
+
+    out, err = capsys.readouterr()
+    assert rc == 1, f"期望退出码 1, 实得 {rc}"
+    assert "参数错误" in out, f"缺友好前缀 '参数错误', stdout 是:\n{out}"
+    assert "keep_last" in out, f"报错应说清是哪个参数, stdout 是:\n{out}"
+    assert "Traceback" not in err, f"不该吐 traceback, stderr 是:\n{err}"
+
+
 def test_fork_run_bad_input_file_exits_friendly(tmp_path, dag_file, capsys):
     """--input 指向的**文件**内容非法 → 同契约 (fork-run 侧的另一个 JSON 解析点)."""
     bad = tmp_path / "bad.json"

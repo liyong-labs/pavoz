@@ -144,7 +144,14 @@ async def _cmd_state(args) -> int:
         print(json.dumps(cp.state_stats(), ensure_ascii=False, indent=2))
         return 0
     if args.key:
-        print(json.dumps(cp.state.get(args.key, None), ensure_ascii=False, indent=2))
+        # 缺失与"值就是 null"必须能分辨: `state.get(key, None)` 让两者输出逐字节相同
+        # 且 rc 都是 0, 接管道的调用方拿不到任何信号。查单字段正是这个命令的全部意义,
+        # 打错字是最自然的失误 → 点名报错 + 列可用 key, 退出码 1。
+        if args.key not in cp.state:
+            print(f"state 无此 key: {args.key!r}")
+            print(f"  可用 key: {', '.join(sorted(cp.state)) or '(空)'}")
+            return 1
+        print(json.dumps(cp.state[args.key], ensure_ascii=False, indent=2))
     else:
         print(json.dumps(cp.state, ensure_ascii=False, indent=2))
     return 0
@@ -211,7 +218,12 @@ async def _cmd_export_input(args) -> int:
 async def _cmd_prune(args) -> int:
     """修剪 task 的旧 run checkpoint (R1). 格式归引擎 — 消费者自删会踩 latest 指针."""
     store = CheckpointStore(_storage(args.task_id))
-    rep = store.prune(args.task_id, keep_last=args.keep_last, dry_run=args.dry_run)
+    try:
+        rep = store.prune(args.task_id, keep_last=args.keep_last, dry_run=args.dry_run)
+    except ValueError as e:
+        # keep_last < 0 由 store.prune 判定 (那是删数据的命令, 参数校验必须响)
+        print(f"参数错误: {e}")
+        return 1
     print(json.dumps(rep, ensure_ascii=False, indent=2))
     return 0
 

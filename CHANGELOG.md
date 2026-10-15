@@ -17,6 +17,22 @@
   逐字节不变; 非 `StageError`/`FatalError`/`RetryableError`/`TimeoutError` 的异常
   仍按 **FatalError 语义**处理 (fail、不重试), 携带 category 不改变这一点。
 
+### Fixed
+
+- **`state --key` 打错的 key 不再与"值就是 null"输出相同**: `_cmd_state` 走
+  `cp.state.get(args.key, None)` — key 不存在与 key 存在但值为 null 时, 输出
+  **逐字节相同**且退出码都是 0。接管道时 (`X=$(pavoz state --task-id T --key K)`)
+  调用方拿不到任何信号分辨两者, 而"查某一个字段"正是这个命令的全部意义,
+  打错字是最自然的失误。现 key 缺失时点名报错 + 列出可用 key + 退出码 1。
+  **行为边界**: key 存在时输出逐字节不变 (含显式 null 值, 那是真答案);
+  仅"key 不存在"这一支从 `null`/0 变为报错/1 —— 依赖旧行为(拿 `null` 当"缺失")
+  的脚本需改判退出码。
+- **CLI 参数错误不再吐 traceback**: `run --input` 的 JSON 解析在 `try` 之外,
+  `prune --keep-last` 的取值校验 (`store.prune` 内的 `keep_last >= 0`) 压根没有
+  try, 敲错时抛整段 `json/decoder.py` / `checkpoint.py` 内部栈 —— 而 `prune` 是
+  **删数据**的命令。现两者统一 `参数错误: ...` + 退出码 1, 与 `fork-run` /
+  `replay` 既有口径一致。
+
 ## [0.5.6] — 2026-10-10
 
 ### Security

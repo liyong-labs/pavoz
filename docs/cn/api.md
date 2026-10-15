@@ -417,7 +417,9 @@ python -m pavoz replay <dag.py> --task-id X --stage Y [--patch P.py]   # v0.5.1
 - `run`: 跑 DAG 文件 (模块须暴露 `dag` 变量); `PAVOZ_STORAGE` 环境变量
   指向 FileStorage 目录 — 每次 run 都落 per-stage checkpoint (单跑也算,
   v0.5.1 R5 fix), `--resume`/replay/trace/state 对 CLI 产物可用
-- `trace/state`: 读 FileStorage 里的 checkpoint
+- `trace/state`: 读 FileStorage 里的 checkpoint。`state --key K` 在 **K 不存在时
+  点名报错 + 列可用 key + 退出码 1** —— 与"K 存在但值为 null"(退出码 0)严格可区分,
+  接管道的调用方不能只凭输出判断
 - `replay`: 在重建的输入上重放单 stage (见 `Runtime.run_stage`); 可选
   `--patch P.py` 加载暴露 `patch(dag) -> None` 的模块先换实现 (必须 sync —
   async patch 拒绝)。输出 result JSON; 不落任何盘 (不写 cp, 不动 latest 指针)

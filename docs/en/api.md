@@ -455,7 +455,10 @@ python -m pavoz replay <dag.py> --task-id X --stage Y [--patch P.py]   # v0.5.1
   `PAVOZ_STORAGE` env var points at the `FileStorage` directory — every
   run persists per-stage checkpoints there (single runs included, v0.5.1 R5
   fix), so `--resume` / replay / trace / state work on CLI runs
-- `trace`/`state`: read checkpoints from `FileStorage`
+- `trace`/`state`: read checkpoints from `FileStorage`. `state --key K` **names
+  the offending key, lists the available ones and exits 1** when K is absent —
+  strictly distinguishable from "K exists but its value is null" (exit 0), so a
+  caller piping the output cannot have to guess
 - `replay`: replays one stage on its checkpoint-rebuilt input (see
   `Runtime.run_stage`); optional `--patch P.py` loads a module exposing
   `patch(dag) -> None` to swap implementations in before replaying (must be
