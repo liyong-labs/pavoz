@@ -396,6 +396,11 @@ policy = EnginePolicy(
 rt = Runtime(policy=policy)     # additive: 不传 policy 行为与旧版完全一致
 ```
 
+**字段取值在构造时校验** (`EnginePolicy.__post_init__`): 负数一律 `ValueError`;
+`max_steps` / `max_concurrent_runs` 的 `0` 也拒 —— 调用点一律写 `if policy.x`, 0 是
+假值会被当成"没设", 于是"上限 0"读起来像不许并发、实际是**不限**, 反过来
+`max_steps=0` 会让第一个 stage 立刻熔断。**"不限 / 关闭"请显式写 `None`**。
+
 ### `stage_alive_interval` 事件 (未发布, 见 CHANGELOG [Unreleased])
 
 stage 执行超过该间隔后, runtime 经 `on_event` 发

@@ -440,8 +440,15 @@ policy = EnginePolicy(
     skip_unchanged=False,       # default for fork_run when not passed explicitly
     stage_alive_interval=30.0,  # heartbeat: emit stage_alive every interval once a stage runs that long; None disables
 )
-rt = Runtime(policy=policy)     # additive: without a policy, behavior is unchanged
+rt = Runtime(policy=policy)     # additive: no policy == pre-policy behaviour exactly
 ```
+
+**Field values are validated at construction** (`EnginePolicy.__post_init__`): any
+negative value raises `ValueError`, and so does `0` for `max_steps` /
+`max_concurrent_runs` — every call site tests `if policy.x`, so `0` is a falsy value
+read as "not set": "limit of 0" reads like "no concurrency allowed" while actually
+meaning *unlimited*, and `max_steps=0` fuses the very first stage. Pass `None`
+explicitly to mean "unlimited / off".
 
 ### `stage_alive_interval` events (unreleased, see CHANGELOG [Unreleased])
 

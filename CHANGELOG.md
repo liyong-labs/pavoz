@@ -19,6 +19,18 @@
 
 ### Fixed
 
+- **`EnginePolicy` 不校验字段, nonsense 取值变成运行期怪现象**: frozen dataclass
+  此前接受任意取值, 而所有调用点一律写 `if policy.x` —— 于是:
+  - `stage_alive_interval` 传负数 → `asyncio.sleep(负数)` 立即返回 → 心跳变成无节流
+    忙循环。**实测: 0.2s 的 stage 喷出 58099 条 `stage_alive`** (CPU 空转 +
+    事件流/日志/内存三重放大), 而 run 照样 `status=done`, 全程无任何提示。
+  - `max_concurrent_runs=0` → 0 是假值 → 当成"没设" → 读起来像"不许并发",
+    实际是**不限**; `max_steps=0` → 第一个 stage 立刻熔断。
+  现 `EnginePolicy.__post_init__` 在构造时拒: 负数一律 `ValueError`, 限值类
+  (`max_steps` / `max_concurrent_runs`) 的 `0` 也拒, 报错文案指明"不限请显式传
+  `None`"。`backoff_max=0` / `stage_alive_interval=None` / `default_timeout=None`
+  是合法用法, 保留。仓内现有 9 处构造点全部正值或 None, 零破坏。
+
 - **TestPipe 的三处契约与实际对不上** (夹具本身行为无误, 是"承诺与实现不一致"):
   ① `calls()` 的 docstring 写返回 `[{stage, mock, args}]`, 实际键是
   `{stage, mock, state_keys}` —— 照旧文档写 `call["args"]` 直接 KeyError, 断言是

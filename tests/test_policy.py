@@ -11,7 +11,17 @@ self.default_timeout, 漏掉 policy 回退 → EnginePolicy 对重放**静默失
 import asyncio
 import tempfile
 
-from pavoz import DAG, CheckpointStore, EnginePolicy, FileStorage, RetryableError, Runtime
+import pytest
+
+from pavoz import (
+    DAG,
+    CheckpointStore,
+    EnginePolicy,
+    EventRecorder,
+    FileStorage,
+    RetryableError,
+    Runtime,
+)
 
 
 async def test_policy_default_timeout():
@@ -192,3 +202,70 @@ async def test_run_stage_without_any_deadline_is_not_bounded():
     r = await Runtime(checkpoint_store=store).run_stage(dag, "t_replay", "s_slow")
 
     assert r.status == "done", f"没设 deadline 时不该超时 (实得 {r.status}: {r.error})"
+
+# ── 构造期字段校验 (2026-10-16 巡检) ───────────────────────────────────────
+#
+# EnginePolicy 是 frozen dataclass, 此前**不校验任何字段**, 而调用点一律写
+# `if policy.x` —— 于是 nonsense 取值不会报错, 只会在运行期变成怪现象:
+
+#   EnginePolicy(stage_alive_interval=-0.001)
+#     → asyncio.sleep(负数) 立即返回 → 心跳变忙循环
+#     → 实测: 0.2s 的 stage 喷出 58099 条 stage_alive, run 仍 status=done
+#       (CPU 空转 + 事件流/日志/内存三重放大, 全程无提示)
+#
+#   EnginePolicy(max_concurrent_runs=0)  → 0 假值 → "不限", 与字面意思相反
+#   EnginePolicy(max_steps=0)            → 第一个 stage 立刻熔断
+
+@pytest.mark.parametrize("kwargs", [
+    {"stage_alive_interval": -0.001},
+    {"stage_alive_interval": -30},
+    {"default_timeout": -1},
+    {"backoff_max": -1},
+])
+def test_negative_interval_like_fields_rejected_at_construction(kwargs):
+    with pytest.raises(ValueError, match="不能为负"):
+        EnginePolicy(**kwargs)
+
+
+@pytest.mark.parametrize("field", ["max_steps", "max_concurrent_runs"])
+def test_zero_limit_is_rejected_and_none_is_the_way_to_unlimited(field):
+    """0 是假值 → 调用点 `if policy.x` 当成"没设"。'不限'必须显式写 None。"""
+    with pytest.raises(ValueError, match="必须 >= 1"):
+        EnginePolicy(**{field: 0})
+    assert getattr(EnginePolicy(**{field: None}), field) is None
+
+
+@pytest.mark.parametrize("kwargs", [
+    {},                                            # 全默认
+    {"default_timeout": 0.2},
+    {"max_steps": 1},
+    {"backoff_max": 0},                             # 不退避是合法用法
+    {"stage_alive_interval": None},                 # 关心跳是合法用法
+    {"skip_unchanged": True},
+])
+def test_sane_values_still_construct(kwargs):
+    """反向约束: 校验不许误伤任何合法取值。"""
+    EnginePolicy(**kwargs)
+
+
+async def test_negative_interval_busy_loop_is_now_unreachable(tmp_path):
+    """钉住实测过的后果本身, 不只是构造器的报错文案。
+
+    正间隔下心跳条数必须是"约等于 stage 时长 / interval"量级 —— 曾经的忙循环
+    (负间隔) 会让这个数字爆炸到五位数。
+    """
+    dag = DAG("hb_bound")
+
+    @dag.stage()
+    async def s_slow(ctx):
+        await asyncio.sleep(0.2)
+        return {"a": 1}
+
+    rec = EventRecorder()
+    rt = Runtime(policy=EnginePolicy(stage_alive_interval=0.05), on_event=rec,
+                 checkpoint_store=CheckpointStore(FileStorage(tmp_path / "cp")))
+    r = await rt.run(dag, "hb")
+
+    assert r.status == "done"
+    alive = [1 for name, _ in rec.events if name == "stage_alive"]
+    assert len(alive) <= 10, f"心跳条数失控 ({len(alive)} 条) — 又变忙循环了?"

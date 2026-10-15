@@ -47,3 +47,39 @@ class EnginePolicy:
     max_concurrent_runs: int | None = None
     skip_unchanged: bool = False
     stage_alive_interval: float | None = 30.0
+
+    def __post_init__(self) -> None:
+        """字段取值校验: 构造时就拒, 不让 nonsense 变成运行期的怪现象.
+
+        实测过的两类失败 (2026-10-16):
+        - **负数 → 忙循环**: `stage_alive_interval=-0.001` 时 `asyncio.sleep(负数)`
+          立即返回, 心跳变成无节流的死循环 —— 0.2s 的 stage 喷出 **58099** 条
+          `stage_alive` 事件 (CPU 空转 + 事件流/日志/内存三重放大), 而 run 照样
+          `status=done`。全程无任何提示。
+        - **限值类传 0 → 上限悄悄消失**: 调用点一律写 `if policy.x`, 于是 0 被当成
+          "没设"。`max_concurrent_runs=0` 读起来像"不许并发" (实际 = 不限),
+          `max_steps=0` 会让第一个 stage 立刻熔断 —— 两个都不是任何人想要的语义。
+
+        规则: 负数一律拒; 限值类 (`max_steps` / `max_concurrent_runs`) 的 0 也拒 ——
+        "不限" 请显式写 `None`。`backoff_max=0` (不退避)、`stage_alive_interval=None`
+        (关心跳)、`default_timeout=None` (不限时) 都是合法用法, 保留。
+        """
+        for name, value in (
+            ("default_timeout", self.default_timeout),
+            ("backoff_max", self.backoff_max),
+            ("stage_alive_interval", self.stage_alive_interval),
+        ):
+            if value is not None and value < 0:
+                raise ValueError(
+                    f"EnginePolicy.{name} 不能为负 (got {value!r}); "
+                    f"不限/关闭请显式传 None"
+                )
+        for name, value in (
+            ("max_steps", self.max_steps),
+            ("max_concurrent_runs", self.max_concurrent_runs),
+        ):
+            if value is not None and value < 1:
+                raise ValueError(
+                    f"EnginePolicy.{name} 必须 >= 1 (got {value!r}); "
+                    f"不限请显式传 None"
+                )
