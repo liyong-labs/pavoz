@@ -246,7 +246,13 @@ async def _cmd_fork_run(args) -> int:
             parse_set_file(args.set_file) if args.set_file else None,
             parse_set_args(args.set) if args.set else None,
         )
-    except ValueError as e:
+    except (ValueError, TypeError) as e:
+        # TypeError 也要接: parse_set_file 的值层校验对 "YAML 里放了 date 这类
+        # 能解析但存不下来的类型" 抛 TypeError, 此前它从参数层逃出去变成整段栈。
+        # 这个 try 里只有 json.loads / Path.read_text / parse_set_file /
+        # parse_set_args / merge_overrides —— 全是参数解析, 其中的 TypeError
+        # 就是参数问题, 不存在"吞掉深层代码 bug"的风险 (stage 内部异常由
+        # Runtime 自己转成 failed 状态, 根本不经过这里)。
         print(f"参数错误: {e}")
         return 1
 

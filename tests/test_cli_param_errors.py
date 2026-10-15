@@ -106,3 +106,35 @@ def test_fork_run_bad_input_file_exits_friendly(tmp_path, dag_file, capsys):
     assert rc == 1, f"期望退出码 1, 实得 {rc}"
     assert "参数错误" in out, f"缺友好前缀 '参数错误', stdout 是:\n{out}"
     assert "Traceback" not in err, f"不该吐 traceback, stderr 是:\n{err}"
+
+
+# --set-file 的两个失败面: 能解析但存不下来的类型 (TypeError) 与非有限数值。
+# 前者修复前从参数层逃出去变成整段栈 (与 run --input / prune --keep-last 同族)。
+
+def test_set_file_with_unpersistable_type_exits_friendly(tmp_path, dag_file, capsys):
+    """YAML 里的 date: safe_load 认得, json.dump 存不下 → 参数层就该说清。"""
+    bad = tmp_path / "date.yaml"
+    bad.write_text("due: 2026-10-16\n", encoding="utf-8")
+
+    rc = cli.main(["fork-run", dag_file, "--task-id", "t1", "--stage", "s_a",
+                   "--set-file", str(bad)])
+
+    out, err = capsys.readouterr()
+    assert rc == 1, f"期望退出码 1, 实得 {rc}"
+    assert "参数错误" in out, f"缺友好前缀 '参数错误', stdout 是:\n{out}"
+    assert "Traceback" not in err, f"参数层的 TypeError 不该吐栈, stderr 是:\n{err}"
+
+
+def test_set_file_with_nonfinite_exits_friendly(tmp_path, dag_file, capsys):
+    """YAML 的 .nan: 修复前会一路落盘成非法 JSON, 且全程无任何提示。"""
+    pytest.importorskip("yaml")
+    bad = tmp_path / "nan.yaml"
+    bad.write_text("score: .nan\n", encoding="utf-8")
+
+    rc = cli.main(["fork-run", dag_file, "--task-id", "t1", "--stage", "s_a",
+                   "--set-file", str(bad)])
+
+    out, err = capsys.readouterr()
+    assert rc == 1, f"期望退出码 1, 实得 {rc}"
+    assert "参数错误" in out, f"缺友好前缀 '参数错误', stdout 是:\n{out}"
+    assert "Traceback" not in err, f"不该吐 traceback, stderr 是:\n{err}"

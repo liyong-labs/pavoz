@@ -236,7 +236,17 @@ ctx.on_event: Callable[[str, dict], None] | None                   # this run's 
 
 ## State
 
-- Allowed types: `str`/`int`/`float`/`bool`/`None`/`list`/`dict` (json-serializable). Anything else (`set`/`datetime`/`Path`/`bytes`/...) → `StateValidationError`
+- Allowed types: `str`/`int`/`float`/`bool`/`None`/`list`/`dict` (json-serializable).
+  Anything else (`set`/`datetime`/`Path`/`bytes`/...) → `TypeError`
+- A `float` must also be **finite**: `NaN` / `±Inf` pass the type check but
+  serialize to the literals `NaN`/`Infinity`, which are not valid RFC 8259 JSON —
+  strict parsers (other languages, jq, PostgreSQL JSONB) reject the whole file,
+  while Python's own json is lenient so it never shows up in-process → `ValueError`.
+  The check lives at the single `deep_validate_state` chokepoint, so stage
+  return values and `--set-file` / `--overrides` all go through it
+- ⚠️ This section used to name a `StateValidationError` that **does not exist in
+  the code** (the two builtins above are what actually get raised). `except
+  StateValidationError` against the old docs is an ImportError
 - Write path: stage `return dict` → shallow merge
 - Conflict: a delta key already exists in state and its producer is **not** a transitive upstream of the current stage → `StateConflictError` (parallel-producer conflict)
 - Chained overwrite: the producer is a transitive upstream → allowed (v0.1.1)

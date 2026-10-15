@@ -19,6 +19,34 @@
 
 ### Fixed
 
+- **NaN / ±Inf 能进 state 并落盘成非法 JSON**: `deep_validate_state` 只查值**类型**,
+  而 `float` 在白名单里, 于是非有限值一路畅通直到 `json.dump` 写出字面量
+  `NaN`/`Infinity` —— 那不是 RFC 8259 的合法 JSON。**本仓内看不出来**: Python 的
+  json 两侧都 lenient, 往返无损; 炸的是跨边界的地方 (其他语言解析器 / jq /
+  PostgreSQL JSONB 拒收整个文件)。实测 (修复前): stage 直接返回 `float("nan")`
+  → `run` 报 **done**、checkpoint.json 含 `NaN`、严格解析器拒收, 全程无提示。
+  现 `_validate_value` 增查有限性, 非有限值抛 `ValueError` (值的问题而非类型
+  的问题), 落在 `deep_validate_state` 这唯一 chokepoint 上 —— stage 返回值、
+  `--set-file`、`--overrides` 走同一条路。
+  **与 `--set-file` 的不对称**: JSON 分支早有 `parse_constant` 挡 NaN (注释明写
+  "JSON 无法持久化"), 但那是解析层的局部防护; YAML 分支两样都没有 (`.nan` /
+  `.inf` 是合法 YAML 标量)。现两个分支统一在解析现场走同一个校验点。
+- **`--set-file` 值层校验提前到解析现场 + 参数层不再吐栈**: 能解析但存不下来的
+  类型 (YAML 的 `date` → `datetime.date`) 此前一路进到落盘才炸, 且 `TypeError`
+  从 `_cmd_fork_run` 的参数层逃出去变成整段 traceback (与 `run --input` /
+  `prune --keep-last` 同族)。现 `parse_set_file` 解析完即校验值类型与有限性
+  (复用 `deep_validate_state`, 不平行实现 walker), `_cmd_fork_run` 的参数层
+  补接 `TypeError` (该 try 内全是参数解析, 不存在吞掉深层代码 bug 的风险)。
+- **state 值校验报错的嵌套 path 指错位置**: 既有 `TypeError` 消息对嵌套 key 给出
+  `path=.llm.nested` 这种**前导点**路径 (递归里无条件 `f"{path}.{k}"`, 而顶层
+  path 是空串)。排查时最需要它说对的场景恰恰说错了。现由 `deep_validate_state`
+  以顶层 key 播种 path, 消息为 `path=llm.nested`。
+- **文档里的 `StateValidationError` 并不存在**: cn/en `api.md` 的 State 小节都写
+  非白名单类型 → `StateValidationError`, 而代码里 grep 不到该异常 (实际抛
+  `TypeError`; 同一小节里的 `StateConflictError` 是真实存在的)。照旧文档写
+  `except StateValidationError` 会 ImportError。文档改为写明真实异常并标注该
+  更正 —— 未新增异常类型 (那才是为迁就一句过时文档而设计)。
+
 - **`EnginePolicy(max_concurrent_runs=)` 对单 stage 重放 (`run_stage`) 静默失效**:
   并发闸只内联在 `run()` 里, `run_stage()` 直接绕过 → 同一 policy 下 3 个 run
   串行 (peak=1)、3 个重放全并发 (peak=3)。这个策略的全部意义是护住**共享下游**

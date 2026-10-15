@@ -87,7 +87,19 @@ class ReadOnlyStateView:
 
 
 def _validate_value(key: str, value: Any, path: str = "") -> None:
-    """递归校验单值类型 (给更精确的报错)."""
+    """递归校验单值类型 + 有限性 (给更精确的报错)."""
+    # 有限性必须单独查: float 在 _JSON_TYPES 里, 类型检查挡不住 NaN/±Inf ——
+    # 它们会照常被 json.dump 写成字面量 NaN/Infinity, 而那不是 RFC 8259 的合法
+    # JSON: Python 自己 lenient 所以本仓内不显形, 任何严格解析器 (其他语言 /
+    # jq / PostgreSQL JSONB) 拒收整个文件。2026-10-16 实测: stage 直接返回
+    # float("nan") → run 报 done, checkpoint.json 含 NaN, 严格解析器拒收。
+    # 故非有限值抛 **ValueError** (值的问题而非类型的问题 —— 报"类型 float 不可
+    # 序列化"会指错方向); 调用方按 FatalError 语义处理 = 不重试直接失败。
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError(
+            f"state key '{key}' 是非有限数值 {value!r} (path={path or key}) — "
+            f"无法持久化为合法 JSON"
+        )
     if value is None or isinstance(value, _JSON_TYPES):
         if isinstance(value, dict):
             for k, v in value.items():
@@ -103,9 +115,14 @@ def _validate_value(key: str, value: Any, path: str = "") -> None:
 
 
 def deep_validate_state(state: dict) -> None:
-    """递归校验所有值类型. run 开始时 + 每 stage return 后调."""
+    """递归校验所有值类型 + 有限性. run 开始时 + 每 stage return 后调.
+
+    顶层 key 直接作为 path 的起点 —— 否则递归里 f"{path}.{k}" 会从 ".llm"
+    起拼, 报错给出的是 ".llm.nested.deep" 这种前导点路径 (既有 TypeError 报错
+    一直是这个毛病: 在嵌套 key 上指错位置, 而那正是排查时最需要它说对的场景)。
+    """
     for k, v in state.items():
-        _validate_value(k, v)
+        _validate_value(str(k), v, str(k))
 
 
 def merge_state(
@@ -322,6 +339,12 @@ def parse_set_file(path: str) -> dict:
             f"--set-file {path} 顶层必须是 dict (实际 {type(data).__name__})"
         )
     _validate_dict_keys(data, path="")
+    # 值层校验 (类型 + 有限性) 也在这里做: 文件是用户直接给的数据, 错误该在
+    # 解析现场报, 而不是等 merge 进 state 后由 deep_validate_state 在更远处抛。
+    # 复用同一个 chokepoint (不平行实现一份 walker —— 平行实现必然漂)。
+    # JSON 分支的 parse_constant 只挡 NaN 这一类, 这层还挡 datetime 之类"能
+    # 解析但存不下来"的类型, 且对 YAML 分支同样生效 (YAML 此前两样都没有)。
+    deep_validate_state(data)
     return data
 
 

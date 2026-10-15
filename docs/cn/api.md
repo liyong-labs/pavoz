@@ -209,7 +209,14 @@ ctx.on_event: Callable[[str, dict], None] | None                   # 本 run 的
 ## State
 
 - 类型白名单: `str/int/float/bool/None/list/dict` (json-serializable),
-  其他 (`set/datetime/Path/bytes/...`) → `StateValidationError`
+  其他 (`set/datetime/Path/bytes/...`) → `TypeError`
+- **`float` 还必须是有限值**: `NaN` / `±Inf` 类型对, 但落盘会写成字面量
+  `NaN`/`Infinity`, 那不是 RFC 8259 的合法 JSON (严格解析器 —— 其他语言 / jq /
+  PostgreSQL JSONB —— 拒收整个文件, 而 Python 自己 lenient 所以本仓内不显形)
+  → `ValueError`。校验在 `deep_validate_state` 这一个 chokepoint, stage 返回值与
+  `--set-file` / `--overrides` 走同一条路
+- ⚠️ 本节早前写的 `StateValidationError` **在代码里不存在** (实际是上面两个内置
+  异常)。照旧文档写 `except StateValidationError` 会 ImportError
 - 写路径: stage `return dict` → shallow merge
 - 冲突: delta key 已存在于 state 且 producer **不是**当前 stage 的传递上游
   → `StateConflictError` (平行 producer 冲突)
