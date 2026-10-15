@@ -88,6 +88,48 @@ async def test_max_concurrent_runs_serializes():
     assert active["peak"] == 1
 
 
+async def test_max_concurrent_runs_also_bounds_run_stage():
+    """并发闸必须管到单 stage 重放 —— 曾只有 run() 走闸门。
+
+    这个策略的用途是护住**共享下游** (限流 / 连接池), 而重放打的是同一批
+    stage、同样的外部调用。实测 (修复前): 同一 policy 下 3 个 run 串行
+    (peak=1), 3 个重放却全并发 (peak=3) —— 上限静默失效。
+    """
+    active = {"n": 0, "peak": 0}
+    store = CheckpointStore(FileStorage(tempfile.mkdtemp()))
+
+    def _dag(name: str) -> DAG:
+        dag = DAG(name)
+
+        @dag.stage()
+        async def s_a(ctx):
+            return {"a": 1}
+
+        @dag.stage(depends_on=["s_a"])
+        async def s_work(ctx):
+            active["n"] += 1
+            active["peak"] = max(active["peak"], active["n"])
+            await asyncio.sleep(0.05)
+            active["n"] -= 1
+            return {"w": 1}
+
+        return dag
+
+    rt = Runtime(policy=EnginePolicy(max_concurrent_runs=1), checkpoint_store=store)
+    dags = [_dag(f"sem{i}") for i in range(3)]
+    for dag in dags:                       # 各造一个 s_work 已完成的 cp 供重放
+        assert (await rt.run(dag, dag.name)).status == "done"
+
+    active["peak"] = 0
+    await asyncio.gather(*(
+        rt.run_stage(dag, dag.name, "s_work") for dag in dags
+    ))
+
+    assert active["peak"] == 1, (
+        f"重放绕过了 max_concurrent_runs (实测 peak={active['peak']}, 上限 1) —— "
+        "该策略正是为护住共享下游而设, 静默失效等于没有")
+
+
 # ── default_timeout 在三个入口上的一致性 (2026-10-16 巡检) ────────────────
 
 def _slow_dag(name: str, delay: float) -> DAG:

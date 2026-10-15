@@ -26,6 +26,7 @@ import os
 import random
 import time
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -227,6 +228,29 @@ class Runtime:
     _run_sem: asyncio.Semaphore | None = field(
         default=None, init=False, repr=False, compare=False)  # W3: 并发闸 (懒建)
 
+    # ── 并发闸 (W3 EnginePolicy.max_concurrent_runs) ──────
+    @asynccontextmanager
+    async def _run_slot(self):
+        """并发闸: `EnginePolicy.max_concurrent_runs` — 无策略则不限并发。
+
+        **run() 与 run_stage() 必须共用这一处**。曾只有 run() 内联走闸门,
+        run_stage (单 stage 重放) 直接绕过 → 同一 policy 下 3 个 run 串行
+        (peak=1)、3 个重放全并发 (peak=3), 而这个策略的全部意义就是护住共享
+        下游 (限流 / 连接池): 重放打的是同一批 stage、同样的外部调用, 绕过
+        等于上限没设 (2026-10-16 实测)。
+
+        注: 闸门按调用计数, 故"stage 里回调本 Runtime 的 run/run_stage"在
+        上限=1 时会自锁 —— 这是既有语义 (run() 一直如此), 不是本改动引入的;
+        重入式用法不在支持范围内。
+        """
+        if not (self.policy and self.policy.max_concurrent_runs):
+            yield
+            return
+        if self._run_sem is None:
+            self._run_sem = asyncio.Semaphore(self.policy.max_concurrent_runs)
+        async with self._run_sem:
+            yield
+
     # ── 事件 ────────────────────────────────────────────
     def _emit(self, event: str, data: dict) -> None:
         """生命周期事件 → on_event 回调. observer 异常隔离 (log + 忽略), 不影响 run."""
@@ -312,14 +336,9 @@ class Runtime:
         # W3: 有效 deadline = 显式参数优先, 缺省看 policy; 绝对时刻在 _run_inner
         # 获得并发闸门后才起算 (排队不烧 deadline).
         eff_timeout = self._effective_timeout()
-        if self.policy and self.policy.max_concurrent_runs:
-            if self._run_sem is None:
-                self._run_sem = asyncio.Semaphore(self.policy.max_concurrent_runs)
-            async with self._run_sem:
-                return await self._run_inner(
-                    dag, task_id, initial_state, resume, eff_timeout, skip_unchanged)
-        return await self._run_inner(
-            dag, task_id, initial_state, resume, eff_timeout, skip_unchanged)
+        async with self._run_slot():
+            return await self._run_inner(
+                dag, task_id, initial_state, resume, eff_timeout, skip_unchanged)
 
     async def _run_inner(
         self,
@@ -845,11 +864,12 @@ class Runtime:
                 else run_deadline
             )
 
-        status, new_state, err, err_class, err_category, _producers, _delta, _attempts = \
-            await self._run_stage(
-                dag, stage.fn, stage_name, task_id, run_id, state, stage.retries,
-                stage_deadline, producers, emit=False,
-            )
+        async with self._run_slot():
+            status, new_state, err, err_class, err_category, _producers, _delta, _attempts = \
+                await self._run_stage(
+                    dag, stage.fn, stage_name, task_id, run_id, state, stage.retries,
+                    stage_deadline, producers, emit=False,
+                )
         result.state = new_state
         result.stage_statuses = {stage_name: status}
         if status == "failed":

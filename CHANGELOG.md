@@ -19,6 +19,13 @@
 
 ### Fixed
 
+- **`EnginePolicy(max_concurrent_runs=)` 对单 stage 重放 (`run_stage`) 静默失效**:
+  并发闸只内联在 `run()` 里, `run_stage()` 直接绕过 → 同一 policy 下 3 个 run
+  串行 (peak=1)、3 个重放全并发 (peak=3)。这个策略的全部意义是护住**共享下游**
+  (限流 / 连接池), 而重放打的是同一批 stage、同样的外部调用, 绕过等于上限
+  没设, 且无任何提示。现抽出 `Runtime._run_slot()` 作为唯一闸门, 两个入口共用。
+  **行为边界**: 此前"配了 `max_concurrent_runs` 又并发重放"的调用点此后会排队
+  (闸门按调用计数, 故重入式调用在上限=1 时自锁 —— `run()` 一直如此, 非本次引入)。
 - **`EnginePolicy(default_timeout=)` 对单 stage 重放 (`run_stage`) 静默失效**:
   `run()` 按"显式 `Runtime(default_timeout=)` 优先, 缺省回退 policy"两级解析
   run 级 deadline, 而 `run_stage()` 内联只读 `self.default_timeout` → 同一份

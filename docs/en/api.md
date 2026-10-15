@@ -95,6 +95,13 @@ effect in seconds without re-running upstream stages.
 - Does **not** write a checkpoint and does **not** move the `latest` pointer
   (replay output is a dev artifact — it must not become the resume target);
   `ctx.run_id` is a throwaway UUID4 for the call
+- Emits **no lifecycle events** — a replay is not a run, so nothing reaches
+  `on_event` (no `run_start`/`run_end`, no `stage_start`/`stage_end`, no
+  `stage_alive`). Metrics and alerts hung on those events therefore do not see
+  replays at all; that is deliberate, not a dropped event
+- Still honours the run-level policy: `default_timeout` (explicit or from
+  `EnginePolicy`) and `max_concurrent_runs` both bound a replay, since it calls
+  the same stages and the same downstream
 - Errors: no checkpoint → `RuntimeError`; DAG hash mismatch →
   `CheckpointMismatchError`; pre-M2 (v0.5.0) checkpoint without
   `stage_deltas` → `RuntimeError` (re-run once to produce a fresh checkpoint);

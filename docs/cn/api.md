@@ -84,6 +84,11 @@ stage** — 调 prompt/参数秒级看效果, 不重跑前序 stage。
   `cp.rebuild_state()`; 依赖未完成 → `RuntimeError`
 - **不落 checkpoint** 也不动 `latest` 指针 (replay 产出是开发临时物 —
   不能成为 resume 目标); `ctx.run_id` 是本次调用的一次性 UUID4
+- **不发生命周期事件** — 重放不是 run, 故 `on_event` 一个都收不到 (无
+  `run_start`/`run_end`、无 `stage_start`/`stage_end`、无 `stage_alive`)。
+  挂在这些事件上的指标与告警因此**看不到重放**; 这是有意为之, 不是事件丢了
+- 但 run 级策略仍然生效: `default_timeout` (显式或来自 `EnginePolicy`) 与
+  `max_concurrent_runs` 都约束重放 —— 它打的是同一批 stage、同一个下游
 - 错误: 无 checkpoint → `RuntimeError`; DAG hash 不匹配 →
   `CheckpointMismatchError`; pre-M2 (v0.5.0) cp 无 `stage_deltas` →
   `RuntimeError` (重跑一次生成新 cp); stage 不存在 → `KeyError`
