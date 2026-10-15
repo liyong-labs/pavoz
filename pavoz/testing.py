@@ -53,7 +53,12 @@ class TestPipe:
         return self
 
     def calls(self) -> list[dict]:
-        """stage 调用记录: [{stage, mock, args}]. 用于断言调用顺序/次数."""
+        """stage 调用记录, 每项含 `stage` / `mock` / `state_keys`, 按调用序。
+
+        用于断言调用顺序与次数; `state_keys` 是该 stage 被调用时**看到的 state
+        顶层 key** (断言"下游确实拿到了上游的产出"时用)。仅 mock 过的 stage 会
+        记进这里 —— 未 mock 的 stage 走真实现, 不留调用记录。
+        """
         return list(self._recorded)
 
     @classmethod
@@ -73,6 +78,12 @@ class TestPipe:
                 f"{cp.workflow_hash} ≠ 当前 DAG hash {cur_hash}. DAG 结构变了, "
                 f"不能 replay (只改 stage 函数体不影响 hash; 改依赖/retries/timeout 会)."
             )
+        # ⚠️ 环图 (条件边回路, R1/0.5.5) 上本夹具**只保证终态自洽, 不保证路径
+        # 一致**: 每个已完成 stage 被 mock 成"返回它**最后一次** visit 的 delta"
+        # (cp.stage_deltas 是 last-write 视图), 于是回路里每轮都拿终值 —— 真实的
+        # 3 轮会被压成 1 轮。多数场景下终态仍与 cp.state 相等 (因为终值本身就是
+        # 终点), 但轮次敏感的 stage (计数/累加) 会算错。条件边比本夹具晚出,
+        # 这个限制此前没写下来。
         if cp.done_stages and not cp.stage_deltas:
             # v0.8: state 不落盘, 不能依赖 cp.state (property 重建恒有值) — 只看 deltas
             raise RuntimeError(
@@ -86,7 +97,20 @@ class TestPipe:
         return pipe
 
     async def run(self, *, resume: bool = False) -> RunResult:
-        """跑全图 (mock 的 stage 用假输出, 其余走真实现)."""
+        """跑全图 (mock 的 stage 用假输出, 其余走真实现).
+
+        `resume` 保留但**不能用**: TestPipe 不落盘 (无 checkpoint_store), 续跑
+        无从谈起。此前它一路传到 Runtime 才炸, 报的是内部不变量
+        "resume=True requires checkpoint_store" —— 与调用方毫无关系的话。现直接
+        在这里说清。要在真 cp 上做回归用 `TestPipe.replay_from`; 要真续跑用
+        `Runtime(checkpoint_store=...).run(..., resume=True)`。
+        """
+        if resume:
+            raise ValueError(
+                "TestPipe.run(resume=True) 不支持: TestPipe 不落盘, 没有可续的 "
+                "checkpoint. 要在真 cp 上回归用 TestPipe.replay_from(cp, dag); "
+                "要真续跑用 Runtime(checkpoint_store=...).run(..., resume=True)."
+            )
 
         runtime = Runtime(
             checkpoint_store=None,  # TestPipe 不落盘 (回归用, 不恢复)

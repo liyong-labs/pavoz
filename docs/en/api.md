@@ -362,6 +362,14 @@ assert result2.state == cp.state       # same stage outputs in → same graph be
 ```
 
 - Unmocked stages run normally (you can mock only the heavy external-call segments and let the rest execute for real)
+- `pipe.calls()` returns one record per **mocked** stage call, shaped
+  `{stage, mock, state_keys}` — `state_keys` is the set of top-level state keys the
+  stage could see when it ran (insertion order), which is what you assert on to
+  check "the downstream stage really received the upstream output"
+- `pipe.run(resume=True)` is **not supported** (TestPipe persists nothing, so there
+  is no checkpoint to resume from) — passing it raises `ValueError` naming the two
+  alternatives (`replay_from`, or a real `Runtime`). For genuine resume use
+  `Runtime(checkpoint_store=...).run(..., resume=True)`
 - Regression scenario: drive the full graph with fixed mock outputs and assert the final state
 - `replay_from(cp, dag)`: every completed stage in `cp.done_stages` is mocked
   with its saved `stage_deltas` output; stages that never completed run for
@@ -369,6 +377,13 @@ assert result2.state == cp.state       # same stage outputs in → same graph be
   unchanged) → mismatch raises `CheckpointMismatchError`; a pre-M2 (v0.5.0)
   checkpoint without `stage_deltas` raises `RuntimeError` (re-run once).
   Hand-written mocks for real runs can be replaced by replaying the checkpoint.
+- ⚠️ On **looping graphs** (conditional-edge cycles) it only guarantees the final
+  state is self-consistent, not that the path matches: `stage_deltas` is a
+  last-write view, so every iteration of a looped stage is fed that stage's
+  **final** delta and a real 3-round loop collapses to 1 round. The final state
+  usually still equals `cp.state` (the last value is the endpoint anyway), but
+  iteration-sensitive stages (counters, accumulators) will compute the wrong
+  number — assert those through a real `Runtime` run instead
 
 ## DAG viz export (v0.5.4)
 

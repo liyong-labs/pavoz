@@ -143,3 +143,73 @@ async def test_replay_from_rejects_mismatched_and_legacy_cp():
         assert legacy is not None
         with pytest.raises(RuntimeError, match="stage_deltas"):
             TestPipe.replay_from(legacy, dag)
+
+# ── 2026-10-16 巡检补: 夹具自身的契约 (此前零覆盖) ─────────────────────────
+
+async def test_calls_returns_the_actual_keys_not_the_old_args_key():
+    """calls() 的 docstring 曾写 [{stage, mock, args}], 实际键是 state_keys。
+
+    照旧文档写 `call["args"]` 会 KeyError —— 断言直接崩, 而不是断言失败。
+    """
+    pipe = TestPipe(_dag(), initial_state={"items": [1, 2, 3]})
+    pipe.mock("s_fetch", lambda st: {"fetched": [1]})
+    assert (await pipe.run()).status == "done"
+
+    recs = pipe.calls()
+    assert recs, "mock 过的 stage 应留下调用记录"
+    assert set(recs[0]) == {"stage", "mock", "state_keys"}, (
+        f"calls() 的键变了, docstring 与断言都要跟着改: {sorted(recs[0])}")
+    assert "args" not in recs[0], "args 这个键从来就不存在 (docstring 写错了)"
+
+
+async def test_calls_state_keys_reflects_visible_state():
+    """state_keys 是该 stage 被调用时**看到的** state 顶层 key —— 能用来断言
+    '下游确实拿到了上游的产出'。"""
+    pipe = TestPipe(_dag(), initial_state={"items": [1, 2]})
+    seen: list[str] = []
+
+    def _record(st):
+        seen.extend(st.keys())
+        return {"processed": 0}
+
+    pipe.mock("s_fetch", lambda st: {"fetched": [1, 2]})   # _dag 的真实现会炸, 必须也 mock
+    pipe.mock("s_process", _record)
+    assert (await pipe.run()).status == "done"
+
+    rec = [r for r in pipe.calls() if r["stage"] == "s_process"][0]
+    # 注意: 记录的是**插入序**不是排序序, 所以直接比 seen 不比 sorted(seen)
+    assert rec["state_keys"] == seen, "调用记录的 state_keys 应与 mock 看到的一致"
+    assert "fetched" in rec["state_keys"], "上游产出的 key 应出现在下游的 state 里"
+
+
+async def test_unmocked_stage_is_not_recorded_in_calls():
+    """反向约束: 只有被 mock 的 stage 留调用记录 (docstring 现在明说了这一点)。"""
+    pipe = TestPipe(_dag(), initial_state={"items": [1]})
+    pipe.mock("s_fetch", lambda st: {"fetched": [1]})
+    await pipe.run()
+
+    assert [r["stage"] for r in pipe.calls()] == ["s_fetch"], (
+        "未 mock 的 stage 走真实现, 不该出现在 calls() 里")
+
+
+async def test_run_rejects_resume_with_an_actionable_message():
+    """resume=True 永远失败 (TestPipe 不落盘) —— 但要说清替代路径是什么。
+
+    修复前它一路传到 Runtime 才炸, 报的是内部不变量 "resume=True requires
+    checkpoint_store", 与调用方毫无关系。
+    """
+    pipe = TestPipe(_dag(), initial_state={"items": [1]})
+    pipe.mock("s_fetch", lambda st: {"fetched": [1]})
+
+    with pytest.raises(ValueError) as ei:
+        await pipe.run(resume=True)
+    msg = str(ei.value)
+    assert "replay_from" in msg, f"报错应指出替代路径, 实得: {msg}"
+    assert "checkpoint_store" in msg, f"报错应说明为什么不支持, 实得: {msg}"
+
+
+async def test_run_default_still_works_without_resume_kwarg():
+    """反向约束: 默认调用一字不变 (不带 resume 参数)。"""
+    pipe = TestPipe(_dag(), initial_state={"items": [1]})
+    pipe.mock("s_fetch", lambda st: {"fetched": [1]})
+    assert (await pipe.run()).status == "done"

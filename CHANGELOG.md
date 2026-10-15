@@ -19,6 +19,21 @@
 
 ### Fixed
 
+- **TestPipe 的三处契约与实际对不上** (夹具本身行为无误, 是"承诺与实现不一致"):
+  ① `calls()` 的 docstring 写返回 `[{stage, mock, args}]`, 实际键是
+  `{stage, mock, state_keys}` —— 照旧文档写 `call["args"]` 直接 KeyError, 断言是
+  **崩掉**而不是失败。现 docstring 写明真实键, 并说明 `state_keys` 是该 stage 调用
+  时看到的 state 顶层 key (插入序), 以及"只有 mock 过的 stage 留记录"。
+  ② `run(resume=True)` **永远失败** (TestPipe 不落盘, 无可续的 checkpoint), 而它
+  一路传到 Runtime 才炸, 报的是内部不变量 "resume=True requires checkpoint_store"
+  —— 与调用方毫无关系的一句话。现直接在 TestPipe 抛出 `ValueError` 并指出两条替代
+  路径 (`replay_from` / 真 `Runtime`)。
+  ③ `replay_from(cp, dag)` 在**环图** (条件边回路, R1/0.5.5 晚于本夹具) 上只保证
+  终态自洽、不保证路径一致: `stage_deltas` 是 last-write 视图, 环里每轮都拿到该
+  stage 的**最后一次** delta, 真实的 3 轮被压成 1 轮。终态多数时候仍等于
+  `cp.state` (终值本就是终点), 但轮次敏感的 stage (计数/累加) 会算错。cn/en
+  api.md 已写明该限制与替代做法。
+
 - **`skip_unchanged` 的两处事实此前没写在任何地方** (行为本身无误, 是文档与
   可观测性缺口; 现补文档 + 补 characterization 测试钉住):
   ① **指纹覆盖边界**: `stage_input_hash` 只含 **fn 源码 + 执行前 state**, 不含

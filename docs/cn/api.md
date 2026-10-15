@@ -324,12 +324,22 @@ assert result2.state == cp.state       # 相同 stage 输出进 → 相同图行
 ```
 
 - 未 mock 的 stage 原样执行 (可 mock 外部调用密集段, 其余真跑)
+- `pipe.calls()` 返回调用记录, 每项 `{stage, mock, state_keys}`: `stage_keys`
+  是该 stage 被调用时**看到的 state 顶层 key** (插入序), 可用来断言"下游确实拿到了
+  上游的产出"。只有被 mock 的 stage 留记录
+- `pipe.run(resume=True)` **不支持** (TestPipe 不落盘, 无可续的 checkpoint) —
+  传了直接 `ValueError` 并指出替代路径 (`replay_from` / 真 `Runtime`)。要真续跑
+  用 `Runtime(checkpoint_store=...).run(..., resume=True)`
 - 回归场景: 用固定 mock 输出跑全图, 断言最终 state
 - `replay_from(cp, dag)`: `cp.done_stages` 里每个已完成 stage 用存的
   `stage_deltas` 输出 mock; 从未完成的 stage 真跑。要求 cp 的
   `workflow_hash` 与 DAG 一致 (结构没变) — mismatch →
   `CheckpointMismatchError`; pre-M2 (v0.5.0) cp 无 `stage_deltas` →
   `RuntimeError` (重跑一次)。真实 run 的手写 mock 回归可被它替代
+- ⚠️ **环图 (条件边回路) 上只保证终态自洽, 不保证路径一致**: `stage_deltas` 是
+  last-write 视图, 环里每一轮都拿到该 stage 的**最后一次** delta, 真实的 3 轮会被
+  压成 1 轮。终态多数时候仍等于 `cp.state` (终值本身就是终点), 但轮次敏感的 stage
+  (计数 / 累加) 会算错 —— 那类断言请走 `Runtime` 真跑
 
 ## DAG viz export (v0.5.4)
 
