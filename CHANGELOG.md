@@ -93,6 +93,21 @@
 
 ### Fixed
 
+- ★ **事件流在两条取消路径上都不成对 → 监控算出错的 stage 指标**。消费方按
+  `stage_start → stage_end` 配对算耗时/成功率/in-flight, 所以"孤儿事件"不是脏数据,
+  是**错的统计结果**。实测六条路径: 正常 / stage 失败 / max_steps 熔断 / `run_stage`
+  都配对, 但**两条取消路径各漏一半, 方向正好相反**:
+
+  - **graceful** (stage 边界拦截): 只发 `stage_end` 不发 `stage_start` ⇒ 那个 stage
+    根本没跑, 事件流里却凭空一次"瞬间完成"
+  - **hard** (中途注入 `CancelledError`): `stage_start` 早发出去了, 取消时直接跳到
+    `save_cp`/`run_end` ⇒ 那个 stage **永远停在 in-flight**, 超时告警反复响, 而
+    runtime 侧早已把它标成 cancelled 并落了 cp —— 两边说法不一致
+
+  两处都在 cancel 相关代码附近, 而本轮已反复改动那一段。改控制流时最容易漏掉的
+  就是"事件流还自洽吗", 而它此前没有任何测试在守。补 `test_event_stream_pairing.py`
+  (6 个用例, 含 `run_end` 恰好一条且与 `RunResult.status` 一致)。
+
 - **`TestPipe.calls()` 的记录跨 `run()` 累积**。`run()` 的 finally 明说"实例可复用",
   而记录不清空 ⇒ 复用实例跑第二遍时 `calls()` 会数到第一遍的记录。
   失败形态是**假红**而非假绿 (该红的红), 但"只跑了一遍却拿到两条记录"没法用直觉

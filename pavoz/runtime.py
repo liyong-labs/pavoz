@@ -705,6 +705,25 @@ class Runtime:
                 result.error = "killed (hard kill by CancelRegistry)"
                 result.error_class = None
                 _fill_error_context(result, name, None, state)
+                # ★ 补 stage_end, 与已在流里的 stage_start 配对 (2026-10-16 修)。
+                # 硬杀是在 stage **执行途中**注入 CancelledError, 它的 stage_start
+                # 早就发出去了 —— 此前这里直接跳到 save_cp/run_end, 那个 stage 就
+                # 永远停在"进行中"。消费方按配对算 in-flight 时会一直挂着它, 超时
+                # 告警反复响, 而 runtime 侧其实早已把它标成 cancelled 并落了 cp。
+                # visit 用 `visit_no` (本轮真实轮次, 上面算的); attempt 在这条路径上
+                # **不可知** —— 它是 `_run_stage` 的返回值, 而异常在赋值生效前就抛出
+                # 了 (第一版直接写 `attempts` → UnboundLocalError, 6 个测试红)。
+                # 填 1: 硬杀后不会继续重试, 而消费方按 (stage, visit) 配对, 这个
+                # 字段只用于排序。要精确 attempt 就得让 `_run_stage` 在抛出前把它
+                # 挂到异常上, 那个改动不值当。
+                self._emit("stage_end", {
+                    "task_id": task_id, "run_id": run_id, "stage": name,
+                    "attempt": 1,
+                    "visit": visit_no,
+                    "status": "cancelled",
+                    "duration": time.time() - _st0,
+                    "error": "killed (hard kill by CancelRegistry)",
+                })
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
                               _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts)
@@ -1173,6 +1192,14 @@ class Runtime:
                 logger.warning("task=%s run=%s stage=%s 取消拦截 (attempt 前)",
                                task_id, run_id[:8], name)
                 if emit:
+                    # ★ 必须**成对**发 start/end (2026-10-16 修)。此前这里只发
+                    # stage_end, 于是一条从未开始的 stage 在事件流里凭空出现一个
+                    # end —— 消费方按"start→end 配对"算 stage 耗时/成功率时会
+                    # 多算一次"瞬间完成", 而那个 stage 根本没跑。
+                    # attempt 用同一个值 (下面 `attempt += 1` 还没执行), 否则配不上对。
+                    self._emit("stage_start", {"task_id": task_id, "run_id": run_id,
+                                               "stage": name, "attempt": attempt,
+                                               "visit": visit})
                     self._emit("stage_end", {"task_id": task_id, "run_id": run_id,
                                              "stage": name, "attempt": attempt,
                                              "visit": visit,
