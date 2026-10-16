@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from typing import Any
 
 __all__ = ["EventRecorder"]
@@ -48,12 +49,41 @@ class EventRecorder:
     def __init__(self, sink_path: str | None = None):
         self._events: list[tuple[str, dict]] = []
         self._sink = sink_path
+        self._sink_dir_ready = False
+
+    def _ensure_sink_dir(self, sink: str) -> None:
+        # sink 由调用点传入而不是读 self._sink: 非空收窄发生在 `if self._sink:`
+        # 那一行, 跨方法边界 pyright 看不到 (它会报 dirname(str|None))。
+        """首次落盘前把父目录建出来 (只做一次)。
+
+        为什么要有这一步: sink 路径指向一个**还不存在**的目录时, `open(..., "a")`
+        每个事件都抛 FileNotFoundError —— 一个单 stage 的 run 就是 5 条完整
+        traceback, 长 run 能刷几千行同样的错误 (把真正的错误淹掉), 而 run 照样
+        报 done、磁盘上一个字节没有。
+
+        这个失败是**永久性**的却按事件重复报, 是最坏的组合; 它也不是"该响就响"
+        就够了 —— 用户要的是日志文件, 报一万条 traceback 不等于给了他日志。
+
+        口径统一到 `_dump_debug` (debug_dir 快照): 那是同一类事 (用户给路径, 我们
+        往里写 JSON), 它 `os.makedirs(..., exist_ok=True)` 把 task 子目录建了出来。
+        两个功能对"父目录怎么办"给出一致的答案, 好过让每个调用方自己记得 mkdir。
+
+        只在**有东西要写时**建 (不在 `__init__`): 一个从不落盘的 recorder 不该留下
+        目录副作用。裸文件名 (`ev.jsonl`) 的 dirname 是空串 —— 跳过, 不去建 "."。
+        """
+        if self._sink_dir_ready:
+            return
+        parent = os.path.dirname(sink)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        self._sink_dir_ready = True
 
     def __call__(self, event: str, data: dict) -> None:
         self._events.append((event, data))
         if self._sink:
             # _json_safe + allow_nan=False 是一对: 前者把非有限值换成字符串,
             # 后者保证万一还有别的非标准值时**响**而不是悄悄写坏文件。
+            self._ensure_sink_dir(self._sink)
             payload = _json_safe({"event": event, "data": data})
             with open(self._sink, "a", encoding="utf-8") as f:
                 f.write(json.dumps(payload, ensure_ascii=False,

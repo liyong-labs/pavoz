@@ -124,6 +124,30 @@
 
 ### Fixed
 
+- **`EventRecorder` 的 sink 父目录不存在时: 每个事件一条 traceback, 而文件一个都
+  没有**。`open(sink, "a")` 在父目录缺失时抛 `FileNotFoundError`, 而这个异常在
+  `Runtime._emit` 的 observer 隔离层被记下 (ERROR + 完整 traceback) 后继续跑。实测
+  一个**单 stage** 的 run: 5 条 traceback、`status=done`、`recorder.events` 5 条齐全、
+  **磁盘上一个字节没有**。
+
+  问题不在"失败了" (它确实响), 而在这个失败是**永久性**的却按事件重复报: 长 run
+  能刷几千行同样的 traceback 把真正的错误淹掉, 而 run 报 done, 不看 stderr 的人只会
+  以为"日志开着"。用户要的是日志文件, 报一万条 traceback 不等于给了他日志。
+
+  口径统一到 `_dump_debug` (debug_dir 快照): 那是同一类事 (用户给路径, 我们往里写
+  JSON), 它 `os.makedirs(..., exist_ok=True)` 把 task 子目录建了出来。两个功能对
+  "父目录怎么办"给出**不一致**的答案才是真问题 —— 统一到 debug_dir 那条, 而不是
+  让每个调用方自己记得 mkdir。
+
+  懒建 (不在 `__init__`): 一个从不落盘的 recorder 不该留下目录副作用; 裸文件名
+  (`ev.jsonl`) 的 dirname 是空串, 跳过不去建 "."。
+
+  判别力 (2 次变异): 去掉 `_ensure_sink_dir` 调用 → 2 红; 改成 `__init__` 里就建
+  → **10 红** (因为 `sink_path=None` 时 `os.path.dirname(None)` 直接炸)。
+
+  注: 第一次写这条时被自己的变异工具挡了两下 —— 它的"写入确认"把"`new` 是 `old`
+  的前缀扩展"误判成没写进去, 而那正是最常见的变异形状 (见工具仓那条 commit)。
+
 - ★ **`fork-run --compare-with` 是 CLI 里唯一"先跑后验"的参数: 拼错 run_id 的代价
   是多跑一遍 + 多留一份 checkpoint**。目标 run 的存在性检查原先落在
   `runtime.fork_run(...)` **之后**。实测 `fork-run --compare-with nope` (run_id
