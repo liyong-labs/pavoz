@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import copy
 import math
+import logging
 from typing import Any
+
+_logger = logging.getLogger("pavoz")
 
 __all__ = [
     "ReadOnlyStateView",
@@ -241,17 +244,50 @@ def _infer_type(raw: str, *, infer_types: bool = True) -> Any:
 def _deep_set(d: dict, path: str, value: Any) -> None:
     """Set d[path.split('.')[0]][...][last] = value. Mutates d.
 
-    Creates intermediate dicts as needed. Overwrites non-dict intermediate
-    values (with a warning implicit in behavior — caller is responsible
-    for understanding the schema).
+    Creates intermediate dicts as needed; **overwrites non-dict intermediate
+    values** (caller is responsible for understanding the schema).
+
+    ⚠️ 那两种情况原先是**完全静默**的 (docstring 自称 "warning implicit in
+    behavior", 即没有 warning)。实测用户从 CLI 写路径时踩得到, 且两种后果都很坏:
+
+    - **key 拼错** (`--set llm.modle=x`, 真的 key 是 `model`) → 静默新建一个
+      `modle`, 真 `model` 保持旧值 ⇒ **配置看起来设了, 实际没生效**, 无任何提示
+    - **中间不是 dict** (`{"cfg": "a-string-value"}` 上写 `cfg.model=x`) → 那个
+      **原值被静默丢弃**, 变成 `{"model": "x"}` —— 这是数据丢失
+
+    行为**不改** (pavoz 是通用编排库, 不该猜用户的 state schema —— 首次注入一个
+    全新路径本就是合法用法), 只把"隐式"变成"可见": 覆盖非 dict 是 WARNING
+    (几乎总是写错且丢数据), 新建路径是 DEBUG (首次注入的常态, 不该刷屏)。
     """
     parts = path.split(".")
     cur = d
-    for p in parts[:-1]:
-        if p not in cur or not isinstance(cur[p], dict):
+    for i, p in enumerate(parts[:-1]):
+        if p in cur and not isinstance(cur[p], dict):
+            _logger.warning(
+                "state 路径 '%s': %s 处的现有值是 %s 而不是 dict, 已覆盖为 {} "
+                "(原值丢失) —— 多半是路径写错, 或该 key 本就不是嵌套结构",
+                path, ".".join(parts[: i + 1]), type(cur[p]).__name__,
+            )
+            cur[p] = {}
+        elif p not in cur:
+            _logger.debug(
+                "state 路径 '%s': 中间层 %s 不存在, 已创建", path,
+                ".".join(parts[: i + 1]),
+            )
             cur[p] = {}
         cur = cur[p]
-    cur[parts[-1]] = value
+    leaf = parts[-1]
+    if leaf not in cur:
+        # 叶子新建: 往**已有**结构里加新配置项是合法常态 (`llm.temp` 首次加上),
+        # 首次注入也合法 ⇒ 只能是 DEBUG。但它是最常见的用户错误所在 ——
+        # `--set llm.modle=x` 而真 key 是 `model` 时, 只有开 DEBUG 才看得见。
+        # 上一版漏了这一层: 中间层新建有日志, 叶子新建没有, 而用户拼错的正是叶子。
+        _logger.debug(
+            "state 路径 '%s': 叶子 key '%s' 不在 %s 里, 已创建 (若这是改已有配置, "
+            "多半是 key 拼错了 —— 真 key 仍在, 本次设置不生效)",
+            path, leaf, ".".join(parts[:-1]) or "<顶层>",
+        )
+    cur[leaf] = value
 
 
 def _deep_merge(into: dict, src: dict) -> None:
