@@ -451,7 +451,32 @@ class Runtime:
         # 无静态父的循环体) 只经路由触发, 不入 topo auto 推进集; 回路头 (有静态父)
         # 参与 topo 初始触发. 无条件边图: auto_order == order, 行为与 0.5.4 一致.
         cond_edges = dag.conditional_edges
-        auto_order = [n for n in order if n not in dag.route_only_targets()]
+        _route_only = dag.route_only_targets()
+        auto_order = [n for n in order if n not in _route_only]
+        # 每个 stage 的**闸门前置**: 它静态上游闭包里那些 route-only 节点.
+        #
+        # ⚠️ `_next_auto` 从表头扫第一个"没 done"的, **完全不看静态依赖**。无环图靠
+        # 拓扑序兜住 (上游没 done 时下游不会是第一个); 一旦 route-only 节点被从
+        # auto_order 剔除, 它的静态下游就**失去位置约束** → 跑到自己的闸门之前去。
+        # 实测 (2026-10-16): `s_a → s_b → s_gate{go→s_c, end→s_fin}`, `s_c → s_d`,
+        # router 选 end 时执行序是 `s_a s_b s_d s_gate s_fin` —— **s_d 在它的闸门
+        # s_gate 之前就跑了**, s_c 一次没跑, s_d 读到的上游值是"从未执行"的默认,
+        # 而 run 报 `status=done`、无异常无日志。更糟的是 `cp.state == 活跑`, 所以
+        # 一致性类的不可变测试也抓不到它 (静默错的**最终形态**)。
+        #
+        # 为什么是"闸门检查"而不是把下游踢出 auto_order: 踢出去是**永久**的, 而
+        # 下游在路由目标真到达后**应该**被 auto 推进 (实测踩过: 那样 go 分支下 s_d
+        # 永远不跑)。按闸门状态判, 才是"上游 route-only 跑完就放行"。
+        _gated_by: dict[str, frozenset[str]] = {}
+        for _n in order:
+            _anc: set[str] = set()
+            _stack = list(dag.stages[_n].depends_on)
+            while _stack:
+                _x = _stack.pop()
+                if _x not in _anc:
+                    _anc.add(_x)
+                    _stack.extend(dag.stages[_x].depends_on)
+            _gated_by[_n] = frozenset(_anc & _route_only)
         visits: dict[str, int] = {}  # stage 执行次数 (含 resume 历史; 循环重入累加)
         for n in done_stages:
             visits[n] = visits.get(n, 0) + 1
@@ -474,6 +499,10 @@ class Runtime:
             for n in auto_order:
                 if n in done_stages and n not in reset_pending:
                     continue  # done 且不在重入重跑集 → 真正完成过, 跳过
+                # 闸门未过: 静态上游闭包里还有 route-only 节点没跑 ⇒ 这个 stage
+                # 在图上只能被路由拉进来, 不能由 topo 推进抢先执行 (见 _gated_by)
+                if any(d not in done_stages for d in _gated_by.get(n, ())):
+                    continue
                 return n
             return None
 
