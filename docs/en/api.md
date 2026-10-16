@@ -258,7 +258,17 @@ ctx.on_event: Callable[[str, dict], None] | None                   # this run's 
 - ⚠️ This section used to name a `StateValidationError` that **does not exist in
   the code** (the two builtins above are what actually get raised). `except
   StateValidationError` against the old docs is an ImportError
-- Write path: stage `return dict` → shallow merge
+- Write path: stage `return dict` → **shallow merge**; a nested dict is
+  **replaced wholesale, not deep-merged**: if s_a writes
+  `{"cfg": {"model": "m1", "temp": 0.1}}` and the next stage returns
+  `{"cfg": {"temp": 0.9}}`, then `cfg` becomes `{"temp": 0.9}` and **`model` is
+  gone** (measured: the downstream `cfg["model"]` raises `KeyError` and the run
+  fails). To change one leaf, return the **whole** `cfg`, or lift the leaf to a
+  top-level key
+- ⚠️ This differs from override semantics: `--set` / `--set-file` / `--overrides` /
+  `fork_run(overrides=)` go through `apply_overrides` → **deep merge** (only the
+  patched leaf is replaced, siblings survive). Stage returns are shallow, injected
+  overrides are deep — don't carry reasoning from one path to the other
 - Conflict: a delta key already exists in state and its producer is **not** a transitive upstream of the current stage → `StateConflictError` (parallel-producer conflict)
 - Chained overwrite: the producer is a transitive upstream → allowed (v0.1.1)
 

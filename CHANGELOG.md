@@ -239,6 +239,25 @@
 
 ### Tests
 
+- **两套合并语义并排写清 + 各自钉住**。同一个系统里有两个 merge, 语义**相反**,
+  文档各提了一句却没并排, 于是容易互相类推:
+  - stage `return dict` → `merge_state` → **shallow**, 嵌套 dict **整体替换**。
+    实测: s_a 写 `{"cfg": {"model": "m1", "temp": 0.1}}`, s_b 返回
+    `{"cfg": {"temp": 0.9}}` → `cfg` 变成 `{"temp": 0.9}`, `model` 没了 → 下游读
+    `cfg["model"]` 直接 `KeyError`, run 报 failed, **全程无警告**。
+  - `--set` / `--set-file` / `--overrides` / `fork_run(overrides=)` →
+    `apply_overrides` → **deep**, 只打 patch leaf, 兄弟键保留 (v0.9 fix)。
+
+  两边的行为都没错 (各自都有文档), 但"stage 返回是浅、注入值是深"这件事此前
+  只能靠读者自己把两段拼起来。现 cn/en api.md 并排写明 + 给出两种正确写法,
+  `tests/test_merge_semantics.py` 把两侧各钉一遍, 含一条"两条路径若变成同一语义
+  就转红"的守卫 —— 任何一侧改动都是破坏性行为变更, 不该在无人察觉时发生。
+  变异验证: 把 `merge_state` 改成深合并 → 红 4 例。
+
+  (本轮探针本身没找到缺陷: "resume ≡ 一次跑完"在四种形状下都成立, 包括链式
+  覆盖与条件边循环; 中途我一度以为踩到了 bug, 查下来是我的试例自己违反了既有
+  契约 —— 同 key 二次写要先过单 producer 契约, 才轮得到合并语义。)
+
 - **两条不变式从一次性探针升级成每次都验** (`tests/test_invariant_checks.py`):
   ① **Checkpoint 字段往返必须穷尽** —— v0.8 起 state 不落盘, 其余字段全靠
   `to_dict`/`from_dict` 往返; 新增字段忘了写进 `to_dict` ⇒ reload 时**静默**用

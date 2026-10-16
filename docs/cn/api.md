@@ -226,7 +226,14 @@ ctx.on_event: Callable[[str, dict], None] | None                   # 本 run 的
   `--set-file` / `--overrides` 走同一条路
 - ⚠️ 本节早前写的 `StateValidationError` **在代码里不存在** (实际是上面两个内置
   异常)。照旧文档写 `except StateValidationError` 会 ImportError
-- 写路径: stage `return dict` → shallow merge
+- 写路径: stage `return dict` → **shallow merge**, 嵌套 dict **整体替换不深合并**:
+  s_a 写 `{"cfg": {"model": "m1", "temp": 0.1}}`, 下一个 stage 返回
+  `{"cfg": {"temp": 0.9}}` → state 里 `cfg` 变成 `{"temp": 0.9}`, **`model` 没了**
+  (实测: 下游读 `cfg["model"]` 直接 `KeyError`, run 报 failed)。想改一个叶子就把
+  **整个 cfg** 返回, 或把叶子提成顶层 key
+- ⚠️ 与 overrides 的语义**不同**: `--set` / `--set-file` / `--overrides` /
+  `fork_run(overrides=)` 走 `apply_overrides` → **深合并** (只打 patch leaf, 兄弟键
+  保留)。stage 返回值是浅、注入值是深 —— 两条路径别互相类推
 - 冲突: delta key 已存在于 state 且 producer **不是**当前 stage 的传递上游
   → `StateConflictError` (平行 producer 冲突)
 - 链式覆盖: producer 是传递上游 → 合法 (v0.1.1)
