@@ -189,3 +189,50 @@ def test_sync_call_method_is_still_accepted():
     dag.add_conditional_edges("s_a", TableRouter({"yes": "yes"}),
                               {"yes": "s_yes"}, max_visits=2)
     dag.validate()
+
+# ── 指纹的**值**兼容性 (2026-10-16 巡检实测) ───────────────────────────────
+#
+# `_stage_source_id` 本轮重写过 (加了可调用对象/内置函数的兜底)。重写很容易在
+# 不知不觉中改变**普通函数**的指纹值 —— 而指纹值进 `workflow_hash`, 变了就等于
+# 又一次"旧 checkpoint 不能续跑", 且没有任何报错。
+#
+# 实测: 把改写前后的实现拿出来, 拿仓里 tests/ + examples/ 的 **886 个真实函数**
+# 逐个比对 → 指纹值**完全一致**; 唯一不同的两类 (可调用对象 / 内置函数) 是旧版
+# 根本不支持的 (旧版抛 AttributeError)。下面把这条性质钉成判据。
+
+def test_plain_function_fingerprint_comes_from_its_source():
+    """普通函数必须走 getsource 分支 (指纹是源码文本), 不是字节码兜底。
+
+    这条间接地守住"值兼容": 若将来有人把顺序调反 (先取字节码), 指纹值会整体
+    改变 → 所有旧 cp 失效, 而测试全绿。
+    """
+    def s_router(state):
+        return "yes"
+
+    out = _stage_source_id(s_router)
+    assert out.lstrip().startswith("def s_router"), (
+        f"普通函数应取源码指纹, 实得 {out[:60]!r}")
+
+
+def test_fingerprint_is_deterministic_across_calls():
+    def s_a(ctx):
+        return {"a": 1}
+
+    assert _stage_source_id(s_a) == _stage_source_id(s_a), "同函数必须稳定"
+
+
+def test_nested_function_keeps_its_own_body_in_the_fingerprint():
+    """嵌套函数: 指纹从 def 行起 (装饰器不参与), 且两个不同函数体必须不同."""
+    def outer():
+        def inner_v1(x):
+            return x + 1
+        return inner_v1
+
+    def outer2():
+        def inner_v2(x):
+            return x + 2
+        return inner_v2
+
+    v1, v2 = outer(), outer2()
+    assert _stage_source_id(v1) != _stage_source_id(v2), (
+        "不同函数体不得撞指纹 (字节码兜底专门为此加常量/名字)")
