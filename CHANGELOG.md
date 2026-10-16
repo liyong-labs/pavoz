@@ -477,6 +477,24 @@
 
 ### Tests
 
+- **`FileStorage` 路径安全补上 symlink 逃逸这一支**。2026-10 复审时用 12 种穿越
+  向量 × 3 个操作 + symlink 实际攻了一遍 `_path` (`../` / 中间目录跳出 / `./`
+  前缀 / NUL / 大写段 / Unicode 段 / root 内 symlink 指向外部), **没有一个突破** ——
+  受害文件原封不动, symlink 逃逸被拦。防护完好。
+
+  但**测试没钉住其中最关键的一支**: 现有那批用例全用字面 `..` 穿越, 只能证明
+  "路径里有 `..` 时被拒"。把 `_path` 里的 `os.path.realpath` 换成 `os.path.abspath`
+  (纯词法拼接, 不解析 symlink), **上面每一个照样全绿** —— 而 symlink 正是
+  "纯字符串前缀检查"与 "realpath containment" 的唯一分水岭。新增的 2 个 symlink
+  用例正是这个分水岭: 变异验证下只有它们转红 (其余 32 个全绿)。
+
+  同时补: 多段穿越的几种拼法 (证明大写/Unicode 段是被**第二道**挡的, 而非第一道
+  —— 字符集放行那两类是有意的); NUL 字节明确归第一道; 以及一条**反向约束** ——
+  长得像穿越但实际落在 root 内的 key (`..` → `root/...json`、Unicode key、
+  `UPPER/../outside/secret` 归一化后仍在 root 内) 必须**放行**, 把"边界是 realpath
+  containment 而不是'字符串里有 `..`'"钉死, 免得日后有人"顺手收紧"字符集而误伤
+  CheckpointStore 的日常 key。
+
 - **形状矩阵: 空 delta × 环图 × 重叠 key × fork 点的交叉** (新增, `tests/
   test_shape_matrix.py`)。现有测试各钉一个维度, 但**交叉**没人钉 —— 而 bug 恰恰
   躲在交叉里。27 个形状覆盖三条不变式: lockstep (每个 stage 的 done 次数 ==
