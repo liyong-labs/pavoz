@@ -18,7 +18,7 @@ import os
 
 import pytest
 
-from pavoz import FileStorage
+from pavoz import DAG, CheckpointStore, FileStorage, Runtime
 
 
 @pytest.fixture
@@ -110,3 +110,49 @@ def test_illegal_character_still_rejected(tmp_path):
     fs = FileStorage(str(root))
     with pytest.raises(ValueError, match="非法 storage key"):
         fs.get("runs/t1/evil key")
+
+
+# ── 字符集过滤的**真实**边界 (2026-10-16 巡检) ──────────────────────────────
+#
+# `_path` 的注释曾写 "key 只允许 [a-z0-9_/.-]", 读起来像白名单; 实际
+# `str.isalnum()` 对大写与全部 Unicode 字母/数字都成立。安全上无害 (真正的边界
+# 是 realpath containment), 但注释误导。下面把**实测到的**边界钉住, 免得注释
+# 再漂回去, 也免得有人以为 Unicode key 会被拒而绕路。
+
+@pytest.mark.parametrize("key", [
+    "plain", "UPPER", "MixedCase99",
+    "任务",                      # 中文
+    "café",                 # 带重音拉丁
+    "٣",                      # 阿拉伯-印度数字
+    "with-dash", "with_underscore", "with/slash",
+])
+def test_charset_filter_accepts_unicode_and_uppercase(key, tmp_path):
+    """字符集过滤**不是**白名单 —— 大写与 Unicode 都放行 (实测边界)。"""
+    fs = FileStorage(tmp_path)
+    fs.put(key, {"v": 1})
+    assert fs.get(key) == {"v": 1}
+
+
+@pytest.mark.parametrize("key", [
+    "with space", "tab\tkey", "C:\\windows", "star*", "quote'key",
+])
+def test_charset_filter_still_rejects_obvious_non_keys(key, tmp_path):
+    """它确实挡什么: 空格 / 控制符 / 盘符 / 通配符 / 引号。"""
+    fs = FileStorage(tmp_path)
+    with pytest.raises(ValueError, match="非法 storage key"):
+        fs.put(key, {"v": 1})
+
+
+async def test_task_id_is_the_place_that_enforces_ascii_only(tmp_path):
+    """task_id 侧才是 ASCII-only (它把键当**身份**用), storage key 侧不是 ——
+    两处口径不同是有意的, 别把它们混成一处。pytest 走 asyncio auto 模式。"""
+    dag = DAG("ascii_task_id")
+
+    @dag.stage()
+    async def s_a(ctx):
+        return {"a": 1}
+
+    rt = Runtime(checkpoint_store=CheckpointStore(FileStorage(tmp_path)))
+    with pytest.raises(ValueError, match="非法字符"):
+        await rt.run(dag, "任务-1")            # task_id 收 Unicode → 拒
+    assert (await rt.run(dag, "task-1")).status == "done"

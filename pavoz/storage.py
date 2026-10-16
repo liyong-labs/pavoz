@@ -53,7 +53,13 @@ class FileStorage(StorageBackend):
         os.makedirs(self.root, exist_ok=True)
 
     def _path(self, key: str) -> str:
-        # key 只允许 [a-z0-9_/.-] — 第一道字符集过滤
+        # 第一道: 粗筛, 挡掉明显不是 key 的东西 (空格 / 控制符 / 盘符等)。
+        # ⚠️ 别把它当白名单读 —— `str.isalnum()` 对**大写**和**全部 Unicode
+        # 字母/数字**都成立, 故 "UPPER" / "任务" / "café" / "٣" 一律放行 (实测)。
+        # 本文件原先的注释写的是 "[a-z0-9_/.-]", 与实现不符, 会让读注释的人以为
+        # 这道是白名单 —— 而真正的安全边界是下面的 realpath containment。
+        # task_id 那侧的 ASCII-only 是另一处校验 (`runtime._validate_task_id`),
+        # 那里才需要显式限定 (因为它把键直接交给用户当身份用)。
         if not all(c.isalnum() or c in "_-/." for c in key):
             raise ValueError(f"非法 storage key: {key!r}")
         # 第二道必须做: '.' 在允许集内, 故 '..' 段可穿过字符集过滤。字符集过滤
