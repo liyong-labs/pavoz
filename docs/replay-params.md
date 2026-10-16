@@ -75,7 +75,40 @@ pavoz fork-run dag.py --task-id X --stage s_b --set llm.model=x  # ✅
 | `hello` | `str` | default passthrough |
 | `2026-09-09` | `str` | ISO dates stay str |
 
-无逃生门. 类型不对时用 `--dry-run` 看解析结果再执行。
+★ **下面这些是静默有损的** —— 推断用 `int()` / `float()` 先试, 它们接受的写法比
+JSON 多 (JSON 不允许前导零、下划线、正号), 所以这些会被**改写**:
+
+| `--set` 写的 | 实际落进 state 的 | 说明 |
+|---|---|---|
+| `version=1.10` | `1.1` | 尾零没了 (版本号/精度敏感的串别这么写) |
+| `code=007` | `7` | 前导零没了 (编号/邮编/电话) |
+| `n=1_000` | `1000` | Python 式下划线 |
+| `n=+5` | `5` | 带正号 |
+| `n= 5 ` | `5` | 首尾空格被 `int()` 吃掉 |
+| `x=1e3` | `1000.0` | float 不是 int (要整数写 `1000`) |
+
+非有限值 (`x=NaN` / `x=1.8e309`) 会被 `deep_validate_state` 拒成 `ValueError` ——
+这一类是响的, 不在上面的静默表里。
+
+### 想要字符串: 用 `--set-file` 写 JSON (这就是逃生门)
+
+`--set` 的类型推断没有开关 (library 层有 `infer_types=False`, CLI 不暴露), 但
+**同一个命令的 `--set-file` 就是出路** —— JSON 里写了引号就是字符串, 不过推断:
+
+```bash
+# ✗ 静默变成 1.1 / 7
+pavoz fork-run d.py --task-id X --stage s_b --set version=1.10 --set code=007
+
+# ✓ 保持字符串
+echo '{"version": "1.10", "code": "007"}' > keep.json
+pavoz fork-run d.py --task-id X --stage s_b --set-file keep.json
+```
+
+两种来源不能混用同一个 key —— 优先级 `--set > --set-file > --overrides > --input`,
+要保类型就用 `--set-file` 把所有值一次性写全。
+
+`--dry-run` 只**显示**推断结果, 不给你改类型的方法 —— 它适合"确认一下这次要改什么",
+不适合"把类型改回去"。
 
 ## CLI storage (任意 StorageBackend)
 

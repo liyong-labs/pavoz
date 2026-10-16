@@ -463,3 +463,81 @@ class TestNestedDotKeyIsALiteralKey:
         """嵌套的字面 key 带连字符也没问题 —— 它不会被展开, 不必受标识符限制。"""
         from pavoz.state import _validate_dict_keys
         _validate_dict_keys({"cfg": {"my-key.v2": 1}})
+
+
+# ── 文档表格 ↔ 实际行为 的双向绑定 (2026-10-17) ───────────────────────────
+#
+# `docs/replay-params.md` 的 "Type inference (auto)" 表列了哪些写法会被改写,
+# 之前那张表**只列了安全的那些** (int/float/bool/None/JSON/日期), 于是一个用户
+# 只会照着它判断"我的值安不安全" —— 而真正危险的写法 (`1.10`→`1.1`、`007`→`7`)
+# 一个都没列。文档还写着"无逃生门", 并建议用 `--dry-run` 看解析结果: 可 `--dry-run`
+# 只**显示**结果, 不给你把类型改回去的办法。
+#
+# 实际逃生门是**同一个命令的 `--set-file`**: JSON 里写了引号就是字符串, 不过推断。
+# (library 层另有 `infer_types=False`, 但 CLI 不暴露这个开关。)
+#
+# 下面两条用例把文档表格的每一行钉住: 将来谁改了推断逻辑, 表格会**被迫**跟着更新,
+# 而不是悄悄过期 —— 文档与代码各写一遍却互不校验, 就等于没写。
+
+
+class TestDocumentedTypeInferenceTable:
+    """逐行对应 docs/replay-params.md 的"静默有损"表。"""
+
+    @pytest.mark.parametrize("raw,expected", [
+        ("1.10", 1.1),          # 尾零没了
+        ("007", 7),             # 前导零没了 (JSON 本来就不允许前导零)
+        ("1_000", 1000),        # Python 式下划线
+        ("+5", 5),              # 带正号
+        (" 5 ", 5),             # 首尾空格被 int() 吃掉
+        ("1e3", 1000.0),        # 科学计数法 → float 而不是 int
+    ])
+    def test_lossy_rewrites_behave_as_documented(self, raw, expected):
+        assert _infer_type(raw) == expected
+        assert type(_infer_type(raw)) is type(expected)
+
+    def test_documented_lossy_cases_really_lose_through_the_cli_path(self):
+        """走真实路径 (`--set K=V` → parse_set_args), 不只测内部函数。"""
+        from pavoz.state import parse_set_args
+        assert parse_set_args(["version=1.10", "code=007"]) == {
+            "version": 1.1, "code": 7}
+
+    def test_escape_hatch_set_file_keeps_the_string(self, tmp_path):
+        """★ 文档承诺的逃生门必须真的能用: `--set-file` 的 JSON 字符串原样保留。
+
+        这条是"文档说有路"与"文档说有路"之间的区别 —— 前者要能验。
+        """
+        import json
+
+        from pavoz.state import parse_set_file
+        f = tmp_path / "keep.json"
+        f.write_text(json.dumps({"version": "1.10", "code": "007"}), encoding="utf-8")
+        parsed = parse_set_file(str(f))
+        assert parsed == {"version": "1.10", "code": "007"}, (
+            f"`--set-file` 是文档给的唯一逃生门, 它若也开始推断类型, 文档就彻底没出路了; "
+            f"实得 {parsed}")
+        assert all(isinstance(v, str) for v in parsed.values())
+
+    def test_json_nan_literal_rejected_at_parse_layer(self, tmp_path):
+        """JSON 的 `NaN` 字面量在**解析层**就被拒 (`parse_constant`), 走不到推断。"""
+        from pavoz.state import parse_set_file
+        f = tmp_path / "nf.json"
+        f.write_text('{"x": NaN}', encoding="utf-8")
+        with pytest.raises(ValueError, match="非有限"):
+            parse_set_file(str(f))
+
+    def test_yaml_nan_rejected_by_the_state_chokepoint(self, tmp_path):
+        """YAML 的 `.nan` 是**合法 YAML**, 解析层放行 —— 兜住它的是 deep_validate_state。
+
+        两层各钉一条: 别以为"JSON 那条拒了, YAML 也一样" —— YAML 分支没有
+        parse_constant, 靠的是下游 chokepoint (并行实现两份校验必然漂, 这里正是
+        只有一份的理由)。
+        """
+        pytest.importorskip("yaml")
+        from pavoz.state import parse_set_file
+        f = tmp_path / "nf.yaml"
+        f.write_text("x: .nan\n", encoding="utf-8")
+        # 报错仍然发生在 parse_set_file 里, 但**机制不同**: YAML 分支没有
+        # parse_constant, 靠的是 parse_set_file 末尾那次 deep_validate_state
+        # (同一个 chokepoint, 没有平行实现第二份 walker —— 平行实现必然漂)。
+        with pytest.raises(ValueError, match="非有限"):
+            parse_set_file(str(f))
