@@ -38,6 +38,10 @@ _MERMAID_RESERVED = frozenset({
 # 合法的 Mermaid 节点 ID: 字母/数字/下划线, 且不以数字开头。
 _SAFE_ID_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+# 会改变"行结构"的字符 —— Mermaid 一行一条语句, 文本里混进换行就会多出碎片行。
+# 这是**唯一能证明会破图**的一类字符 (见 `_mmd_text` 的说明)。
+_MMD_LINE_BREAK_RE = re.compile(r"[\r\n\t]+")
+
 
 def _safe_id(name: str) -> str:
     """Mermaid 节点 ID — 合法标识符形状, 且避开 Mermaid 保留字。
@@ -84,24 +88,53 @@ def _id_map(dag: "DAG") -> dict[str, str]:
     return out
 
 
+def _mmd_text(s: str, *, quoted: bool = False) -> str:
+    """把任意用户文本收敛成**能安全放进单行 Mermaid 语法**的片段.
+
+    存在的理由 (2026-10-17): 用户文本原先是**原样**拼进去的, 而条件边的
+    mapping key 完全不受限 —— 它就是 `route_fn` 的返回值, `add_conditional_edges`
+    对它零校验。实测 key = "line1\\nline2" 会把一条边劈成两行:
+
+        gate -.line1          ← 悬空节点声明
+    line2.-> tgt              ← 碎片
+
+    Mermaid 解析到这里直接失败 —— 不是"标签难看", 是**整张图渲染不出来**。而
+    看图的人恰恰是 debug 的人 (只有出事了才去看图), 偏偏这时候看不到。
+
+    收敛两样, 且**只**收敛这两样:
+      · 换行 / 回车 / 制表符 → 单个空格。它们是唯一能改变"行结构"的字符, 也就是
+        唯一能证明会破图的字符。
+      · 引号 —— 仅在**被双引号包住**的节点标签位 (`quoted=True`): 裸引号会提前
+        闭合标签, 后面全是垃圾。转成 Mermaid 的 `#quot;` 实体, 显示不受影响。
+
+    边标签位里的 `"` / `;` / `-->` **故意不处理**: 本地没有 Mermaid 解析器, 它们
+    究竟被当字面文本还是当语法**验不了**, 而拿验不了的假设写成"已处理"就是另一种
+    形式的假绿。那是渲染器的活, 不是这里能替它断的。
+    """
+    out = _MMD_LINE_BREAK_RE.sub(" ", s)
+    return out.replace('"', "#quot;") if quoted else out
+
+
 def to_mermaid(dag: DAG, *, direction: str = "LR") -> str:
     """DAG → Mermaid 图 (默认 LR 布局; 嵌 README / 飞书).
 
     R1 (0.5.5): 条件边渲染为带 key 标签的虚线 — 逻辑分叉/回路在图上一等可见.
 
     节点 ID 经 `_safe_id` 处理 (保留字 / 非法字符), 但**标签恒为 stage 原名** ——
-    替换只发生在 Mermaid 内部的 ID 上, 图上看到的永远是原名。
+    替换只发生在 Mermaid 内部的 ID 上, 图上看到的永远是原名 (换行/引号除外, 那两
+    类会破坏语法, 见 `_mmd_text`)。
     """
     ids = _id_map(dag)
-    lines = [f"graph {direction}"]
+    # direction 也是原样拼进首行的 (且无校验) —— 同一条通路, 一起收敛
+    lines = [f"graph {_mmd_text(direction)}"]
     for name in dag.topo_order():
-        lines.append(f'    {ids[name]}["{name}"]')
+        lines.append(f'    {ids[name]}["{_mmd_text(name, quoted=True)}"]')
     for name in dag.stages:
         for dep in dag.stages[name].depends_on:
             lines.append(f"    {ids[dep]} --> {ids[name]}")
     for fname, edge in dag.conditional_edges.items():
         for key, tgt in sorted(edge.mapping.items()):
-            lines.append(f'    {ids[fname]} -.{key}.-> {ids[tgt]}')
+            lines.append(f'    {ids[fname]} -.{_mmd_text(key)}.-> {ids[tgt]}')
     return "\n".join(lines) + "\n"
 
 

@@ -15,6 +15,8 @@ click/flowchart/direction/classDef/linkStyle` 全都造得出来, 它们是 Merm
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from pavoz import DAG, to_mermaid, to_graph_json
@@ -142,3 +144,103 @@ def test_loop_graph_edges_use_the_same_id_mapping():
     # Mermaid 的保留字限制, 保持 stage 原名才是稳定标识
     g = to_graph_json(dag)
     assert {n["id"] for n in g["nodes"]} == set(dag.stages)
+
+
+# ── Mermaid 文本位未转义: 一个换行键让整张图渲染不出来 (2026-10-17) ─────────
+#
+# `to_mermaid` 把用户文本**原样**放进两处语法位:
+#   节点标签 `id["<stage 名>"]`  与  边标签 `id -.<mapping key>.-> id`
+#
+# stage 名来自 `fn.__name__` (天然是标识符), 但**条件边的 mapping key 是完全不受限
+# 的用户字符串** —— 它就是 `route_fn` 的返回值。`add_conditional_edges` 对 key 零校验。
+#
+# 实测 (key = "line1\nline2"):
+#
+#     graph LR
+#         gate["gate"]
+#         tgt["tgt"]
+#         gate -.line1          ← 一条边被劈成两行, 这行成了悬空节点声明
+#     line2.-> tgt              ← 碎片
+#
+# 后果不是"标签难看", 是**整张图渲染不出来**: Mermaid 解析到 `gate -.line1`
+# (一个没有去向的节点) 与 `line2.-> tgt` (一个不存在的源) 直接失败。key 越界的
+# 全部用户都在 debug 路径上 (只有出问题才去看图), 偏偏这时候看不到图。
+#
+# 本地没有 Mermaid 解析器 (模块 docstring 早已承认保留字清单是尽力而为), 所以
+# 判据不写"渲染得出来"这种我验不了的断言, 而写**能机器验的那条**: 输出里每一行
+# 都必须是一条**完整语句**, 不能是碎片。
+
+_MMD_STATEMENT = re.compile(
+    r'^(?:graph\s+\S+'          # 首行
+    r'|\w+\["[^"]*"\]'          # 节点 (标签里不得再有裸引号)
+    r'|\w+\s*-->\s*\w+'        # 静态边
+    r'|\w+\s*-\..+\.->\s*\w+)$'  # 条件边 (标签在两 . 之间; ID 与 `-.` 之间也有空格!)
+)
+
+
+# ⚠️ 只收**能证明会破结构**的字符: 换行/回车/制表符 (把一条语句劈成两行)。
+# 边标签里的 `"` / `;` / `-->` 我**没有**收进判据 —— 本地没有 Mermaid 解析器,
+# 它们究竟是被当字面文本还是被当语法, 验不了; 拿验不了的断言当判据, 就是另一
+# 种形式的假绿 (它会一直绿, 而不是因为对)。那部分留给"真在浏览器里渲染过"的
+# 反馈, 不在这里假装覆盖。
+@pytest.mark.parametrize("key", [
+    "line1\nline2",          # 实测破图的那一个
+    "a\r\nb",
+    "a\tb",
+    "\n",
+    "多行\n边\n标签",
+])
+def test_conditional_edge_key_never_splits_a_statement(key):
+    """★ 一条边在任何 key 下都必须**恰好占一行**。"""
+    dag = DAG("viz_nl")
+
+    @dag.stage()
+    async def gate(ctx):
+        return {}
+
+    @dag.stage()
+    async def tgt(ctx):
+        return {}
+
+    dag.add_conditional_edges("gate", lambda s: key, {"ok": "tgt", key: "tgt"})
+    out = to_mermaid(dag)
+
+    bad = [ln for ln in out.splitlines()
+           if ln.strip() and not _MMD_STATEMENT.match(ln.strip())]
+    assert not bad, (
+        f"key={key!r} 产生了非语句行 {bad} —— 整张图会渲染失败。"
+        f"完整输出:\n{out}")
+
+
+@pytest.mark.parametrize("name", ["s_a\nb", 'q"q', "x\ty"])
+def test_stage_name_never_splits_a_statement(name):
+    """节点标签位同理 —— `__name__` 可赋值, 不是天然安全。"""
+    dag = DAG("viz_nl2")
+
+    @dag.stage()
+    async def s_a(ctx):
+        return {}
+
+    dag._stages[name] = dag._stages.pop("s_a")
+    dag._definition_order = [name]
+    out = to_mermaid(dag)
+    bad = [ln for ln in out.splitlines()
+           if ln.strip() and not _MMD_STATEMENT.match(ln.strip())]
+    assert not bad, f"name={name!r} 产生了非语句行 {bad}\n{out}"
+
+
+def test_direction_argument_cannot_inject_a_new_line():
+    """`direction` 也是原样拼进首行的 (且无校验) —— 同一条通路。"""
+    dag = DAG("viz_dir")
+
+    @dag.stage()
+    async def s_a(ctx):
+        return {}
+
+    out = to_mermaid(dag, direction="LR\n    evil-->x")
+    # 判据是"**没有多造出一条语句**"而不是逐行套形状正则: 首行 `graph <方向>`
+    # 的形状本身随方向参数变 (LR/TD/BT/RL), 而要证明的只有一件事 —— 注入的换行
+    # 没有把一条语句劈成两条。数非空行: 注入前后都应是 1(graph) + 1(节点)。
+    lines = [ln for ln in out.splitlines() if ln.strip()]
+    assert len(lines) == 2, (
+        f"direction 里的换行造出了额外语句 (行数 {len(lines)}):\n{out}")
