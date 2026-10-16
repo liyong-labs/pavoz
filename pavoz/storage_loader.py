@@ -68,6 +68,16 @@ def load_storage(spec: str, **kwargs: Any) -> StorageBackend:
             f"storage {spec!r} 实例化失败: {e}. "
             f"检查 kwargs={list(kwargs.keys())} 是否匹配 {class_name}.__init__."
         ) from e
+    except Exception as e:
+        # 真实 adapter 的 __init__ 基本都要连服务 (Redis / PG / MinIO / S3), 连不上
+        # 时抛的是**驱动自己的**异常。此前只有 TypeError 被包住, 于是最常见的那类
+        # 失败原样逃出去: 用户看到一句"无法连接 redis://…", 既不知道是哪个 storage
+        # spec, 也不知道传了哪些 kwargs (实测 2026-10-16)。原始异常用 `from e`
+        # 链住 —— 类型与 traceback 一个不少, 只是补上了上下文。
+        raise PavozStorageError(
+            f"storage {spec!r} 实例化失败 ({type(e).__name__}): {e}. "
+            f"已传 kwargs={list(kwargs.keys())}; 检查该 adapter 的连接配置 / 凭据 / 依赖."
+        ) from e
     if not isinstance(instance, StorageBackend):
         raise PavozStorageError(
             f"storage {spec!r} 实例不是 StorageBackend (类型 {type(instance).__name__})"

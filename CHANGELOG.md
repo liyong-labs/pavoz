@@ -19,6 +19,17 @@
 
 ### Fixed
 
+- **`load_storage` 只包住 `TypeError`, adapter 连不上时报的是裸驱动异常**:
+  四条失败路径里 (格式错 / 模块不可用 / 类不存在 / 实例化) 只有实例化那条按
+  `TypeError` 包, 而真实 adapter 的 `__init__` 基本都要连服务 (Redis / PG / MinIO /
+  S3) —— 连不上时抛的是驱动自己的异常, 于是**最常见的那类失败原样逃出去**: 用户
+  看到一句"无法连接 redis://…", 既不知道是哪个 storage spec (它来自环境变量
+  `PAVOZ_STORAGE_SPEC`), 也不知道传了哪些 kwargs, 而这两样正是排查的第一现场。
+  实测 (修复前): `load_storage("my_adapter:RedisStore", host=…, port=…)` → 裸
+  `ConnectionRefusedError`。现 `except Exception` 补一条 (排在 TypeError 之后, 不
+  抢它的 kwargs 提示), 消息带 spec + kwargs + 原异常类型, 并用 `from e` 链住
+  原始异常 —— 类型与 traceback 一个不少, 只补上下文。
+
 - **`diff_runs` 在循环图上给不出"多跑了多少"的信号 (方向还反了)**: `output_diff` /
   `state_diff` 走的都是 `stage_deltas` —— **last-write 视图** (每个 stage 只取最后
   一次执行的 delta)。实测: 两个**终态逐字节相同**的 run (循环 stage 跑 3 轮 vs
