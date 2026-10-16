@@ -19,6 +19,16 @@
 
 ### Fixed
 
+- **扩展面的错误语义矩阵补齐回归防线** (`ctx.call` → 注入的 caller)。实测四行全部
+  正确 (RetryableError 重试 3 次且 `error_category` 透传 / StageError 不重试 /
+  自定义异常带 `.category` 也透传 / 裸异常 category=None), 但**零测试覆盖** ——
+  而这个仓已经在这块真实翻过一次车 (泛型 `except Exception` 把
+  `error_category` 硬编码成 None, ai@home id=2925), 那次是被人发现的, 不是被测试
+  拦下的。现 `tests/test_caller_error_semantics.py` 钉住整张矩阵 + 重试时
+  `CallMeta.attempt` 递增 + `ctx.cancelled()` 接入 + `CallMeta` 四字段与 params
+  原样透传。**判据有效性已验**: 把 `getattr(e, "category", None)` 改回硬编码
+  `None` (复现那次真实回归) 后新用例红 3 条, `git checkout` 恢复后全绿。
+
 - **`EnginePolicy` 不校验字段, nonsense 取值变成运行期怪现象**: frozen dataclass
   此前接受任意取值, 而所有调用点一律写 `if policy.x` —— 于是:
   - `stage_alive_interval` 传负数 → `asyncio.sleep(负数)` 立即返回 → 心跳变成无节流
