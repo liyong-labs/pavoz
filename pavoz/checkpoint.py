@@ -340,6 +340,20 @@ class Checkpoint:
         """
         rebuilt = dict(self.initial_state)
         producers = {k: "<init>" for k in self.initial_state}
+        # fork_overrides 的落点 (2026-10-16): 必须是"**跨过 fork 截断点的那一刻**",
+        # 不是重建的最后。此前一律最后 merge, 与 runtime 的顺序相反 ——
+        # runtime 里 overrides 是**注入给 from_stage 的输入**, from_stage 重跑后
+        # 可以覆盖它; 而重建最后 merge 会把刚跑出来的值又盖回 override 值。
+        # 同一把钥匙开两把锁: runtime 说 a='A', cp 说 a='A9' (tests/
+        # test_rebuild_consistency.py::test_fork_override_lost_when_rerun_
+        # stage_overwrites_it)。同理 stop_at 落在截断点之后时也该生效 ——
+        # run_stage 重放 from_stage 时此前根本看不到注入值。
+        _pending_overrides = dict(self.fork_overrides) if self.fork_overrides else None
+        # 只有**知道截断点**的 cp (fork_keep_counts 非空, 新格式) 才按边界注入。
+        # 旧 cp (fork_overrides 存在但无 kcounts) 无从判断边界 —— 那就保持
+        # "最后 merge" 的旧语义, 否则升级后老 checkpoint 的 state 会平白改写
+        # (tests/test_checkpoint_size.py::test_fork_overrides_roundtrip_and_rebuild
+        #  钉的就是这条)。
         # R1: done_stages 完成序可含重复 (循环) — 逐 visit 消费对应 delta,
         # 保证重建顺序 = 实际执行顺序 (last-write dict 在此会折叠错序)
         visit_idx: dict[str, int] = {}
@@ -352,14 +366,24 @@ class Checkpoint:
             for done in self.done_stages:  # fork cp: 每 stage 总条目数 (尾对齐用)
                 total[done] = total.get(done, 0) + 1
         for done in self.done_stages:
-            if done == stop_at:
-                break
-            deltas = self.stage_deltas_visits.get(done, [])
             occ = visit_idx.get(done, 0)  # 本 stage 第几个 done 条目 (0 起)
-            visit_idx[done] = occ + 1
             # fork cp 里"没条目"= 全部重跑 (kc=0), 不是"顺序索引" —— 这两件事以前
             # 被同一个 None 混为一谈, 正是 id=3241 的根因
             kc = kcounts.get(done, 0) if is_fork_cp else None
+            # 注入点判定必须在 stop_at 的 break **之前**: overrides 是注入给
+            # from_stage 的输入, 而"某 stage 执行前的快照" (stop_at 命中 from_stage)
+            # 恰好就是它们该出现的那个点。放在 break 之后, run_stage 重放 from_stage
+            # 就看不到注入值 (实测: 期望 C[F7], 实得 C[none])。
+            if _pending_overrides is not None and is_fork_cp \
+                    and (kc is None or occ >= kc):
+                rebuilt = apply_overrides(rebuilt, _pending_overrides)
+                for _k in _pending_overrides:
+                    producers[_k] = "<fork>"
+                _pending_overrides = None
+            if done == stop_at:
+                break
+            deltas = self.stage_deltas_visits.get(done, [])
+            visit_idx[done] = occ + 1
             if kc is not None and occ >= kc:
                 # fork 截断点后的条目: 与 visits 尾部对齐 (该 cp 重跑产生的新
                 # visit 追加在历史之后) — 顺序对齐会错配到截断前的旧 delta.
@@ -373,12 +397,14 @@ class Checkpoint:
                 rebuilt.update(delta)
                 for k in delta:
                     producers[k] = done
-        # v0.8: fork overrides 最后 merge (覆盖前序 keep 产物; producer 标 <fork>)
-        # v0.9 深合并: v0.8 浅 update 会把嵌套 dict 的兄弟键抹掉 (resume 重建
-        # 才是 stage 实际看到的 state — 与 runtime.fork_run 应用语义保持一致)
-        if stop_at is None and self.fork_overrides:
-            rebuilt = apply_overrides(rebuilt, self.fork_overrides)
-            for k in self.fork_overrides:
+        # 没走到截断点 (done 全在 keep 内 / 全部被跳过) → overrides 仍要生效,
+        # 落在最后。stop_at 提前 break 时**不**落: 那是"某 stage 执行前"的快照,
+        # 那时 overrides 还没注入。
+        if _pending_overrides is not None and stop_at is None:
+            # v0.9 深合并: 浅 update 会把嵌套 dict 的兄弟键抹掉 (resume 重建才是
+            # stage 实际看到的 state — 与 runtime.fork_run 应用语义保持一致)
+            rebuilt = apply_overrides(rebuilt, _pending_overrides)
+            for k in _pending_overrides:
                 producers[k] = "<fork>"
         return rebuilt, producers
 

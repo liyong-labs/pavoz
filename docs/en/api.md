@@ -129,6 +129,12 @@ run_id and becomes the task's latest.
 - `overrides`: top-level state-key overrides injected into `from_stage`'s pre-run
   state (deep merge — sibling keys survive). The CLI `--set` / `--set-file` flags
   go through this same entry (see [replay-params.md](../replay-params.md))
+- Overrides are **injected input, not the final value**: `from_stage` re-runs and
+  may overwrite them (the stage's own output wins). Checkpoint rebuild
+  (`cp.state`) reproduces that same order, so the persisted state and the live
+  result are always identical — the rebuild used to merge overrides **last**,
+  the opposite of the runtime order, which made `runtime` report `a='A'` while
+  the checkpoint said `a='A9'`
 - `run_id`: fork onto a specific run_id (defaults to a fresh UUID4)
 
 #### Source-drift notice (unreleased, see CHANGELOG [Unreleased])

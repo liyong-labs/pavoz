@@ -113,6 +113,10 @@ task 的 latest。
 
 - `overrides`: 顶层 state key 覆盖, 注入 `from_stage` 的执行前 state (深合并 —
   兄弟键保留)。CLI 的 `--set` / `--set-file` 走同一入口 (见 [replay-params.md](../replay-params.md))
+- overrides 是**注入输入, 不是最终值**: `from_stage` 重跑后可以覆盖它们 (产物以
+  stage 的返回为准)。checkpoint 重建 (`cp.state`) 复现同一顺序, 故落盘与活跑结果
+  恒等 —— 此前重建把 overrides 放在**最后** merge, 与 runtime 顺序相反, 造成
+  `runtime 说 a='A'` 而 `cp 说 a='A9'` 的分叉
 - `run_id`: 指定则在给定 run_id 上 fork (默认新 UUID4)
 - `from_stage` 不在该 task 的 checkpoint 记录里 → 明确报错, 不静默新建
 

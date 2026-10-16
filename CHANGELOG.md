@@ -19,6 +19,25 @@
 
 ### Fixed
 
+- **cp 重建里 `fork_overrides` 的落点与 runtime 相反 → 落盘与活跑分叉**。同一把
+  钥匙开两把锁: runtime 里 overrides 是**注入给 `from_stage` 的输入** (先注入,
+  stage 重跑后可覆盖), 而 cp 重建把它们放在**最后** merge, 于是盖掉了 from_stage
+  刚跑出来的值。实测:
+
+      fork from s_a, overrides={"a": "A9"} (s_a 自己返回 {"a": "A"})
+        活跑 state = {'a': 'A',    ...}      ← s_a 重跑后覆盖了注入值
+        cp.state   = {'a': 'A9',  ...}      ← 又被 override 盖回去了
+
+  同一根因还有第二个面: `stop_at` 命中 `from_stage` 时 (即 `run_stage` 重放
+  from_stage 的基线) 重建**根本不落** overrides, 重放拿到的是未注入的旧输入 ——
+  实测期望 `C[F7]`、实得 `C[none]`。
+  现注入点改为"**跨过 fork 截断点的那一刻**", 且判定必须在 `stop_at` 的 break
+  **之前** (from_stage 执行前的快照正是它们该出现的那个点)。**只有带
+  `fork_keep_counts` 的新格式 cp 才按边界注入**: 旧 cp 无从判断截断点, 保持
+  "最后 merge"的旧语义, 否则升级后老 checkpoint 的 state 会平白改写。
+  这是 e8cec96 之后用**不变量探针** (把"cp.state == 活跑 state"铺到 12 种形状)
+  压出来的 —— 刚提交的重建逻辑自己就是最该被怀疑的代码。
+
 - **链式 fork 后 checkpoint 重建取到最老 visit 而非最近一次** (ai@home id=3241,
   2026-10-15 报告 / 2026-10-16 本地修复)。**数据完整性问题**: fork_run 当场返回的
   值是对的, 但此后任何读该 cp 的路径 (resume / load / diff_runs /
