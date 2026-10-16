@@ -183,6 +183,8 @@ def diff_runs(cp_a: Checkpoint, cp_b: Checkpoint) -> dict:
     输入: 同一 task (或任意) 两个 run 的 checkpoint. 输出全 JSON-serializable
     (R5 闭合), 不做 AI 摘要 — 消费者 (AI agent / 人) 自行解读:
       - workflow_hash_changed: 结构指纹是否不同 (不同则 stage 语义可能不可比)
+      - dag_names: [a, b] 两个 run 的 dag 名 (改名是 hash 变化最常见的唯一原因,
+        而改名恰恰是最该被判成"这不是真差异"的那种 — 见下)
       - stages: stage 名 → {status: [a, b], input_hash_changed, visits, output_diff}
         (output_diff = 各 stage return delta 的 path 级差异, 复用 _state_diff;
          visits = 两 run 里该 stage 的执行轮次, 循环图上靠它才看得见"多跑了多少")
@@ -191,6 +193,13 @@ def diff_runs(cp_a: Checkpoint, cp_b: Checkpoint) -> dict:
     ⚠️ `output_diff` 用的是 `stage_deltas` —— **last-write 视图** (每个 stage 只取
     最后一次执行的 delta)。循环图上 (R1) 它既漏掉中间轮次, 又会把"终态相同但轮数
     不同"报成有差异。逐轮全貌在 `cp.stage_deltas_visits`, 要自己比就取那个字段。
+
+    ⚠️ `workflow_hash_changed: true` **不说明差在哪** —— hash 是一个整串, 拆不出
+    "是哪个 stage 的哪个属性变了"。这是有意的边界: 该字段的作用是叫消费者
+    "别拿这两份比", 而不是替它解释。**但改名是例外**, 它必须能被单独判出来 ——
+    dag 名自 d21aab8 起就是指纹的一部分, 而改名是最容易被误当成"结构真变了"的
+    那种变化 (所有 stage 的 status/visits/output_diff 全都相同)。所以两个名字都
+    给出来, 与 `stages[*].status` / `visits` 的 `[a, b]` 约定一致。
     """
     names = set(cp_a.stage_deltas) | set(cp_b.stage_deltas) \
         | set(cp_a.done_stages) | set(cp_b.done_stages)
@@ -214,7 +223,13 @@ def diff_runs(cp_a: Checkpoint, cp_b: Checkpoint) -> dict:
     return {
         "run_id_a": cp_a.run_id,
         "run_id_b": cp_b.run_id,
-        "dag_name": cp_a.dag_name,
+        "dag_name": cp_a.dag_name,          # 保留: 单边场景 (只关心 a) 下够用
+        # 两个都给 (2026-10-16 补): dag 名自 d21aab8 起入指纹, 所以**改名**就会让
+        # workflow_hash_changed 变 true —— 而改名恰恰是最该被判成"这不是真差异"
+        # 的那种 (实测: 两个 run 唯一差别是 dag 名时, stages 里每项都显示"无差异",
+        # 消费者只能得出"结构变了但行为没变"这个错误结论)。单看 dag_name 那一个
+        # 字段看不见 b 叫什么, 于是那个最常见的假警报无法排除。
+        "dag_names": [cp_a.dag_name, cp_b.dag_name],
         "workflow_hash_changed": cp_a.workflow_hash != cp_b.workflow_hash,
         "stages": stages,
         "state_diff": _state_diff(cp_a.state, cp_b.state),

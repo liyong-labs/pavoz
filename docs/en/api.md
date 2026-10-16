@@ -531,8 +531,8 @@ await task   # → RunResult(status="cancelled", failed_stage=..., retryable=Non
 ### `diff_runs(cp_a, cp_b) -> dict` / `CheckpointStore.diff_runs(task, run_a, run_b="")`
 
 Stage-level structured diff of two runs (R4). Output is fully
-JSON-serializable, no AI summarization: `workflow_hash_changed` / `stages`
-(per-stage `status [a, b]`, `input_hash_changed`, `visits [a, b]`,
+JSON-serializable, no AI summarization: `workflow_hash_changed` / `dag_names [a, b]` /
+`stages` (per-stage `status [a, b]`, `input_hash_changed`, `visits [a, b]`,
 path-level `output_diff`) / `state_diff` (final merged state, path-level).
 The store wrapper's `run_b=""` resolves the latest pointer (same convention as
 load_compatible); a missing checkpoint raises RuntimeError. Consumers (AI agents)
@@ -545,9 +545,22 @@ read it to decide "what changed, which stages were affected, what to rerun".
   `output_diff` only reported how the *last* visit's delta differed — the signal
   is inverted, since "this run did 67% more work" goes unreported and a
   meaningless last-round detail becomes the only clue
+- **`dag_names` makes a pure rename identifiable on its own.** Since 0.5.7 the dag
+  name is part of `workflow_hash`, so *renaming* flips `workflow_hash_changed` to
+  `true` — and a rename is exactly the change that should be judged "not a real
+  difference": measured, when the only difference between two runs was the dag
+  name, every entry under `stages` reported "no difference", while the old
+  single `dag_name` field only named run *a*, leaving **run b's name invisible**,
+  so a consumer could only conclude "the structure changed but nothing else did"
+  — the wrong conclusion
 - ⚠️ `output_diff` reads `stage_deltas`, the **last-write view** (one delta per
   stage: its final execution). On looping graphs that drops the intermediate
   rounds. The full per-round history is `cp.stage_deltas_visits`
+- ⚠️ `workflow_hash_changed: true` does **not** say *what* differs. The fingerprint
+  is one opaque string and can't be broken down into "which stage, which
+  attribute". That boundary is deliberate: the field exists to tell a consumer
+  "don't compare these two", not to explain them — the one exception being a
+  rename, which `dag_names` covers on its own
 
 ## EventRecorder (v0.5.3)
 

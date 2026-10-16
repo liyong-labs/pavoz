@@ -20,7 +20,7 @@
 | **fork 的 cp 重建结果会变** | 带 `fork_keep_counts` 的旧 cp (0.5.6 写的 fork), 升级后 `cp.state` **变成正确值** (此前取到 fork 之前那条 delta) | 无需操作; 若你**依赖过**旧行为(把重建值当"上次真实产出"), 那是 bug 不是契约 |
 | **可调用对象 route_fn 开始落盘** | `class Router: def __call__` 这种写法, 此前 `run` 报 `done` 但 **checkpoint 一个都存不下来** (save 被"失败不杀 run"吞掉), 升级后正常落盘 | 无需操作; 若你已经在别处绕开, 现在可以去掉 |
 | **`async __call__` 的 route_fn 被拒** | 声明期 `TypeError`。此前 `inspect.iscoroutinefunction(实例)` 是 `False` 会漏网, 运行期才报一条**指错方向**的错 | 异步判定做成 judge-stage 写 state, 边只读 |
-| **`diff_runs` 多一个键** | 每个 stage 条目新增 `visits: [a, b]` (两 run 各跑了多少轮)。其余键语义不变 | 纯新增; 按 key 取值的代码不受影响 |
+| **`diff_runs` 多一个键** | 每个 stage 条目新增 `visits: [a, b]` (两 run 各跑了多少轮)。**顶层**另加 `dag_names: [a, b]` (两个 run 各自的 dag 名)。其余键语义不变 | 纯新增; 按 key 取值的代码不受影响。若你的消费者按"顶层键个数"做断言, 需相应放宽 |
 | **fork 重跑**失败**时的 `export-input`** | 该 checkpoint 下导出**本次 run 还没跑完**的 stage 时, 输出**多出** fork 注入的 key。修复前那些 key 静默消失 (rc=0) | 无需操作; 若你**依赖过**"导出里没有 override"这个行为 (靠缺省值二次加工), 那是 bug 不是契约 |
 
 其余条目 (CLI 友好错误 / 守卫补齐 / 测试加固) 不改变已部署行为。
@@ -39,6 +39,19 @@
 是改写前根本不支持的形态。故除 `dag 名` 外, 已有 checkpoint 的指纹不变。
 
 ### Added
+
+- **`diff_runs` 多一个 `dag_names` 字段** —— 让"纯改名"这个**最常见的假警报**
+  能被单独排除。dag 名自 d21aab8 起是 `workflow_hash` 的一部分, 所以改名就会让
+  `workflow_hash_changed` 变 `true`; 而改名恰恰是最该被判成"这不是真差异"的那种
+  (它不改变任何 stage 的行为)。修复前的实测: 两个 run 唯一差别是 dag 名时,
+  `stages` 里每一项都显示"无差异", 而旧的单个 `dag_name` 字段**只报 a 的名字**,
+  b 叫什么完全不可见 —— 消费者只能得出"结构变了但行为没变"这个错误结论, 而那个
+  结论会直接导致一次无谓的全量重跑。`dag_names` 与 `stages[*].status` / `visits`
+  的 `[a, b]` 约定一致。**是加不是换**: `dag_name` 单值字段保留 (diff_runs 在
+  0.5.4 已发布, 改成 list 会打断按字符串读的现有代码)。
+  顺带在文档里把另一条边界写明: `workflow_hash_changed: true` **不说明差在哪**
+  (指纹是整串, 拆不出"哪个 stage 的哪个属性"), 这是有意的 —— 该字段的作用是叫
+  消费者"别拿这两份比", 而不是替它解释; 唯一的例外 (改名) 已由 `dag_names` 兜住。
 
 - **明确"链式 fork 不继承祖先 `overrides`"这条契约** (中英文档 + 测试 + 代码注释)。
   这块此前是**空白**: `fork_run` 只带本次的 `overrides`、不合并 `cp.fork_overrides`,

@@ -463,7 +463,7 @@ await task   # → RunResult(status="cancelled", failed_stage=..., retryable=Non
 ### `diff_runs(cp_a, cp_b) -> dict` / `CheckpointStore.diff_runs(task, run_a, run_b="")`
 
 两个 run 的 stage 级 structured diff (R4)。输出全 JSON-serializable, 不做 AI 摘要:
-`workflow_hash_changed` / `stages` (每 stage 的 `status [a, b]`、
+`workflow_hash_changed` / `dag_names [a, b]` / `stages` (每 stage 的 `status [a, b]`、
 `input_hash_changed`、`visits [a, b]`、`output_diff` path 级差异) / `state_diff`
 (最终 state path 级差异)。Store 包装的 `run_b=""` 取 latest 指针 (同
 load_compatible 惯例); 任一 run 无 checkpoint → RuntimeError。消费者 (AI agent)
@@ -474,9 +474,17 @@ load_compatible 惯例); 任一 run 无 checkpoint → RuntimeError。消费者 
   run (3 轮 vs 5 轮), `state_diff` 是空的, `output_diff` 只比出"最后一次 visit 的
   delta 差在哪"——信号方向是反的: 该报的"多干了 67% 的活"没报, 不该当差异的
   末轮细节反倒成了唯一线索
+- **`dag_names` 让"改名"能被单独判出来**。dag 名自 0.5.7 起是 `workflow_hash` 的
+  一部分, 所以**改名**就会让 `workflow_hash_changed` 变 `true` —— 而改名恰恰是
+  最该被判成"这不是真差异"的那种: 实测两个 run 唯一差别是 dag 名时, `stages`
+  里每一项都显示"无差异", 而旧的单个 `dag_name` 字段只报 a 的名字, b 叫什么
+  **完全看不见**, 消费者只能得出"结构变了但行为没变"这个错误结论
 - ⚠️ `output_diff` 走 `stage_deltas` —— **last-write 视图** (每个 stage 只取最后
   一次执行的 delta)。循环图上它漏掉中间轮次。逐轮全貌在
   `cp.stage_deltas_visits`, 要自己比就取那个字段
+- ⚠️ `workflow_hash_changed: true` **不说明差在哪**。指纹是一个整串, 拆不出"是
+  哪个 stage 的哪个属性变了"。这是有意的边界: 该字段的作用是叫消费者"别拿这两
+  份比", 而不是替它解释 —— 唯一的例外是改名, 已由 `dag_names` 单独兜住
 
 ## EventRecorder (v0.5.3)
 
