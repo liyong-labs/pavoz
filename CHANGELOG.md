@@ -237,6 +237,24 @@
   **删数据**的命令。现两者统一 `参数错误: ...` + 退出码 1, 与 `fork-run` /
   `replay` 既有口径一致。
 
+### Tests
+
+- **两条不变式从一次性探针升级成每次都验** (`tests/test_invariant_checks.py`):
+  ① **Checkpoint 字段往返必须穷尽** —— v0.8 起 state 不落盘, 其余字段全靠
+  `to_dict`/`from_dict` 往返; 新增字段忘了写进 `to_dict` ⇒ reload 时**静默**用
+  默认值, 零报错, resume 拿到的 cp 与落盘时的不是同一个东西。用
+  `dataclasses.fields` 枚举 (非手抄清单), 15 个字段全覆盖, 外加"转两代必须与转
+  一代相同"的幂等检查。
+  ② **事件流必须与 RunResult 说的是同一件事** —— 监控挂在 `on_event`、消费方读
+  `RunResult`, 两者分叉则埋点在撒谎而没人知道。四种形状各钉一遍: 成功 / 中途失败
+  / 重试耗尽 / skip_unchanged 复用 (后者是唯一允许的分叉: 事件记 `skipped`、结果
+  记 `done`)。
+  写第 ② 条时踩了一次**判据失明**: 前两条失败用例分别抛 `StageError` 与
+  `RetryableError`, 各有专门的 except 分支, **裸异常走的泛型
+  `except Exception` 分支完全没被覆盖** —— 验证时我把该分支的
+  `stage_end{status}` 改成 `"done"`, 8 条用例**照样全绿**。补上抛裸异常的用例后,
+  同样的变异才转红。这条记在这里, 因为"绿了"本身不构成证据。
+
 ## [0.5.6] — 2026-10-10
 
 ### Security
