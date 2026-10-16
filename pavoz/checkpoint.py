@@ -414,6 +414,7 @@ class Checkpoint:
         if is_fork_cp:
             for done in self.done_stages:  # fork cp: 每 stage 总条目数 (尾对齐用)
                 total[done] = total.get(done, 0) + 1
+        stop_hit = False  # stop_at 是否真的在完成序里出现过 (见下方兜底判定)
         for done in self.done_stages:
             occ = visit_idx.get(done, 0)  # 本 stage 第几个 done 条目 (0 起)
             # fork cp 里"没条目"= 全部重跑 (kc=0), 不是"顺序索引" —— 这两件事以前
@@ -430,6 +431,7 @@ class Checkpoint:
                     producers[_k] = "<fork>"
                 _pending_overrides = None
             if done == stop_at:
+                stop_hit = True
                 break
             deltas = self.stage_deltas_visits.get(done, [])
             visit_idx[done] = occ + 1
@@ -447,9 +449,19 @@ class Checkpoint:
                 for k in delta:
                     producers[k] = done
         # 没走到截断点 (done 全在 keep 内 / 全部被跳过) → overrides 仍要生效,
-        # 落在最后。stop_at 提前 break 时**不**落: 那是"某 stage 执行前"的快照,
-        # 那时 overrides 还没注入。
-        if _pending_overrides is not None and stop_at is None:
+        # 落在最后。
+        #
+        # 判据是"stop_at **命中过**"而不是"stop_at is None" (2026-10-16 修)。
+        # 两者在正常形状下等价 (stop_at 命中即 break, 未命中即走完), 但有一种
+        # 形状下旧判据会错: stop_at 指向的 stage 在**本次 run 里还没完成**, 它
+        # 只存在于被 fork 截断掉的历史 stage_deltas 里 —— rebuild_state_before
+        # 的守卫按 deltas 放行了它, 而循环走的是 done_stages, 于是 stop_at 永远
+        # 不命中, 兜底却被 `stop_at is None` 挡掉 → fork_overrides 静默丢失。
+        # 实测: fork 的重跑在中途失败, export-input 少给注入值且 rc=0。
+        # 命中过 = 那是真的回到"某 stage 执行前"的快照, overrides 那时还没注入;
+        # 没命中 = 停在"这次 run 走到的最后", runtime 早就把 overrides 注进了
+        # state, 重建反而比 cp.state 少东西是退步。
+        if _pending_overrides is not None and not stop_hit:
             # v0.9 深合并: 浅 update 会把嵌套 dict 的兄弟键抹掉 (resume 重建才是
             # stage 实际看到的 state — 与 runtime.fork_run 应用语义保持一致)
             rebuilt = apply_overrides(rebuilt, _pending_overrides)

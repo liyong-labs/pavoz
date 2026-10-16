@@ -19,7 +19,7 @@ import tempfile
 
 import pytest
 
-from pavoz import DAG, CheckpointStore, FileStorage, Runtime
+from pavoz import DAG, CheckpointStore, FileStorage, Runtime, StageError
 
 FAILS: list[str] = []
 
@@ -191,3 +191,148 @@ async def test_fork_override_survives_when_no_rerun_stage_touches_it():
                           overrides={"tag": "KEEP"})
     assert r.state["tag"] == "KEEP", "s_c 不产出 tag, override 必须留着"
     _assert_consistent("override 无人改写", store.load_latest("L6"), r.state)
+
+
+# ── 形状 5: fork 的重跑**没跑完** —— stop_at 指向的 stage 只存在于历史里 ────
+#
+# 形状 1-4 的 fork 全都跑完了 (done_stages 覆盖全链), 于是 stop_at 在完成序里
+# 必定命中。缺的是"重跑中途失败"这一类: 此时截断点之后的 stage 在 cp 里**只**
+# 存在于被截断掉的历史 stage_deltas (守卫按 deltas 放行), 而 done_stages 里没有
+# 它 —— stop_at 命中不了, 循环走完。
+#
+# 修复前 (判据是 `stop_at is None`): 走完循环后的兜底注入被这个非空 stop_at
+# 挡掉, fork_overrides 蒸发。症状是 `export-input` 少给注入值且 rc=0 —— 用户拿
+# 一份缺了参数的文件去改去 fork, 全程无提示。
+
+FAIL_B = {"on": False}
+
+
+def _gated_dag(name: str) -> DAG:
+    """s_b 受开关控制 → 同一个 DAG 能造出"跑完"与"跑一半"两种 cp."""
+    dag = DAG(name)
+
+    @dag.stage()
+    async def s_a(ctx):
+        return {"a": 1}
+
+    @dag.stage(depends_on=["s_a"])
+    async def s_b(ctx):
+        if FAIL_B["on"]:
+            raise StageError("b 失败", category="SEARCH_NO_RESULT")
+        return {"b": "orig"}
+
+    @dag.stage(depends_on=["s_b"])
+    async def s_c(ctx):
+        return {"c": ctx.state["b"]}
+
+    return dag
+
+
+@pytest.fixture
+def ungate_b():
+    FAIL_B["on"] = False
+    yield
+    FAIL_B["on"] = False
+
+
+@pytest.fixture
+def store() -> CheckpointStore:
+    return CheckpointStore(FileStorage(tempfile.mkdtemp()))
+
+
+async def _seed_failed_fork(store, task: str = "F5"):
+    """首跑成功 → fork(from_stage=s_b, overrides={'topic': 'OV'}) 且重跑在 s_b 失败."""
+    rt = Runtime(checkpoint_store=store)
+    await rt.run(_gated_dag("f5"), task)
+    FAIL_B["on"] = True
+    r = await rt.fork_run(_gated_dag("f5"), task, from_stage="s_b",
+                          overrides={"topic": "OV"})
+    FAIL_B["on"] = False
+    assert r.status == "failed", f"前置条件: fork 应失败, 实得 {r.status}"
+    return store.load_latest(task)
+
+
+async def test_before_state_keeps_fork_override_when_stage_never_completed(store, ungate_b):
+    """★ 库端: stop_at 未命中时, 重建必须**保留** fork_overrides.
+
+    期望 {'a': 1, 'topic': 'OV'} — 与 cp.state 同源。修复前是 {'a': 1}:
+    注入值蒸发。注意 b 不在里面是**对的** (s_b 这次没跑出来, b='orig' 是被
+    截断掉的历史), 这个 key 缺席不是缺陷。
+    """
+    cp = await _seed_failed_fork(store)
+
+    assert "s_c" not in cp.done_stages, "前置条件: s_c 不该在本次 run 的完成序里"
+    assert "s_c" in cp.stage_deltas, "前置条件: s_c 的历史 delta 该还在 (守卫靠它放行)"
+
+    before = cp.rebuild_state_before("s_c")
+
+    assert before == {"a": 1, "topic": "OV"}, (
+        "stop_at 指向的 stage 本次没完成 → 循环走完, fork 注入值必须在场; "
+        f"实得 {before}")
+
+
+async def test_before_state_still_excludes_override_at_the_fork_point(store, ungate_b):
+    """反向约束: 命中截断点时**依旧不能**带上 overrides (别把这次修复做成无脑兜底).
+
+    这个 case 走的是 stop_at 命中 + 落在截断点**之前**的路径 (s_a 之前),
+    语义是"回到 fork 注入发生之前的快照" —— 带上了就是回归。
+    """
+    cp = await _seed_failed_fork(store)
+
+    before = cp.rebuild_state_before("s_a")
+
+    assert "topic" not in before, (
+        f"stop_at 命中截断点之前 → 那时 overrides 还没注入, 实得 {before}")
+
+
+async def test_completed_fork_shape_is_unchanged(store, ungate_b):
+    """反向约束: fork **跑完**的正常形状不能被这次修复动到 (含 override 被
+    from_stage 重跑覆盖的那条 —— 那条当初就是靠 `stop_at is None` 才对的)."""
+    rt = Runtime(checkpoint_store=store)
+    await rt.run(_linear_dag("f5b"), "F5B")
+
+    r = await rt.fork_run(_linear_dag("f5b"), "F5B", from_stage="s_a",
+                          overrides={"a": "A9"})
+    assert r.state["a"] == "A", f"活跑的 s_a 应覆盖注入值, 实得 {r.state['a']}"
+    _assert_consistent("fork from s_a (跑完)", store.load_latest("F5B"), r.state)
+
+    # stop_at 命中 from_stage 本身 → 注入点就在这一刻, 必须带上
+    before = store.load_latest("F5B").rebuild_state_before("s_a")
+    assert before.get("a") == "A9", (
+        f"stop_at 命中截断点那一刻 = 注入点, 应带上 override, 实得 {before}")
+
+
+def test_export_input_cli_does_not_silently_drop_fork_override(
+        ungate_b, tmp_path, monkeypatch, capsys):
+    """★ 端到端: 用户真正撞到的那一面 —— `export-input` 少给注入值且 rc=0。
+
+    这个缺陷的危险不在"少一个 key", 在**全程无提示**: export-input 的产物是人
+    拿去编辑、再喂回 fork-run 的基座文件, 少一个 key 就等于下游 fork 悄悄用
+    默认值跑完 (不是报错, 是错答案)。所以判据钉在 CLI 的 stdout 上, 不只钉库。
+
+    同步用例: cli.main 内部自己 asyncio.run(), 在 async 用例里调会撞运行中的环。
+    """
+    import asyncio
+    import json
+
+    import pavoz.cli as cli
+
+    # store 与 CLI 指向同一个目录。CLI 只认运行时读的 PAVOZ_STORAGE_SPEC ——
+    # 裸的 PAVOZ_STORAGE 在 cli 模块 import 期就被固化成 DEFAULT_STORAGE 了,
+    # 测试里 monkeypatch 它来不及 (踩过一次: 结果 CLI 去读 ~/.pavoz/data 拿不到
+    # cp, 报 rc=1, 看起来像被测行为坏了)。
+    store = CheckpointStore(FileStorage(tmp_path / "cli_store"))
+    monkeypatch.setenv("PAVOZ_STORAGE_SPEC", "pavoz.storage:FileStorage")
+    monkeypatch.setenv("PAVOZ_STORAGE_KWARGS",
+                       json.dumps({"root_dir": str(tmp_path / "cli_store")}))
+    asyncio.run(_seed_failed_fork(store, "F5CLI"))
+
+    rc = cli.main(["export-input", "--task-id", "F5CLI", "--stage", "s_c"])
+
+    out, err = capsys.readouterr()
+    assert rc == 0, f"前置条件: 该形状本就该导出成功 (历史 delta 在), 实得 {rc}"
+    payload = json.loads(out)
+    assert payload.get("topic") == "OV", (
+        "export-input 静默丢掉了 fork 注入值 —— 用户拿这份文件去编辑再 fork, "
+        f"下游会悄悄用默认值跑完 (不是报错, 是错答案)。实得 {payload}")
+    assert "Traceback" not in err

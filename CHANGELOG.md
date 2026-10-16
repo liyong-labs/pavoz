@@ -20,6 +20,7 @@
 | **可调用对象 route_fn 开始落盘** | `class Router: def __call__` 这种写法, 此前 `run` 报 `done` 但 **checkpoint 一个都存不下来** (save 被"失败不杀 run"吞掉), 升级后正常落盘 | 无需操作; 若你已经在别处绕开, 现在可以去掉 |
 | **`async __call__` 的 route_fn 被拒** | 声明期 `TypeError`。此前 `inspect.iscoroutinefunction(实例)` 是 `False` 会漏网, 运行期才报一条**指错方向**的错 | 异步判定做成 judge-stage 写 state, 边只读 |
 | **`diff_runs` 多一个键** | 每个 stage 条目新增 `visits: [a, b]` (两 run 各跑了多少轮)。其余键语义不变 | 纯新增; 按 key 取值的代码不受影响 |
+| **fork 重跑**失败**时的 `export-input`** | 该 checkpoint 下导出**本次 run 还没跑完**的 stage 时, 输出**多出** fork 注入的 key。修复前那些 key 静默消失 (rc=0) | 无需操作; 若你**依赖过**"导出里没有 override"这个行为 (靠缺省值二次加工), 那是 bug 不是契约 |
 
 其余条目 (CLI 友好错误 / 守卫补齐 / 测试加固) 不改变已部署行为。
 
@@ -42,6 +43,27 @@
   仍按 **FatalError 语义**处理 (fail、不重试), 携带 category 不改变这一点。
 
 ### Fixed
+
+- ★ **`export-input` 对"fork 重跑没跑完"的 checkpoint 静默丢掉 `fork_overrides`**。
+  `rebuild_state_before(stage)` 的守卫放行了只存在于**历史** `stage_deltas`、不在
+  `done_stages` 里的 stage (fork 截断点之后的那些) —— 这是对的, 它们确实跑过;
+  但 `_rebuild_state` 的循环走的是 `done_stages`, 于是 `stop_at` 永远命不中, 循环
+  走到底。末尾的兜底注入又判的是 `stop_at is None` —— 非空的 `stop_at` 把兜底挡了,
+  `fork_overrides` 就此蒸发。**全程无提示, 退出码 0**。实测 (fork from `s_b`,
+  `overrides={"topic": "OV"}`, 重跑在 `s_b` 失败 ⇒ `s_c` 没重跑):
+
+      $ pavoz export-input --task-id T --stage s_c     rc=0
+        {"a": 1}          ← 缺 topic=OV (runtime 早就把它注进 cp.state 了)
+
+  危险不在少一个 key, 在于 `export-input` 的产物是**人拿去编辑、再喂回 `fork-run`
+  的基座文件**: 少一个 key 就是下游 fork 悄悄用默认值跑完 —— 不是报错, 是错答案。
+  修复: 兜底判据从"stop_at 是 None"改成"stop_at **没命中过**"。两者在正常形状下
+  等价 (`stop_at` 命中即 `break`, 未命中即走完), 只在这一种形状下不同, 且改后
+  语义更站得住 —— 命中 = 真回到"某 stage 执行前", overrides 那时还没注入; 没命中
+  = 停在"这次 run 走到的最后", runtime 早就注入了, 重建反而比 `cp.state` 少东西
+  是退步。`Runtime.run_stage` / `fork_run` 不受影响 (两者各自有守卫, 未完成的 stage
+  走全量重建而非 `stop_at`)。反向验证: 改回旧判据, 库端与 CLI 端两个用例转红;
+  改成"无条件兜底", 反向约束用例转红。
 
 - ★ **空 delta 让 `done_stages` 与 `stage_deltas_visits` 永久错位 → checkpoint
   自相矛盾**。`_run_inner` 追加 delta 曾带 `if delta:` 前置, 而 `done_stages.append`
