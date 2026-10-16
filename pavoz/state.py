@@ -386,15 +386,28 @@ def parse_set_file(path: str) -> dict:
     return data
 
 
-def _validate_dict_keys(d: dict, path: str = "") -> None:
-    """递归校验 override 源 dict 的所有 key (file 来源不可信).
+def _validate_dict_keys(d: dict, path: str = "", *, top: bool = True) -> None:
+    """递归校验 override 源结构里的**所有** key (file / library 调用来源不可信).
 
-    只拒: 非字符串 / 空 key / dunder 禁词. 其余字符 (含 '-') 是合法 dict
-    key, 不拒 — 严格逐段校验是 _validate_path 的职责 (dot-path 场景).
-    含 '.' 的 key 走 _validate_path (dot-path 语义, apply_overrides 会展开).
+    两类规则分清 (2026-10-16 —— 原实现两处都与这句 docstring 对不上, 方向相反):
+
+    **任何层级都拒** —— key 必须是非空 str; 含 '.' 时每个 segment 非空且非
+    dunder。这两条与"该 key 最终当路径还是当字面 key"无关: 空 segment 是畸形,
+    dunder 是 Python object injection 的入口 (`__proto__` / `__class__` …)。
+
+    **只有顶层才按路径判** —— 深度上限 (`_MAX_PATH_DEPTH`) 与"只允许标识符
+    字符"。依据是 `apply_overrides` 的实际分支: 顶层 `if "." in k` 才走
+    `_deep_set` 展开成嵌套路径; 嵌套 dict 走 `_deep_merge`, 该 key **原样保留**
+    成字面 key。所以 `{"cfg": {"a.b.c.d.e.f": 1}}` 是一个本会干净落盘的字面
+    key, 不该被 "深度 6 > 5" 拒掉 —— 而它此前就是被拒的 (过度拒绝合法输入)。
+    注: 这也纠正了原注释里的 "含 '.' 的 key 走 _validate_path (dot-path 语义,
+    apply_overrides 会展开)" —— **只有顶层会被展开**。
+
+    列表 / 元组也要走: 此前只递归 dict 值, 于是 `{"x": [{"__proto__": 1}]}`
+    把校验全绕过去 —— 同一个坏 key, 挂 dict 上拒、挂 list 里放行。
 
     不变量: 本函数是 override key 校验的唯一入口 — parse_set_file /
-    merge_overrides 共用; 新增校验路径时复用本函数, 不要平行实现.
+    merge_overrides / fork_run 共用; 新增校验路径时复用本函数, 不要平行实现.
     """
     for k, v in d.items():
         if not isinstance(k, str) or not k:
@@ -406,14 +419,41 @@ def _validate_dict_keys(d: dict, path: str = "") -> None:
                 f"override key {k!r} 含禁词 (在 {path or '<root>'})"
             )
         if "." in k:
-            _validate_path(k)
-        if isinstance(v, dict):
-            _validate_dict_keys(v, f"{path}.{k}" if path else k)
+            if top:
+                _validate_path(k)
+            else:
+                _validate_key_segments(k, f"{path}.{k}" if path else k)
+        _validate_child_keys(v, f"{path}.{k}" if path else k)
+
+
+def _validate_key_segments(key: str, where: str) -> None:
+    """含 '.' 但**不会被展开**的 key: 只查畸形 segment, 不查路径深度/标识符.
+
+    与 `_validate_path` 的差别就是那两条"路径语义"规则 —— 因为这个 key 最终是
+    字面 key, 用路径标准去卡它就是误拒合法输入。
+    """
+    for seg in key.split("."):
+        if not seg:
+            raise ValueError(f"override key {key!r} 含空 segment (在 {where})")
+        if seg in _DUNDER_BLOCKLIST:
+            raise ValueError(
+                f"override key {key!r} 含禁词 {seg!r} (在 {where}; 防 Python object injection)"
+            )
+
+
+def _validate_child_keys(v: object, where: str) -> None:
+    """递归进 dict / list / tuple —— 任何容器里的 key 都要过校验."""
+    if isinstance(v, dict):
+        _validate_dict_keys(v, where, top=False)
+    elif isinstance(v, (list, tuple)):
+        for i, item in enumerate(v):
+            _validate_child_keys(item, f"{where}[{i}]")
 
 
 # merge_overrides 的 key 校验复用 _validate_dict_keys (唯一入口) —
-# 拒 非字符串/空 key/dunder; '-' 等 dict key 合法; 含 '.' 的 key 走
-# _validate_path. 不要在此平行实现校验 (重复 def 会静默覆盖).
+# 拒 非字符串/空 key/dunder; '-' 等 dict key 合法; 含 '.' 的 key **只有顶层**
+# 走 _validate_path (只有顶层会被 apply_overrides 展开), 嵌套层只查 segment
+# 畸形. 不要在此平行实现校验 (重复 def 会静默覆盖).
 
 
 def merge_overrides(*sources: dict | None) -> dict:

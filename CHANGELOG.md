@@ -19,6 +19,8 @@
 | **`EnginePolicy` 构造期校验** | 负值 / 限值类字段的 `0` 现在抛 `ValueError`。此前负 `stage_alive_interval` 会变忙循环 (实测 0.2s 的 stage 喷 58099 条 `stage_alive` 而 run 报 done) | 想"不限 / 关闭"请显式写 `None` |
 | **`default_timeout=0` 现在构造期报 `ValueError`** (两侧: `EnginePolicy(...)` 与 `Runtime(...)`) | 此前**静默失效**: run 级 deadline 的调用点是 `now + _to if _to else None` (真值判断), 0 被当成"没设" ⇒ **整个 run 的超时护栏消失**, `status=done` 无任何提示。实测一个跑 0.3s 的 stage 在 `default_timeout=0` 下跑满 0.30s 报 done, 同一个 dag 在 `0.1` 下报 `TimeoutError` | 若你想"不限", 显式写 `default_timeout=None`。**亚秒超时完全合法** (`0.2` / `0.05` 都照跑), 只拒 `0` |
 | **非有限值不能进 state** | `stage` 返回 `NaN`/`±Inf` 或 `--set-file` 里写 `.nan` 现在报 `ValueError`。此前能跑通, 但落盘 JSON 含 `NaN` 字面量, **不是合法 RFC 8259**, 任何严格解析器 (其他语言 / jq / JSONB) 拒收整个文件 | 用 `None` / 字符串表达"无值" |
+| **override 里 list 内的 dict 现在也校验 key** | `{"items": [{"__proto__": 1}]}` 或 `{"items": [{"": 1}]}` 现在报 `ValueError`。此前**完全放行** —— 校验只递归 dict 值, list 被整段跳过, 所以同一个坏 key 挂 dict 上拒、挂 list 里过 | 若你的 list 里**确实**有这些 key, 换个名字 |
+| **override 里嵌套 dict 的点号 key 不再按"路径"判** | `{"cfg": {"a.b.c.d.e.f": 1}}` (6 段) 此前报"深度 6 > 5", **现在放行** —— 嵌套 key 不会被展开, 它就是一个字面 key, 会原样落进 state | 无需操作; 若你**依赖过**那个拒绝 (比如拿它当深度探针), 改成自己数点号 |
 | **旧 cp 的 visit 对齐可能本来就有错位** | 修复前, `stage` 返回 `{}`/`None` 的那次执行只进 `done_stages` 不进 deltas ⇒ 老 cp 里两个列表已经错位, 升级后**照旧错** | 受影响的 cp 重跑一次; 新写的不会错 (见 Fixed 第一条) |
 | **旧 cp 在**循环图**上的 fork 重建取错 visit** | 0.5.6 及更早写的 fork cp 没有 `fork_keep_counts`, 重建按顺序索引取 delta ⇒ 在环图上取到的是**首跑段**那条 (实测 `R4[F]` 取成 `R4[none]`)。**试过推断自愈, 不成立** —— 见下方"为什么老 cp 只能重跑" | 受影响的 cp 重跑一次 |
 | **fork 的 cp 重建结果会变** | 带 `fork_keep_counts` 的旧 cp (0.5.6 写的 fork), 升级后 `cp.state` **变成正确值** (此前取到 fork 之前那条 delta) | 无需操作; 若你**依赖过**旧行为(把重建值当"上次真实产出"), 那是 bug 不是契约 |
@@ -120,6 +122,39 @@
   仍按 **FatalError 语义**处理 (fail、不重试), 携带 category 不改变这一点。
 
 ### Fixed
+
+- ★ **override key 校验与它自己的 docstring 对不上, 两个方向都错**。
+  `_validate_dict_keys` 自称"递归校验 override 源 dict 的**所有** key", 而实现:
+
+  | 输入 | 此前 | 判定 |
+  |------|------|------|
+  | `{"a": {"": 1}}` | 拒 (非空字符串) | ✅ 对 |
+  | `{"a": [{"": 1}]}` | **放行** | ❌ 洞 |
+  | `{"a": {"__proto__": 1}}` | 拒 (禁词) | ✅ 对 |
+  | `{"a": [{"__proto__": 1}]}` | **放行** | ❌ 洞 |
+  | `{"a": [{"b": [{"__proto__": 1}]}]}` | **放行** | ❌ 洞 (两层 list) |
+  | `{"cfg": {"a.b.c.d.e.f": 1}}` | **拒** (深度 6 > 5) | ❌ 过度拒绝 |
+
+  **(A) 洞**: 递归只进 `dict` 值, 不进 `list`/`tuple` ⇒ 列表里的 dict 绕过**全部**
+  校验。同一个坏 key, 挂 dict 上拒、挂 list 里过 —— 用户没法推理这套规则。
+
+  **(B) 过度拒绝**: 嵌套 dict 里的点号 key 也被套了完整的 `_validate_path`
+  (深度上限 / 只允许标识符字符)。可 `apply_overrides` 只在**顶层**
+  (`if "." in k`) 才走 `_deep_set` 展开; 嵌套走 `_deep_merge`, 该 key
+  **原样保留**成字面 key。所以 `{"cfg": {"a.b.c.d.e.f": 1}}` 是一个本会干净落盘的
+  字面 key, 被"深度 6 > 5"拦在门外。原注释写的正是"apply_overrides 会展开"
+  —— **注释描述的是一个不存在的行为**, 这次一并改掉。
+
+  改法 (两条规则分开): **任何层级**都拒 空 key / dunder / 含空 segment (这三条与
+  "该 key 当路径还是当字面"无关); **只有顶层**才按路径判 (深度 ≤5 / 标识符字符)。
+  嵌套层的新规则只查 segment 畸形 —— 放宽深度与标识符是为了不误拒, 但 dunder 与
+  空 segment 一个都没松, 否则就成了"为了修过度拒绝而打开一个注入口"。
+
+  判别力 (两半各一次变异, 互不替代):
+  | 变异 | 结果 |
+  |------|------|
+  | 去掉 list/tuple 递归 (退回 A) | **6 红** ✅ |
+  | 嵌套层改回完整 `_validate_path` (退回 B) | **2 红** ✅ |
 
 - ★ **`default_timeout=0` 静默废掉 run 级超时护栏 → 两条入口都在构造期拒 0**。
   这是一次典型的**假值陷阱**, 而且失效方向是最坏的那种:

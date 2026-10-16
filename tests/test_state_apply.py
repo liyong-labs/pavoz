@@ -346,3 +346,120 @@ class TestStateDiff:
         diff = _state_diff({"k": long}, {"k": long + "y"})
         # v0, v1 in diff["k"], long v0 gets truncated
         assert "truncated" in str(diff["k"][0])
+
+
+# ── key 校验的两个方向 (2026-10-16) ────────────────────────────────────────
+#
+# `_validate_dict_keys` 自称"递归校验 override 源 dict 的**所有** key", 但实现
+# 与这句话有两处对不上, 且**方向相反**:
+#
+#   (A) 洞: 只递归 **dict** 值, 不进 list/tuple ⇒ 列表里的 dict 完全绕过校验。
+#       同一个坏 key, 挂 dict 上拒、挂 list 里放行:
+#           {"a": {"": 1}}          → 拒 (非空字符串)
+#           {"a": [{"": 1}]}        → 放行
+#           {"a": {"__proto__": 1}} → 拒 (禁词)
+#           {"a": [{"__proto__": 1}]} → 放行
+#
+#   (B) 过头: 对**嵌套** dict 里的点号 key 也套了完整的 `_validate_path`
+#       (深度 ≤5 / 非标识符字符)。可 `apply_overrides` 只在**顶层**把带点的 key
+#       当路径展开 (`"." in k` → `_deep_set`); 嵌套走 `_deep_merge`, 该 key
+#       **原样保留**。所以 `{"cfg": {"a.b.c.d.e.f": 1}}` 被 "深度 6 > 5" 拒掉,
+#       而它本来会作为一个字面 key 干净落盘 —— 用户的合法输入被误拒。
+#       (原注释写的正是"apply_overrides 会展开" —— 那是错的, 只有顶层会。)
+
+
+class TestKeyValidationCoversWholeStructure:
+    """(A) 列表里的 dict 与 dict 里的 dict 判定必须一致."""
+
+    @pytest.mark.parametrize("bad", ["", "__proto__", "__class__", "__init__"])
+    def test_bad_key_in_dict_rejected(self, bad, tmp_path):
+        import json
+
+        from pavoz.state import parse_set_file
+        f = tmp_path / "d.json"
+        f.write_text(json.dumps({"a": {bad: 1}}))
+        with pytest.raises(ValueError):
+            parse_set_file(str(f))
+
+    @pytest.mark.parametrize("bad", ["", "__proto__", "__class__", "__init__"])
+    def test_same_bad_key_in_list_rejected(self, bad, tmp_path):
+        """★ 同一个坏 key 放进 list 里也必须拒 —— 此前它完全绕过校验。"""
+        import json
+
+        from pavoz.state import parse_set_file
+        f = tmp_path / "l.json"
+        f.write_text(json.dumps({"a": [{bad: 1}]}))
+        with pytest.raises(ValueError):
+            parse_set_file(str(f))
+
+    def test_deeply_nested_in_lists_rejected(self, tmp_path):
+        """两层 list 也不能是漏洞。"""
+        import json
+
+        from pavoz.state import parse_set_file
+        f = tmp_path / "ll.json"
+        f.write_text(json.dumps({"a": [{"b": [{"__proto__": 1}]}]}))
+        with pytest.raises(ValueError):
+            parse_set_file(str(f))
+
+    def test_list_in_list_valid_still_accepted(self, tmp_path):
+        """反向约束: 合法的 list 形状不能被这次收紧误伤。"""
+        import json
+
+        from pavoz.state import parse_set_file
+        f = tmp_path / "ok.json"
+        payload = {"a": [{"k": 1}, [2, 3], {"n": {"d": 4}}], "b": []}
+        f.write_text(json.dumps(payload))
+        assert parse_set_file(str(f)) == payload
+
+    def test_non_str_key_from_python_caller_rejected(self):
+        """非 JSON 路径 (library API 直接传 dict) 也走同一套校验。"""
+        from pavoz.state import _validate_dict_keys
+        with pytest.raises(ValueError, match="非空字符串"):
+            _validate_dict_keys({"a": [{1: 2}]})
+
+
+class TestNestedDotKeyIsALiteralKey:
+    """(B) 嵌套点号 key 不会被展开 ⇒ 不该按"路径"判它."""
+
+    def test_nested_deep_dot_key_accepted_as_literal(self, tmp_path):
+        import json
+
+        from pavoz.state import parse_set_file
+        f = tmp_path / "lit.json"
+        f.write_text(json.dumps({"cfg": {"a.b.c.d.e.f": 1}}))
+        assert parse_set_file(str(f)) == {"cfg": {"a.b.c.d.e.f": 1}}
+
+    def test_nested_dot_key_with_dunder_segment_still_rejected(self, tmp_path):
+        """放宽的只是"深度/非标识符" —— **dunder 与空 segment 任何层级都拒**。
+
+        否则这次收紧就成了"为了修过度拒绝而打开一个注入口"。
+        """
+        import json
+
+        from pavoz.state import parse_set_file
+        f = tmp_path / "d1.json"
+        f.write_text(json.dumps({"cfg": {"__proto__.x": 1}}))
+        with pytest.raises(ValueError):
+            parse_set_file(str(f))
+
+        f2 = tmp_path / "d2.json"
+        f2.write_text(json.dumps({"cfg": {"a..b": 1}}))
+        with pytest.raises(ValueError):
+            parse_set_file(str(f2))
+
+    def test_top_level_dot_path_still_fully_validated(self):
+        """顶层 key 会真的被展开成路径 ⇒ 全套规则一个都不能少。"""
+        from pavoz.state import _validate_dict_keys
+        _validate_dict_keys({"a.b.c": 1})                       # 合法
+        with pytest.raises(ValueError, match="深度"):
+            _validate_dict_keys({"a.b.c.d.e.f": 1})             # 6 段
+        with pytest.raises(ValueError, match="非标识符"):
+            _validate_dict_keys({"my-key.v2": 1})               # 连字符
+        with pytest.raises(ValueError, match="禁词"):
+            _validate_dict_keys({"__proto__.x": 1})
+
+    def test_nested_literal_key_with_hyphen_and_dot_accepted(self):
+        """嵌套的字面 key 带连字符也没问题 —— 它不会被展开, 不必受标识符限制。"""
+        from pavoz.state import _validate_dict_keys
+        _validate_dict_keys({"cfg": {"my-key.v2": 1}})
