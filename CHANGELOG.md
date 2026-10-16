@@ -128,6 +128,29 @@ _(空 — 见 [0.5.7] 及更早)_
 
 ### Fixed
 
+- **storage 路径不展开 `~` —— 数据静默落进 cwd 里的字面量 `~` 目录**。
+  `FileStorage.__init__` 原先只做 `os.fspath(root_dir)`。实测**两个入口**都中招:
+  库 API 直传 (`FileStorage("~/.pvos/data")` —— 而 `examples/03_compare_diff.py` 的
+  docstring 正是这么教的), 以及 `PAVOZ_STORAGE='~/.pvos/data'` (cli.py 只 expand 了
+  **默认值**那一支, `os.environ.get` 命中 env 时是原样返回, 里面的 `~` 没人展开)。
+
+  后果不是报错, 是**静默写到别处**: 在 cwd 里长出一棵字面量名叫 `~` 的目录树, 数据
+  全落进去。端到端实测: CLI 跑完一个 task, 照 03 的 docstring 用法读回来报
+  `该 task 现有的 run: (无)` —— 那个 example 的全部职责就是列 run, 它必然读不到自己
+  写的数据, 而且每读一次就在 cwd 留一棵垃圾树 (那树不在 .gitignore 里, 用户
+  `git add -A` 就会把它提交进去)。
+
+  修在 `FileStorage.__init__`: 那里是路径的唯一汇合点 (CLI 的 `_storage` 也走它),
+  一处修好两个入口。`os.path.expanduser` 只处理**行首**的 `~`, 与 shell 一致 ——
+  绝对/相对路径、路径中间的 `~` 一律不变, 是纯修正而不是新语义。cli.py 那行孤立的
+  `expanduser` 保留 (无害), 但加注释说明不能把它当成"展开已经处理了"的依据。
+
+  判据 `tests/test_storage_tilde_expansion.py` 三条: 库 API 展开 / CLI env 那一支
+  展开且不留垃圾 / **只动行首** (钉住"别顺手改掉既有解析语义")。判别力: 去掉
+  `expanduser` → 2 红 (第三条如设计仍绿, 它守的是反向)。顺带修掉该测试第一版自己
+  往仓根造 `rel/` 与 `~/` 两棵垃圾树的问题 (`FileStorage.__init__` 会 makedirs,
+  判据必须 chdir 到 tmp_path)。
+
 - **`error_category` 的 9 类建议值里有 3 类是结构性拿不到的 —— 文档已写清**。
   `docs/{cn,en}/api.md` 推荐 9 个 category, 其中 `CHECKPOINT_LOAD_FAIL` /
   `STATE_VALIDATION` / `PROTOCOL_BREACH` 描述的是**引擎侧**失败。而引擎**不替 caller

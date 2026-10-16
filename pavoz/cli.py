@@ -27,6 +27,10 @@ from .checkpoint import CheckpointMismatchError, CheckpointStore
 from .runtime import Runtime
 from .storage import FileStorage
 
+# ⚠️ 这行 expanduser 只覆盖**默认值**那一支: env 命中时 os.environ.get 原样返回,
+# 于是 `PAVOZ_STORAGE=~/x` 里的 `~` 没人展开 —— 实测会在 cwd 里造出字面量 `~`
+# 目录树并把数据静默写进去。展开统一由 FileStorage.__init__ 负责 (唯一汇合点),
+# 这里保留 expanduser 纯属无害, 但**别**把它当成"展开已经处理了"的依据。
 DEFAULT_STORAGE = os.environ.get("PAVOZ_STORAGE", os.path.expanduser("~/.pavoz/data"))
 
 

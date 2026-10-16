@@ -49,7 +49,21 @@ class FileStorage(StorageBackend):
     """文件系统实现: root_dir/<key>.json. 测试 / 单机默认."""
 
     def __init__(self, root_dir: str | os.PathLike):
-        self.root = os.fspath(root_dir)
+        # ⚠️ 展开必须在**这一层**, 不能只放在 CLI 的默认值上: 实测两个入口
+        # 都把字面量 `~` 写进了磁盘 (修复前) ——
+        #   1) FileStorage("~/.pvos/data")          库 API 直传。examples/03_
+        #      compare_diff.py 的 docstring 正是这么教的, 照抄就中招。
+        #   2) PAVOZ_STORAGE='~/.pvos/data' pavos run  cli.py 只 expand 了**默认值**
+        #      那一支 (`os.environ.get(spec, os.path.expanduser(...))`), env 命中时
+        #      原样返回, 里的 `~` 没人展开。
+        # 后果不是报错, 是**静默写到别处**: 在 cwd 里长出一棵字面量名叫 `~` 的目录树,
+        # 数据全落进去。于是同一份数据, 写的一侧读 $HOME/.pvos/data, 读的一侧读
+        # ./\~/.pvos/data —— `03_compare_diff.py` 对刚跑完的 task 报"该 task 现有的
+        # run: (无)", 而且每读一次就在 cwd 留一棵垃圾目录。
+        # 这里是路径的**唯一**汇合点 (CLI 的 _storage 也走 FileStorage), 放这一处
+        # 两个入口一起修好; os.path.expanduser 只处理**行首**的 ~ (与 shell 一致),
+        # 路径中间的 ~ 与绝对/相对路径都不受影响 —— 纯修正, 不改既有解析语义。
+        self.root = os.path.expanduser(os.fspath(root_dir))
         os.makedirs(self.root, exist_ok=True)
 
     def _path(self, key: str) -> str:

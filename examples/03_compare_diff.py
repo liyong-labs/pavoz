@@ -20,6 +20,13 @@
 现在改用**公开**的 `CheckpointStore` API (`pavos.__init__` 里导出, 不是内部路径):
 它本来就是 CLI 底层用的那一个。库 API 能读指定 run, CLI 读不了 —— 这个差在本文件
 的 docstring 里说明, 免得下一个人以为是 CLI 少了个 flag。
+
+⚠️ 2026-10-17 顺带修掉一个让本文件**必然读空**的 bug: `FileStorage` 原先不
+`expanduser`, 于是这里 (和下面 `_default_store` 的默认值) 里的 `"~/.pvos/data"`
+是字面量 —— 读的是 `./~/.pvos/data`, 而 CLI 写的是 `$HOME/.pvos/data`。照
+docstring 用法跑 (不带 PAVOZ_STORAGE) 必然报"该 task 现有的 run: (无)",
+且每读一次就在 cwd 造一棵字面量 `~` 目录树。现在 `FileStorage.__init__` 统一
+展开, 本文件的默认值与 CLI 才指向同一处 —— 别再把它改回字面量。
 """
 import json
 import os
