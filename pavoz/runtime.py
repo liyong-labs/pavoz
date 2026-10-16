@@ -318,12 +318,29 @@ class Runtime:
             _ct = asyncio.current_task()
             assert _ct is not None, "run() 协程体内必有 running task"
             self.cancel_registry._register(task_id, _ct)
+        _cancelled = False      # 本次 run 是否以 cancelled 收场 (下面的 finally 用)
         try:
-            return await self._run_impl(
+            _res = await self._run_impl(
                 dag, task_id, initial_state, resume, skip_unchanged)
+            _cancelled = _res.status == "cancelled"
+            return _res
         finally:
             if self.cancel_registry is not None:
                 self.cancel_registry._unregister(task_id)
+                # 本次 run **没有**被取消 ⇒ 清掉残留的取消标志 (2026-10-16)。
+                #
+                # 标志的清除此前完全是 caller 的责任 (`CancelRegistry.reset`), 而
+                # 留着的后果比"caller 忘了"严重得多 —— 它污染的是**下一个** run:
+                # 实测 run#1 正常 done (取消请求到达得比收尾还晚), 紧接着 run#2
+                # 用同一 task_id 启动, **一个 stage 都没跑**就被判 cancelled, 而
+                # 上一轮的日志还写着"已落 cp, resume 可续跑"。那种"正常结束却
+                # 带着取消标志"的组合只有竞态能造出来, 没有任何语义要保留它。
+                #
+                # 边界: 被取消的 run **保留**标志 —— 那是 caller 明确表达过的
+                # 意图 (取消这个 task), 复用前由 caller 决定何时 reset。
+                # 抛异常的路径 `_cancelled` 保持 False ⇒ 也清标志 (异常不是取消)。
+                if not _cancelled:
+                    self.cancel_registry._flags.discard(task_id)
 
     async def _run_impl(
         self,
@@ -670,8 +687,16 @@ class Runtime:
             except asyncio.CancelledError:
                 # R1a: registry 来源的硬杀 → 落 cp 返 cancelled RunResult;
                 # 非 registry 来源 (外部 task.cancel) → 照旧上抛, 行为保持.
+                #
+                # ⚠️ 判据必须是"_is_killing" (本进程**确实**向这个 task 发过
+                # t.cancel), 不能是 `is_cancelled` (仅仅"有取消标志") —— 后者被
+                # 遗留标志骗过, 于是**外部**取消也被当成硬杀吞掉 (2026-10-16 实测):
+                # 上一轮取消的标志还在, 本轮 `asyncio.wait_for(rt.run(...), 0.1)`
+                # 超时抛来的 CancelledError 被转成 RunResult(status="cancelled"),
+                # **TimeoutError 不抛** —— 调用方的超时保护静默失效, 而那通常是
+                # 防止 run 无限挂着的最后一道防线。
                 if self.cancel_registry is None \
-                        or not self.cancel_registry.is_cancelled(task_id):
+                        or task_id not in self.cancel_registry._killing:
                     raise
                 stage_statuses[name] = "cancelled"
                 result.stage_statuses = stage_statuses
@@ -686,7 +711,8 @@ class Runtime:
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": "cancelled"})
                 logger.warning(
-                    "task=%s run=%s hard-killed at stage=%s (已完成 %d stages 已落 cp)",
+                    "task=%s run=%s hard-killed at stage=%s (已完成 %d stages 已落 cp; "
+                    "取消标志仍在, 要续跑或复用该 task_id 先 registry.reset(task_id))",
                     task_id, run_id[:8], name, len(done_stages),
                 )
                 return result
@@ -709,7 +735,9 @@ class Runtime:
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": "cancelled"})
                 logger.warning(
-                    "task=%s run=%s cancelled at stage=%s (已完成 %d stages 已落 cp, resume 可续跑)",
+                    "task=%s run=%s cancelled at stage=%s (已完成 %d stages 已落 cp; "
+                    "要续跑或复用该 task_id, 先 registry.reset(task_id) —— "
+                    "取消标志仍在, 不 reset 的新 run 会立刻再次 cancelled)",
                     task_id, run_id[:8], name, len(done_stages),
                 )
                 return result

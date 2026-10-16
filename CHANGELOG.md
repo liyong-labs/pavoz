@@ -11,6 +11,8 @@
 
 | 变化 | 你会看到什么 | 怎么办 |
 |------|-------------|--------|
+| **`asyncio.wait_for(rt.run(...), t)` 现在会抛 `TimeoutError`** | 此前即使 run 被外部超时取消, 也可能返回一个 `RunResult(status="cancelled")` 而**不抛异常** —— 你的超时保护静默失效 | 若你**依赖**"不抛异常、返回 cancelled RunResult"这个行为, 改判返回值; 正常依赖超时的代码无需改 |
+| **取消日志措辞变了** | graceful / hard 两条日志都多了一句 `先 registry.reset(task_id)`, 旧的"resume 可续跑"被去掉 | 仅日志文本, 无行为影响 |
 | **旧 checkpoint 不能续跑** | `CheckpointMismatchError`, 且 **resume / fork_run / replay 三条入口都会报** (都走 `workflow_hash` 校验)。`workflow_hash` 自本版起含 **dag 名**, 已在盘的旧 cp 指纹与新算法不同 | 该 task 重跑一次生成新 cp; 若只是**改了 dag 名**, 把名字改回去或换 task_id |
 | **`state --key <K>` 缺 K 时** | 退出码从 `0` 变 `1`, 并点名缺失的 key + 列可用 key (原来输出 `null`、rc=0, 与"值就是 null"逐字节相同) | 依赖旧语义做 `X=$(pavoz state --key K)` 的脚本改判退出码 |
 | **`EnginePolicy` 构造期校验** | 负值 / 限值类字段的 `0` 现在抛 `ValueError`。此前负 `stage_alive_interval` 会变忙循环 (实测 0.2s 的 stage 喷 58099 条 `stage_alive` 而 run 报 done) | 想"不限 / 关闭"请显式写 `None` |
@@ -77,6 +79,30 @@
   仍按 **FatalError 语义**处理 (fail、不重试), 携带 category 不改变这一点。
 
 ### Fixed
+
+- ★ **外部取消被当成 registry 硬杀吞掉 → 调用方的超时保护静默失效**。
+  `CancelledError` 本身不带"谁发起的"信息, 而 registry 硬杀与**外部**取消
+  (`asyncio.wait_for` 超时 / 调用方 `t.cancel()` / loop 关闭) 走的是同一个异常。
+  `Runtime` 此前只看"有没有取消标志"就把它转成 `RunResult(status="cancelled")`,
+  而遗留标志正好满足那个条件。实测: `asyncio.wait_for(rt.run(...), 0.1)` **不抛
+  `TimeoutError`**, 返回一个假的 RunResult —— 而超时保护通常是防止 run 无限
+  挂着的最后一道防线。
+  改法: `CancelRegistry` 新增 `_killing`, 只在**真的**向该 task 发过
+  `Task.cancel()` 时置位 (拿不到句柄 / 已结束则不置), 生命周期与 `_tasks` /
+  `_current` 一致; `Runtime` 改查它。真·registry 硬杀仍照旧转 RunResult。
+
+- **run 正常收场时清掉竞态残留的取消标志**。取消请求在**最后一个** stage 执行
+  期间到达时, 那个 stage 之后没有下一次 attempt 的边界检查 ⇒ run 正常 `done`,
+  而标志留下了; 下一个用同一 task_id 的 run **一个 stage 都没跑**就被判
+  `cancelled`。"正常结束却带着取消标志"只可能是竞态残留, 没有语义要保留它。
+  边界: 被取消的 run **保留**标志 —— 那是 caller 明确表达过的意图, 复用前由
+  caller 决定何时 `reset`。
+
+- **取消日志不再把 caller 引导到一条走不通的路上**。graceful 与 hard 两条日志
+  原先只说"已落 cp, **resume 可续跑**" / "已落 cp", 只字不提取消标志仍在, 而不
+  `reset` 的新 run 会立刻再次 cancelled。现在两条都点名 `registry.reset(task_id)`,
+  旧的"可续跑"措辞一并去掉。`CancelRegistry.reset` 的 docstring 也补上了
+  "何时必须调 / 何时不用调"。
 
 - ★ **条件边的分支闸门失效 → 未选中分支的下游跑到了闸门之前, 静默错结果**。
   形状 `s_a → s_b → s_gate{go→s_c, end→s_fin}`, `s_c → s_d`, router 选 `end`
