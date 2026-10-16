@@ -697,8 +697,19 @@ class Runtime:
                                        "dag": dag.name, "status": result.status})
                 return result
 
-            if delta:
-                stage_deltas_visits.setdefault(name, []).append(delta)  # R1: 按 visit 追加
+            # **无条件**追加, 空 delta 也要占一条 (2026-10-16 修)。
+            # 这两个列表必须逐条对齐: done_stages 的第 n 个条目 ↔
+            # stage_deltas_visits[name] 的第 n 条。重建 (Checkpoint._rebuild_state)
+            # 按**序号位置**配对; 之前这里 `if delta:` 让"返回 {} / None 的那次执行"
+            # 只进 done 不进 deltas ⇒ 永久错位。
+            #
+            # 实测后果 (循环图 + 某次访问返回空 delta + 其间有链式覆盖同名 key):
+            #   活跑   {'n': 2, 'k': 'W2', 'report': 'final=W2'}
+            #   cp     {'k': 'P',  'n': 2, 'report': 'final=W2'}   ← cp 自相矛盾
+            #   $ pavoz state --key k      → "P"
+            #   $ pavoz state --key report → "final=W2"          ← 同一份文件, 两种答案
+            # 无异常、无日志。代价只是每个空 visit 多一个 {} (几十字节)。
+            stage_deltas_visits.setdefault(name, []).append(delta or {})  # R1: 按 visit 追加
             stage_ts[name] = time.time()   # v0.7: 完成时刻 (内容过期 TTL 判定用)
             done_stages.append(name)
             run_exec_order.append(name)

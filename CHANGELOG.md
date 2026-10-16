@@ -15,6 +15,7 @@
 | **`state --key <K>` 缺 K 时** | 退出码从 `0` 变 `1`, 并点名缺失的 key + 列可用 key (原来输出 `null`、rc=0, 与"值就是 null"逐字节相同) | 依赖旧语义做 `X=$(pavoz state --key K)` 的脚本改判退出码 |
 | **`EnginePolicy` 构造期校验** | 负值 / 限值类字段的 `0` 现在抛 `ValueError`。此前负 `stage_alive_interval` 会变忙循环 (实测 0.2s 的 stage 喷 58099 条 `stage_alive` 而 run 报 done) | 想"不限 / 关闭"请显式写 `None` |
 | **非有限值不能进 state** | `stage` 返回 `NaN`/`±Inf` 或 `--set-file` 里写 `.nan` 现在报 `ValueError`。此前能跑通, 但落盘 JSON 含 `NaN` 字面量, **不是合法 RFC 8259**, 任何严格解析器 (其他语言 / jq / JSONB) 拒收整个文件 | 用 `None` / 字符串表达"无值" |
+| **旧 cp 的 visit 对齐可能本来就有错位** | 修复前, `stage` 返回 `{}`/`None` 的那次执行只进 `done_stages` 不进 deltas ⇒ 老 cp 里两个列表已经错位, 升级后**照旧错** | 受影响的 cp 重跑一次; 新写的不会错 (见 Fixed 第一条) |
 | **fork 的 cp 重建结果会变** | 带 `fork_keep_counts` 的旧 cp (0.5.6 写的 fork), 升级后 `cp.state` **变成正确值** (此前取到 fork 之前那条 delta) | 无需操作; 若你**依赖过**旧行为(把重建值当"上次真实产出"), 那是 bug 不是契约 |
 | **可调用对象 route_fn 开始落盘** | `class Router: def __call__` 这种写法, 此前 `run` 报 `done` 但 **checkpoint 一个都存不下来** (save 被"失败不杀 run"吞掉), 升级后正常落盘 | 无需操作; 若你已经在别处绕开, 现在可以去掉 |
 | **`async __call__` 的 route_fn 被拒** | 声明期 `TypeError`。此前 `inspect.iscoroutinefunction(实例)` 是 `False` 会漏网, 运行期才报一条**指错方向**的错 | 异步判定做成 judge-stage 写 state, 边只读 |
@@ -41,6 +42,29 @@
   仍按 **FatalError 语义**处理 (fail、不重试), 携带 category 不改变这一点。
 
 ### Fixed
+
+- ★ **空 delta 让 `done_stages` 与 `stage_deltas_visits` 永久错位 → checkpoint
+  自相矛盾**。`_run_inner` 追加 delta 曾带 `if delta:` 前置, 而 `done_stages.append`
+  是无条件的 ⇒ "stage 返回 `{}` / `None`"的那次执行只进 done 不进 deltas。
+  `Checkpoint._rebuild_state` 按**序号位置**配对 (顺序对齐与尾对齐都建立在这个前提
+  上), 错位之后会把某次 visit 的 delta 配到另一次 visit 上。**纯非 fork run 就能
+  中招**, 触发条件: 循环图 (某 stage 被访问 ≥2 次) + 某次访问返回空 delta + 其间有
+  链式覆盖同名 key。实测:
+
+      活跑   {'n': 2, 'k': 'W2', 'report': 'final=W2'}
+      cp     {'k': 'P',  'n': 2, 'report': 'final=W2'}     ← 同一份文件两个答案
+      $ pavoz state --key k      → "P"
+      $ pavoz state --key report → "final=W2"
+
+  `report` 说 k=W2 而 `k` 字段是 P —— **不存在任何一次执行能同时产出这两个值**。
+  无异常、无日志; 凡是读 cp 的路径 (`pavoz state` / resume / `diff_runs` /
+  `run_stage` / fork 基线) 全部拿到错值。fork 路径上同一个根因表现为**幽灵 key**
+  (尾对齐把截断点之前的历史 delta 重新钉回来, 本次 run 从未产生过该数据)。
+
+  修法: append **无条件** (空 delta 也占一条; 代价是每个空 visit 多一个 `{}`)。
+  两个列表从此逐条对齐 —— 这是重建正确性的前提, 不是优化。
+  **发现方式**: 对 `_rebuild_state` 做对抗性审查时由独立子 agent 报出, 我先用自己的
+  脚本独立复现 (第一版复现脚本还写错了 —— 循环不收敛) 才动手。
 
 - **可调用对象当 `route_fn` → 每一次 checkpoint save 都静默失败, 而 run 报 done**。
   `_stage_source_id` 只认 plain function 与绑定方法; `class Router: def
