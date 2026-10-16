@@ -10,8 +10,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from pavoz import DAG, CheckpointStore, FileStorage, Runtime, diff_runs
 
 

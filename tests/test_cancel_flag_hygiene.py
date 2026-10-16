@@ -214,7 +214,7 @@ async def test_killing_marker_is_cleared_when_run_unregisters(tmp_path):
     # run 收尾后立刻就该没了 —— 这正是本用例要钉的东西
     assert "kl" not in reg._killing, (
         "run 收尾时 `_killing` 必须被清 (与 `_tasks`/`_current` 同生命周期), "
-        f"实得仍含 'kl'")
+        f"实得仍含 {sorted(reg._killing)}")
 
     await rt.run(_one_stage(0.0, "kl"), "kl")
     reg.reset("kl")

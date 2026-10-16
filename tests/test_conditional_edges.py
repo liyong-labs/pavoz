@@ -863,5 +863,5 @@ def test_both_rules_violated_reports_v2_first():
     assert "静态旁路" in msg and "s_r2" in msg, (
         f"应先报 V2' 并点名 s_r2 (静态依赖 router1 却不在其 mapping), 实得: {msg}")
     assert "不可静态依赖 router" not in msg, (
-        f"V3' 也违反, 但一次只报一条 —— 这条断言是为了钉住'不会两条一起报', "
-        f"不是要求顺序。若将来调了顺序, 改这里")
+        "V3' 也违反, 但一次只报一条 —— 这条断言是为了钉住'不会两条一起报', "
+        f"不是要求顺序。若将来调了顺序, 改这里 (实得: {msg})")

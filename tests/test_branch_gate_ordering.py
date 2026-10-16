@@ -206,6 +206,9 @@ async def test_gate_holds_for_deep_chain_below_a_route_only_stage(tmp_path):
 
     assert ran == ["s_head", "s_gate", "s_fin"], (
         f"go 分支的整条静态链 (s_c→s_d→s_e) 都不该跑, 实得 {ran}")
+    # 走到 end 分支的 run 必须报 done —— 上一版这条只查 `ran`, 漏掉了 run 自身
+    # 的结论 (而"闸门把 stage 挡在门外"这类改动的典型失效正是 status 变了)。
+    assert r.status == "done", f"走 end 分支应正常收尾, 实得 {r.status}: {r.error}"
     assert "s_e" not in ran
 
 

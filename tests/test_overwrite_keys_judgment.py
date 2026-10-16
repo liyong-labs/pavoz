@@ -23,10 +23,6 @@
 
 from __future__ import annotations
 
-import tempfile
-
-import pytest
-
 from pavoz import DAG, CheckpointStore, FileStorage, Runtime
 
 
