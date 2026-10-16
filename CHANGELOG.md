@@ -11,6 +11,7 @@
 
 | 变化 | 你会看到什么 | 怎么办 |
 |------|-------------|--------|
+| **并发 run 共用一个 `task_id`** | 第二个 `run()` 现在抛 `TaskIdInUse` (需 `from pavoz import TaskIdInUse`)。此前是**静默撞车**: 硬杀不生效却报告成功、`killable=False` 被绕过、目标 run 被误伤 | 给并发 run 各自独立的 `task_id`。**串行**复用同一 task_id 不受影响 |
 | **`asyncio.wait_for(rt.run(...), t)` 现在会抛 `TimeoutError`** | 此前即使 run 被外部超时取消, 也可能返回一个 `RunResult(status="cancelled")` 而**不抛异常** —— 你的超时保护静默失效 | 若你**依赖**"不抛异常、返回 cancelled RunResult"这个行为, 改判返回值; 正常依赖超时的代码无需改 |
 | **取消日志措辞变了** | graceful / hard 两条日志都多了一句 `先 registry.reset(task_id)`, 旧的"resume 可续跑"被去掉 | 仅日志文本, 无行为影响 |
 | **旧 checkpoint 不能续跑** | `CheckpointMismatchError`, 且 **resume / fork_run / replay 三条入口都会报** (都走 `workflow_hash` 校验)。`workflow_hash` 自本版起含 **dag 名**, 已在盘的旧 cp 指纹与新算法不同 | 该 task 重跑一次生成新 cp; 若只是**改了 dag 名**, 把名字改回去或换 task_id |
@@ -79,6 +80,26 @@
   仍按 **FatalError 语义**处理 (fail、不重试), 携带 category 不改变这一点。
 
 ### Fixed
+
+- ★ **两个并发 run 共用一个 task_id → 取消既杀不到、又误伤, 且绕过 `killable`**。
+  `CancelRegistry` 以 `task_id` 为唯一键, 而 `_register` 是纯覆盖写入。实测:
+  run#1 正常收尾时的 `_unregister("SAME")` 把**还在跑的 run#2** 的句柄一起摘掉,
+  三层后果一层比一层糟:
+  1. `cancel(task_id, "hard")` 拿不到句柄 ⇒ `Task.cancel()` **根本没执行**, 而
+     `cancel()` 正常返回 —— 调用方以为杀成功了 (**硬杀静默失效**)
+  2. `_current` 同时被清空 ⇒ 目标 stage 的 `killable=False` **读不到** ⇒ 不抛
+     `NotKillable`, 那个"拒绝硬杀"的安全保证被**绕过**
+  3. 但取消**标志**照样设上了 ⇒ 目标 run 在下一个 stage 边界被截停 ⇒ **误伤**
+     (明明没被杀, 却拿到 `status="cancelled"`)
+
+  修法: `_register` 检测到该 task_id 已有**活跃** run 时抛新的
+  `TaskIdInUse`, 直接拒绝; `_unregister` 加身份校验 (只摘自己注册的那个句柄,
+  防御性)。**之所以拒绝而不是想办法支持**, 是因为 `cancel(task_id)` 在两个 run
+  共用时根本无法定义该取消哪一个 —— 没有句柄级寻址; 且 checkpoint 也按 task_id
+  存, 两者本就会抢 latest 指针。与其选一个默认目标再静默出错, 不如启动时讲清。
+  边界: **串行**复用同一 task_id (run → resume → fork) 照旧; 判据只认"活跃"
+  run, "已结束但尚未 unregister"的窗口不算占用; 没传 registry 时不拦 (没有
+  `cancel()` 可误伤)。
 
 - ★ **外部取消被当成 registry 硬杀吞掉 → 调用方的超时保护静默失效**。
   `CancelledError` 本身不带"谁发起的"信息, 而 registry 硬杀与**外部**取消

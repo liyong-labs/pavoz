@@ -458,7 +458,19 @@ await task   # → RunResult(status="cancelled", failed_stage=..., retryable=Non
 
 - graceful 走 stage 间/重试间检查点; hard 对运行中 stage 注入 CancelledError,
   run() 捕获后落 checkpoint 并返回 cancelled 结果 (caller 须保证 stage 幂等)
-- 非 registry 来源的外部 task.cancel() 仍照旧抛 CancelledError
+- 非 registry 来源的外部取消 (`asyncio.wait_for` 超时 / 调用方 `t.cancel()` /
+  loop 关闭) 仍照旧**上抛** —— 此前只看"有没有取消标志"就把它转成
+  `RunResult(status="cancelled")`, 于是 `wait_for(rt.run(...), t)` **不抛
+  `TimeoutError`**, 调用方的超时保护静默失效
+- **一个 task_id 同时只能有一个活跃 run**: 第二个 `run()` 抛 `TaskIdInUse`。
+  registry 按 task_id 寻址, `cancel(task_id)` 在两个 run 共用时无法定义该取消
+  哪一个 (且 checkpoint 也按 task_id 存, 两者会抢 latest 指针)。此前是静默
+  撞车: 先收尾的 run 会把还在跑的那个的句柄一起摘掉, 导致硬杀**根本没执行**却
+  返回成功、`killable=False` 的保护被绕过、而标志仍设上导致**误伤**。
+- run 被取消后**标志保留** (caller 表达过的意图): 要续跑或复用该 task_id,
+  先 `reg.reset(task_id)` —— 不 reset 的新 run 会立刻再次 `cancelled`。
+  run **正常**结束 (done/failed) 时 `Runtime` 会自己清掉竞态残留的标志。
+  取消日志 (graceful / hard 两条) 都会点名 `registry.reset(task_id)`
 
 ### `diff_runs(cp_a, cp_b) -> dict` / `CheckpointStore.diff_runs(task, run_a, run_b="")`
 

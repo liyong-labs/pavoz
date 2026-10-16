@@ -526,7 +526,26 @@ await task   # → RunResult(status="cancelled", failed_stage=..., retryable=Non
 - graceful uses the stage/retry checkpoints; hard injects CancelledError into
   the running stage — the run saves its checkpoint and returns a cancelled
   result (callers must guarantee stage idempotency)
-- External `task.cancel()` from outside the registry still raises CancelledError
+- Cancellation from **outside** the registry (`asyncio.wait_for` timeout, the
+  caller's own `t.cancel()`, loop shutdown) still propagates as an exception.
+  Previously the runtime only asked "is there a cancel flag?" and converted
+  that into `RunResult(status="cancelled")`, so `wait_for(rt.run(...), t)`
+  **did not raise `TimeoutError`** — the caller's timeout protection silently
+  stopped working
+- **At most one active run per task_id**: a second `run()` raises
+  `TaskIdInUse`. The registry addresses runs by task_id, so `cancel(task_id)`
+  has no well-defined target when two runs share one (and checkpoints are keyed
+  by task_id too — they'd fight over the latest pointer). This used to collide
+  silently: whichever run finished first unregistered the *other* one's handle,
+  so the hard kill **never fired** yet reported success, the target stage's
+  `killable=False` guard was bypassed, and the flag still got set — mis-killing
+  a run that was never actually killed
+- After a run is cancelled the **flag persists** (it expresses what the caller
+  asked for): call `reg.reset(task_id)` before resuming or reusing that
+  task_id — a new run without a reset is cancelled again immediately. A run
+  that ends **normally** (done/failed) has its leftover race-condition flag
+  cleared by `Runtime` itself. Both cancellation log lines (graceful and hard)
+  name `registry.reset(task_id)`
 
 ### `diff_runs(cp_a, cp_b) -> dict` / `CheckpointStore.diff_runs(task, run_a, run_b="")`
 

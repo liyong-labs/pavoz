@@ -12,11 +12,15 @@ from __future__ import annotations
 
 import asyncio
 
-__all__ = ["CancelRegistry", "NotKillable"]
+__all__ = ["CancelRegistry", "NotKillable", "TaskIdInUse"]
 
 
 class NotKillable(Exception):
     """目标 run 当前 stage 标了 killable=False, 拒绝硬杀."""
+
+
+class TaskIdInUse(Exception):
+    """该 task_id 已有活跃 run —— registry 按 task_id 寻址, 无法区分两个 run."""
 
 
 class CancelRegistry:
@@ -82,12 +86,46 @@ class CancelRegistry:
 
     # ── Runtime 内部挂钩 (下划线 = 非 caller API) ──────────
     def _register(self, task_id: str, task: asyncio.Task) -> None:
+        """登记运行句柄。
+
+        ⚠️ 同一个 task_id **已有活跃 run** 时直接拒绝 (2026-10-16, 实测)。
+
+        此前是纯覆盖写入, 于是两个并发 run 共用 task_id 时, 先收尾的那个会把
+        还在跑的那个的句柄一起摘掉, 三层后果一层比一层糟:
+
+        1. `cancel(task_id, "hard")` 拿不到句柄 ⇒ `Task.cancel()` **根本没执行**,
+           而 `cancel()` 正常返回 —— 调用方以为杀成功了 (硬杀静默失效)
+        2. `_current` 同时被清空 ⇒ 目标 stage 的 `killable=False` **读不到** ⇒
+           不抛 `NotKillable`, 那个"拒绝硬杀"的安全保证被绕过
+        3. 但取消**标志**照样设上了 ⇒ 目标 run 在下一个 stage 边界被截停 ⇒
+           **误伤**: 明明没被杀, 却拿到 `status="cancelled"`
+
+        之所以在 `_register` 拒绝而不是想办法支持, 是因为 `cancel(task_id)` 这个
+        API 在"两个 run 共用 task_id"时**根本无法定义该取消哪一个** —— 没有句柄
+        级的寻址。与其选一个默认目标然后静默出错, 不如启动时就明确拒绝
+        (checkpoint 也按 task_id 存, 两个 run 本就会抢 latest 指针)。
+        """
+        cur = self._tasks.get(task_id)
+        if cur is not None and not cur.done():
+            raise TaskIdInUse(
+                f"task_id={task_id} 已被另一个 run 占用 (registry 按 task_id 寻址, "
+                f"无法区分该取消哪一个; checkpoint 也按 task_id 存, 两者会抢 "
+                f"latest 指针). 请给并发 run 各自独立的 task_id."
+            )
         self._tasks[task_id] = task
 
-    def _unregister(self, task_id: str) -> None:
-        self._tasks.pop(task_id, None)
-        self._current.pop(task_id, None)
-        self._killing.discard(task_id)      # 与句柄同生命周期, 不留到下一个 run
+    def _unregister(self, task_id: str, task: asyncio.Task | None = None) -> None:
+        """摘句柄。`task` 给了就**只摘自己注册的那个**。
+
+        身份校验是防御性的: `_register` 现在会拒绝重复占用, 但万一有别的路径
+        (或将来新增的调用方) 让两个 run 共用了 task_id, 收尾的那个也不该把别人
+        还在跑的句柄摘掉 —— 那正是上面那三层后果的第 1 步。
+        """
+        cur = self._tasks.get(task_id)
+        if task is None or cur is task:
+            self._tasks.pop(task_id, None)
+            self._current.pop(task_id, None)
+            self._killing.discard(task_id)   # 与句柄同生命周期, 不留到下一个 run
 
     def _set_stage(self, task_id: str, stage: str, killable: bool) -> None:
         self._current[task_id] = (stage, killable)

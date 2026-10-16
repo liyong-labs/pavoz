@@ -32,7 +32,7 @@ import asyncio
 import pytest
 
 from pavoz import DAG, CheckpointStore, FileStorage, Runtime
-from pavoz.cancel import CancelRegistry, NotKillable
+from pavoz.cancel import CancelRegistry, NotKillable, TaskIdInUse
 
 
 def _one_stage(delay: float, name: str = "cx") -> DAG:
@@ -281,3 +281,181 @@ async def test_not_killable_stage_blocks_hard_kill(tmp_path):
     assert "nk" not in reg._killing, "拒绝硬杀就不该设 _killing"
     r = await t
     assert r.status == "done"
+
+
+# ── 3. 一个 task_id 只能有一个活跃 run ─────────────────────────────────────
+#
+# registry 按 task_id 寻址, 所以"两个并发 run 共用一个 task_id"在语义上**无法
+# 定义** —— `cancel(task_id)` 不知道该取消哪一个 (checkpoint 也按 task_id 存,
+# 两者还会抢 latest 指针)。修复前是静默撞车, 三层后果一层比一层糟。
+
+async def test_second_run_on_same_task_id_is_rejected(tmp_path):
+    """★ 第二个 run 必须**明确拒绝**, 而不是静默抢走句柄。
+
+    修复前 run#1 收尾时的 `_unregister("SAME")` 会把还在跑的 run#2 的句柄一起
+    摘掉, 于是: `cancel(hard)` 拿不到句柄 ⇒ `Task.cancel()` 根本没执行却返回
+    成功 (硬杀静默失效); `_current` 同时被清空 ⇒ `killable=False` 读不到 ⇒ 不抛
+    `NotKillable`; 但标志照样设上 ⇒ run#2 在 stage 边界被截停 ⇒ **误伤**。
+    """
+    reg = CancelRegistry()
+    rt = _rt(tmp_path, reg)
+
+    first = asyncio.create_task(rt.run(_two_stage(0.2, "shared"), "shared"))
+    await asyncio.sleep(0.02)
+
+    with pytest.raises(TaskIdInUse):
+        await rt.run(_two_stage(0.05, "other"), "shared")
+
+    r = await first
+    assert r.status == "done", f"拒绝第二个 run 不该影响第一个, 实得 {r.status}"
+
+
+async def test_rejection_leaves_the_first_run_cancelable(tmp_path):
+    """★ 拒绝之后, 第一个 run 的取消能力**完好** —— 三个层面都要在。
+
+    这条是"修好撞车"与"只是让它报错"的区别: 只报错但把 registry 状态搅坏的
+    实现, 这里会红。
+    """
+    reg = CancelRegistry()
+    rt = _rt(tmp_path, reg)
+
+    first = asyncio.create_task(rt.run(_two_stage(0.5, "kc"), "kc"))
+    await asyncio.sleep(0.05)
+
+    with pytest.raises(TaskIdInUse):
+        await rt.run(_two_stage(0.05, "x"), "kc")
+
+    # (1) 句柄还在: cancel 能真的杀掉它
+    assert reg._tasks.get("kc") is not None, "拒绝第二个 run 不该动第一个 run 的句柄"
+    reg.cancel("kc", "hard")
+    r = await first
+    assert r.status == "cancelled", f"硬杀应生效, 实得 {r.status}"
+
+
+async def test_killable_false_guard_survives_a_rejected_competing_run(tmp_path):
+    """★ `killable=False` 的保护不能被"撞车"绕过去。
+
+    这是原缺陷的第 2 层: `_current` 被别人清掉 ⇒ 读不到 killable ⇒ 不抛
+    `NotKillable`。修复后即使有第二个 run 被拒绝, 第一个 run 的 killable 信息
+    仍在, 硬杀照旧被拒。
+    """
+    reg = CancelRegistry()
+    dag = DAG("protected")
+    reached = asyncio.Event()
+
+    @dag.stage()
+    async def s_a(ctx):
+        await asyncio.sleep(0.02)
+        return {"a": 1}
+
+    @dag.stage(depends_on=["s_a"], killable=False)
+    async def s_protected(ctx):
+        reached.set()
+        await asyncio.sleep(0.3)
+        return {"p": 1}
+
+    rt = _rt(tmp_path, reg)
+    first = asyncio.create_task(rt.run(dag, "prot"))
+    await reached.wait()
+
+    with pytest.raises(TaskIdInUse):
+        await rt.run(_two_stage(0.05, "y"), "prot")
+
+    with pytest.raises(NotKillable):
+        reg.cancel("prot", "hard")
+
+    assert first.done() is False, "被拒的硬杀不该动得了这个 run"
+    r = await first
+    assert r.status == "done"
+
+
+async def test_unregister_only_removes_its_own_handle(tmp_path):
+    """`_unregister` 带句柄时只摘自己那个 —— 防御性那一层。
+
+    `_register` 已拒绝重复占用, 所以这条正常走不到; 但万一将来新增了别的调用
+    路径, 收尾的 run 也不该把别人还在跑的句柄摘掉。
+    """
+    reg = CancelRegistry()
+
+    async def _a():
+        return None
+
+    async def _b():
+        return None
+
+    ta, tb = asyncio.create_task(_a()), asyncio.create_task(_b())
+    reg._tasks["k"] = ta                      # 绕过 _register, 模拟历史/竞态残留
+    reg._current["k"] = ("s_x", False)
+    reg._killing.add("k")
+
+    reg._unregister("k", tb)                  # tb 不是注册的那个
+    assert reg._tasks.get("k") is ta, "不该摘掉别人的句柄"
+    assert reg._current.get("k") == ("s_x", False)
+    assert "k" in reg._killing
+
+    reg._unregister("k", ta)                  # 才是自己的
+    assert "k" not in reg._tasks
+    assert "k" not in reg._current
+    assert "k" not in reg._killing
+    await asyncio.gather(ta, tb)
+
+
+async def test_sequential_runs_on_same_task_id_are_fine(tmp_path):
+    """反向约束: **串行**复用同一 task_id 必须照旧 —— 拒绝只针对并发。
+
+    第一个 run 已 `_unregister`, 第二个自然会注册成功。这是绝大多数正常用法
+    (run → resume → fork), 撞上了就是灾难性误伤。
+    """
+    reg = CancelRegistry()
+    rt = _rt(tmp_path, reg)
+
+    r1 = await rt.run(_two_stage(0.0, "seq"), "seq")
+    assert r1.status == "done"
+    r2 = await rt.run(_two_stage(0.0, "seq"), "seq")
+    assert r2.status == "done"
+    r3 = await rt.run(_one_stage(0.0, "seq"), "seq")
+    assert r3.status == "done"
+
+
+async def test_no_registry_means_shared_task_id_is_not_rejected(tmp_path):
+    """没传 registry 时不拦 —— 撞车是 registry 的寻址问题, 与 run 本身无关。
+
+    不传 registry 就没有 `cancel()` 可误伤, 而 checkpoint 抢占本来就是 run
+    层的既有语义, 不该在这次改动里被顺带禁止。
+    """
+    rt = Runtime(checkpoint_store=CheckpointStore(FileStorage(tmp_path / "cp")))
+
+    first = asyncio.create_task(rt.run(_two_stage(0.2, "noreg"), "noreg"))
+    await asyncio.sleep(0.02)
+    second = asyncio.create_task(rt.run(_two_stage(0.05, "noreg"), "noreg"))
+
+    await asyncio.gather(first, second)
+
+
+async def test_finished_handle_does_not_count_as_occupied(tmp_path):
+    """★ "已结束但尚未 `_unregister`" 的句柄**不算占用**。
+
+    `run()` 的 finally 紧跟 `_run_impl` 返回, 所以正常路径下这个窗口极小 ——
+    但它存在 (await 边界会让出)。判据若写成 `cur is not None`, 撞上这个窗口的
+    串行复用就会被误拒, 而那是最不该误伤的用法 (run → resume → fork)。
+
+    变异验证时正是这一条缺失: 把判据放宽成"已完成的也算占用", 上面那批用例
+    **全绿** —— 因为它们都在第一个 run 完全收尾之后才复用。
+    """
+    reg = CancelRegistry()
+    rt = _rt(tmp_path, reg)
+
+    async def _noop():
+        return None
+
+    finished = asyncio.create_task(_noop())
+    await finished
+    assert finished.done()
+
+    # 模拟"上一个 run 已结束, 但 finally 还没跑到"的那一瞬间
+    reg._tasks["win"] = finished
+    reg._current["win"] = ("s_x", True)
+
+    r = await rt.run(_one_stage(0.0, "win"), "win")   # 不该抛 TaskIdInUse
+    assert r.status == "done"
+    assert "win" not in reg._tasks, "新 run 应正常接管并清理该键"

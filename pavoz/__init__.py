@@ -17,7 +17,7 @@ per-node retry + absolute deadline) + Checkpoint (断点续跑) + TestPipe (回�
     StorageBackend / FileStorage / CheckpointStore
 """
 
-from .cancel import CancelRegistry, NotKillable
+from .cancel import CancelRegistry, NotKillable, TaskIdInUse
 from .checkpoint import (
     Checkpoint,
     CheckpointMismatchError,
@@ -70,6 +70,7 @@ __all__ = [
     "FileStorage",
     "MaxVisitsExceeded",
     "NotKillable",
+    "TaskIdInUse",
     "OrphanStagesError",
     "PavozError",
     "PavozStorageError",

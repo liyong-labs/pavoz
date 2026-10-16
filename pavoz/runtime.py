@@ -326,7 +326,7 @@ class Runtime:
             return _res
         finally:
             if self.cancel_registry is not None:
-                self.cancel_registry._unregister(task_id)
+                self.cancel_registry._unregister(task_id, _ct)
                 # 本次 run **没有**被取消 ⇒ 清掉残留的取消标志 (2026-10-16)。
                 #
                 # 标志的清除此前完全是 caller 的责任 (`CancelRegistry.reset`), 而
