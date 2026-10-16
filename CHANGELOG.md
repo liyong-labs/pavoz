@@ -128,6 +128,40 @@ _(空 — 见 [0.5.7] 及更早)_
 
 ### Fixed
 
+- ★ **9 个 example 里 5 个照 README 跑必然失败, 而仓库里零条判据看着这件事**。
+  两类死路, 都是"用户照文档做, 第一条命令就挂":
+
+  1. **引用仓外路径** —— `01/02/04/05` 全部硬编码
+     `backend/integration/research_pipeline_dag.py`, 那是**消费方 (ai-research) 仓库**
+     的路径, pavoz 仓里没有。它们连同 `llm_config.research_writer.*` 这个 key、
+     `prompts.compose_synthesize` 这个 schema、LongCat 模型名一起, 都是业务值漏进了
+     开源仓 —— 既跑不通, 也不符合 "pvos 不绑业务" 的口径。
+  2. **调了 CLI 上不存在的 flag** —— `03_compare_diff.py` 调
+     `pavoz state --run-id <id>`, 而 `state` 只有 `--task-id/--key/--stats`; CLI
+     **没有任何命令**能读指定 run 的 state (`state` 只读 latest)。argparse 直接
+     `unrecognized arguments`, 对谁都一样。那句"轻量, 不依赖内部 API"在没有该 flag
+     的前提下无法成立。
+
+  修法: 新增 `examples/demo_dag.py` (自包含, 三层嵌套配置 —— 深合并演示要的就是
+  这种形状), 5 个 example 全部指向它且**路径按脚本自身目录解析** (与 cwd 无关), key
+  改成中性的 `llm_config.writer.*`, 模型名改占位值。`03` 改用**公开**的
+  `CheckpointStore` API (CLI 读不了指定 run, 库能; 差在 docstring 里写明)。想用自己
+  的 dag 就 `DAG=<path>` 覆盖。README 补上"先跑一次 demo dag"这一步。
+
+  端到端复验: 5 个 fork-run 系列 + 4 个自包含的 (llm_pipeline / agent_loop /
+  conditional_loop / resume_after_crash 两段) **全部 rc=0**, 03 的 diff 输出正好显示
+  深合并性质 (model 变了而 temperature/prompt/reviewer 保留)。
+
+  新增门禁 `tests/test_examples_runnable.py`: ① example 引用的每个 `.py` 路径必须
+  **能在仓里找到** (认变量根路径, 但仓外路径一律拒); ② example 传给 `pavoz <cmd>`
+  的每个 flag 必须真属于那个子命令 (flag 面从 `--help` 现取, 不写死)。这类错误与
+  文档里的坏链接是同一类 —— 例子是用户抄的东西, 也是文档的一部分。
+
+  ⚠️ 判据自己翻过两趟, 都记在这: ① 第一版不剥注释/docstring, 于是"⚠️ 这里原先坏在
+  哪"的说明文字被当成活引用, 5 个假阳性; ② flag 正则只认 shell 写法
+  `pavoz state ...`, **所有 python 例子一条都没扫到** —— 变异把 `state --run-id` 塞回
+  02 仍然全绿, 判据是瞎的 (这正是写判据时该跑的那次变异)。修正后两次变异各 1 红。
+
 - **`to_mermaid` 与 `to_graph_json` 现在被钉成彼此一致** (一致性本身没坏, 缺的是判据)。
   两个导出服务两类消费者 (README 里嵌 Mermaid / 前端 dagre-cytoscape 吃 JSON), 描述
   的**是同一张图**, 而仓库里没有任何一条判据说它们必须一致。哪天有人给 JSON 加了
