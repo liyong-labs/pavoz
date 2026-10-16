@@ -124,7 +124,21 @@
 
 ### Fixed
 
-- ★ **`to_mermaid` 把用户文本原样拼进语法位 → 一个换行让整张图渲染不出来**。
+- ★ **`fork-run --compare-with` 是 CLI 里唯一"先跑后验"的参数: 拼错 run_id 的代价
+  是多跑一遍 + 多留一份 checkpoint**。目标 run 的存在性检查原先落在
+  `runtime.fork_run(...)` **之后**。实测 `fork-run --compare-with nope` (run_id
+  拼错): fork **已经跑完**、盘上从 1 个 run 变成 2 个, 然后才打印
+  `compare-with: run nope 不存在` + rc=1 —— 而那句报错读起来像"参数错, 什么都没
+  发生", 用户会以为环境干净。
+
+  它是 CLI 里唯一的例外: `--input` 的 JSON 先 parse 再跑; fork-run 的四个
+  override 来源先 merge 再跑 (错 → `参数错误: ...`, 什么都没发生); `prune` 的
+  `--keep-last` 先校验再删。所以这条没有理由例外, 现在也在跑之前查。
+
+  判据钉的是**盘上 run 数不变** (而不是"返回了错误码" —— rc 修复前后都是 1, 变的是
+  有没有副作用)。判别力: 把检查挪回跑之后 → 3 红。
+
+- **`to_mermaid` 把用户文本原样拼进语法位 → 一个换行让整张图渲染不出来**。
   用户文本进了两处: 节点标签 `id["<stage 名>"]` 与边标签 `id -.<key>.-> id`。
   stage 名来自 `fn.__name__` (天然是标识符), 但**条件边的 mapping key 完全不受限**
   —— 它就是 `route_fn` 的返回值, 而 `add_conditional_edges` 对 key 零校验。

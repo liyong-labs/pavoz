@@ -230,3 +230,59 @@ def test_storage_default_unchanged(monkeypatch, tmp_path):
     monkeypatch.setattr(cli_mod, "DEFAULT_STORAGE", str(tmp_path / "d"))
     store = cli_mod._storage()
     assert store.root == str(tmp_path / "d")
+
+
+# ── --compare-with 是 CLI 里唯一"先跑后验"的参数 (2026-10-17) ───────────────
+#
+# 其余参数都是**先验后跑**: `--input` 的 JSON 在 `_cmd_run` 里先 parse 再跑;
+# fork-run 的四个 override 来源在 `merge_overrides` 里先合再跑 (参数错 → "参数错误"
+# 且什么都没发生); `prune --keep-last` 先校验再删。只有 `--compare-with` 的存在性
+# 检查落在 `runtime.fork_run(...)` **之后**。
+#
+# 实测: `fork-run --compare-with nope` (run_id 拼错) → fork **已经跑完**、盘上多出
+# 一个 run 与它的 checkpoint, 然后才打印 "compare-with: run nope 不存在"、rc=1。
+# 那句报错读起来像"参数错, 什么都没发生" —— 于是用户会以为环境干净, 而实际上多跑
+# 了一遍、还多留了一份 checkpoint。
+
+
+async def test_compare_with_missing_run_is_checked_before_running(tmp_path, monkeypatch, capsys):
+    """★ 目标 run 不存在 → **一个 stage 都不该跑**, 盘上 run 数不变。"""
+    dag_path = _write_dag(str(tmp_path))
+    store = CheckpointStore(FileStorage(tmp_path / "cp"))
+    monkeypatch.setattr(cli_mod, "_storage", lambda task_id=None: FileStorage(tmp_path / "cp"))
+
+    rc = await _cmd_run(_Args(dag=dag_path, task_id="cw1", input=None, resume=False))
+    assert rc == 0
+    before = sorted(store.list_runs("cw1"))
+    assert len(before) == 1, f"前置: 应有 1 个 run, 实有 {before}"
+    capsys.readouterr()          # 清掉 _cmd_run 自己的 JSON 输出 (下面要 json.loads)
+
+    rc = await _cmd_fork_run(_fork_args(dag_path, "cw1", compare_with="does-not-exist",
+                                        set=["a=999"]))
+    out = capsys.readouterr().out
+    assert rc == 1, f"不存在的 compare-with 目标应报错, 实得 rc={rc}"
+    assert "不存在" in out, f"报错要点名缺哪个 run, 实得: {out!r}"
+
+    after = sorted(store.list_runs("cw1"))
+    assert after == before, (
+        f"★ 检查必须在跑之前 —— 否则拼错一个 run_id 的代价是多跑一遍 + 多留一个 "
+        f"checkpoint。before={before} after={after}")
+
+
+async def test_compare_with_valid_run_still_diffs(tmp_path, monkeypatch, capsys):
+    """反向约束: 目标存在时照常出 diff (不能因为提前查就把正常路径堵了)。"""
+    dag_path = _write_dag(str(tmp_path))
+    store = CheckpointStore(FileStorage(tmp_path / "cp"))
+    monkeypatch.setattr(cli_mod, "_storage", lambda task_id=None: FileStorage(tmp_path / "cp"))
+
+    assert await _cmd_run(_Args(dag=dag_path, task_id="cw2", input=None, resume=False)) == 0
+    orig = store.load_latest("cw2").run_id
+    capsys.readouterr()          # 同上: 只留 fork-run 的输出给 json.loads
+
+    rc = await _cmd_fork_run(_fork_args(dag_path, "cw2", stage="s_a", compare_with=orig,
+                                        set=["topic=changed"]))
+    out = capsys.readouterr().out
+    assert rc == 0, f"目标存在时应正常跑完, 实得 rc={rc}: {out!r}"
+    payload = json.loads(out)
+    assert payload["compare_with"] == orig
+    assert "diff_keys_count" in payload

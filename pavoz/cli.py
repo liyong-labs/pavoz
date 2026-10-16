@@ -298,6 +298,21 @@ async def _cmd_fork_run(args) -> int:
         print(json.dumps(out, indent=2, ensure_ascii=False))
         return 0
 
+    # --compare-with 的目标必须在**跑之前**确认存在。此前这一查落在
+    # `runtime.fork_run(...)` 之后, 于是拼错一个 run_id 的代价是: fork **已经跑完**、
+    # 盘上多出一个 run 与它的 checkpoint, 然后才打印 "compare-with: run X 不存在"
+    # + rc=1。那句报错读起来像"参数错, 什么都没发生", 用户会以为环境干净。
+    #
+    # 它是 CLI 里唯一"先跑后验"的参数: --input 的 JSON 先 parse 再跑; 四个
+    # override 来源先 merge 再跑 (错 → "参数错误", 什么都没发生); prune 的
+    # keep_last 先校验再删。这个例外没有理由。
+    orig_cp = None
+    if args.compare_with:
+        orig_cp = CheckpointStore(_storage(args.task_id)).load(args.task_id, args.compare_with)
+        if orig_cp is None:
+            print(f"compare-with: run {args.compare_with} 不存在")
+            return 1
+
     runtime = Runtime(checkpoint_store=CheckpointStore(_storage(args.task_id)))
     try:
         result = await runtime.fork_run(
@@ -320,11 +335,11 @@ async def _cmd_fork_run(args) -> int:
     }
 
     if args.compare_with:
-        store = CheckpointStore(_storage(args.task_id))
-        orig_cp = store.load(args.task_id, args.compare_with)
-        if orig_cp is None:
-            print(f"compare-with: run {args.compare_with} 不存在")
-            return 1
+        # orig_cp 是**跑之前**就取到的 (见上); 这里只做 diff, 不再查一次 ——
+        # 那次重查正是这个检查曾经晚于 fork_run 的原因。
+        # assert 只为给类型检查器收窄 (pyright: OptionalMemberAccess), 不是运行时
+        # 防线 —— 上面的早查已经保证了它非 None。
+        assert orig_cp is not None, "compare_with 有值时 orig_cp 必已取到"
         diff = _state_diff(orig_cp.state, result.state)
         output["compare_with"] = args.compare_with
         output["diff_keys_count"] = len(diff)
