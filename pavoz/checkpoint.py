@@ -50,8 +50,11 @@ def workflow_hash(dag: DAG) -> str:
     # **代价**: 改名 = 结构指纹变了 = 旧 cp 不能续跑。这是刻意的 —— 宁可拒绝,
     # 不可静默混流; 想要续跑就把名字改回去 (或换 task_id)。
     rows = [f"dag={dag.name}"]
+    # dag.stages 是每次访问都建副本的 property —— 循环里取它 = 每个 stage 拷一次
+    # (2026-10-17: 与 _run_inner 的两个热位置同一类问题)。一次提到循环外。
+    _stages = dag.stages
     for name in dag.topo_order():
-        s = dag.stages[name]
+        s = _stages[name]
         rows.append(f"{name}:dep={','.join(s.depends_on)}:retry={s.retries}:to={s.timeout}")
     edges = dag.conditional_edges
     for fname in sorted(edges):

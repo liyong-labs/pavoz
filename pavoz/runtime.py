@@ -41,7 +41,7 @@ from .checkpoint import (
     stage_input_hash,
     workflow_hash,
 )
-from .dag import DAG
+from .dag import DAG, Stage
 from .policy import EnginePolicy
 from .state import (
     ReadOnlyStateView,
@@ -515,15 +515,25 @@ class Runtime:
         # 为什么是"闸门检查"而不是把下游踢出 auto_order: 踢出去是**永久**的, 而
         # 下游在路由目标真到达后**应该**被 auto 推进 (实测踩过: 那样 go 分支下 s_d
         # 永远不跑)。按闸门状态判, 才是"上游 route-only 跑完就放行"。
+        # `dag.stages` 是 property, **每次访问都 dict(self._stages) 建一份新副本**。
+        # 下面两个热位置都别在循环里反复取它 (2026-10-17):
+        #   · 这个 _gated_by 循环: 外层 N 个 stage × 内层祖先闭包 ⇒ O(N²) 次拷贝
+        #   · 主执行循环 `stage = dag.stages[name]`: 每个 stage 一次 ⇒ 又是 O(N²)
+        # 实测 640 stage 的线性 DAG: 光是这些 dict 拷贝就占 profile 的 4%, 而它随
+        # DAG 规模平方增长 (n=320 时 2%)。一次拷贝提到循环外即可 ——
+        # dag.validate() 已把 dag 冻结 (stage()/add_conditional_edges() 都会抛),
+        # run 期间结构不变; 拷贝是**浅**的, Stage 对象共享, 所以 TestPipe 那种
+        # 换 fn 的写法照样看得见。
+        _all_stages: dict[str, Stage] = dag.stages
         _gated_by: dict[str, frozenset[str]] = {}
         for _n in order:
             _anc: set[str] = set()
-            _stack = list(dag.stages[_n].depends_on)
+            _stack = list(_all_stages[_n].depends_on)
             while _stack:
                 _x = _stack.pop()
                 if _x not in _anc:
                     _anc.add(_x)
-                    _stack.extend(dag.stages[_x].depends_on)
+                    _stack.extend(_all_stages[_x].depends_on)
             _gated_by[_n] = frozenset(_anc & _route_only)
         visits: dict[str, int] = {}  # stage 执行次数 (含 resume 历史; 循环重入累加)
         for n in done_stages:
@@ -628,7 +638,7 @@ class Runtime:
 
         while current is not None:
             name = current
-            stage = dag.stages[name]
+            stage = _all_stages[name]      # 见上面 _all_stages 的说明 (别在循环里取 dag.stages)
             edge = cond_edges.get(name)
 
             # R1: router 执行次数上限 (条件回路的烧钱护栏). 分支-only 图不限.
