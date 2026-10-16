@@ -608,6 +608,11 @@ dag.add_conditional_edges(
 ```
 
 - `route_fn(state) -> key`: sync pure function; same state → same key
+  **Shapes**: a plain `def`, a bound method, or a **callable object** with a
+  lookup table all work (an object's fingerprint comes from its `__call__`).
+  Anything async is rejected at declaration — including a callable object
+  whose `__call__` is async (`inspect.iscoroutinefunction(instance)` is
+  False, so checking only functions misses it)
   (replay/resume determinism). **Enforced at declaration**: an `async def`
   raises `TypeError` there and now. Left unchecked it only fails at run time —
   the edge receives a coroutine object, misses the mapping, and reports "returned

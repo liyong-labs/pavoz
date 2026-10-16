@@ -19,6 +19,28 @@
 
 ### Fixed
 
+- **可调用对象当 `route_fn` → 每一次 checkpoint save 都静默失败, 而 run 报 done**。
+  `_stage_source_id` 只认 plain function 与绑定方法; `class Router: def
+  __call__(self, state)` 这种写法 (带查找表的 router 对象, 很常见) 会连撞两道:
+  `inspect.getsource(实例)` 抛 `TypeError`, 老 fallback 取 `fn.__code__` 又抛
+  `AttributeError`。而这个异常发生在 `_save_cp` 里, 被那条**"失败不杀 run"** 的
+  兜底 (`except Exception: logger.exception`) 吞掉。实测后果:
+
+      run status = done             ← 表面成功
+      落盘 checkpoint 文件数 = 0     ← 什么都没存
+      load_latest() = None          ← resume / replay / trace / fork / diff 全 unavailable
+
+  只剩一行没人读的日志 —— 用户以为存下来了, 事发后才发现整条恢复链路是空的。
+  现 `_stage_source_id` 改为**四层兜底且绝不再抛**: getsource → 字节码指纹 (对象取
+  它的 `__call__`) → 类型限定名 (跨进程稳定, 不能用 id(): 两个进程算出的 hash
+  不同, cp 就互相认不出来) → ③的 again (自定义 `__getattr__` 抛非 AttributeError
+  时 getattr 的默认值对它无效, 连类型名都取不到)。
+- **`async __call__` 的可调用对象绕过了 route_fn 的 async 守卫**:
+  `inspect.iscoroutinefunction(实例)` 是 `False`, 只查函数会漏, 于是漏网后重演那条
+  误导性错误 (运行期报 "route_fn 返回未声明 key <coroutine object ...>" —— 说
+  路由返回了未声明的 key, 实际是路由压根没被调用)。守卫现同时看 `__call__`, 且
+  报错里对可调用对象给**可读的名字** (退化到类型名, 而不是 `<X object at 0x...>`)。
+
 - **cp 重建里 `fork_overrides` 的落点与 runtime 相反 → 落盘与活跑分叉**。同一把
   钥匙开两把锁: runtime 里 overrides 是**注入给 `from_stage` 的输入** (先注入,
   stage 重跑后可覆盖), 而 cp 重建把它们放在**最后** merge, 于是盖掉了 from_stage

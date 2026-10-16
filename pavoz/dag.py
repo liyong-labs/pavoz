@@ -136,7 +136,14 @@ class DAG:
             raise RuntimeError(f"DAG {self.name} 已冻结, 不能加条件边 (from {from_node})")
         if not callable(route_fn):
             raise TypeError(f"route_fn 必须可调用 (got {type(route_fn).__name__})")
-        if inspect.iscoroutinefunction(route_fn):
+        # 可调用对象的 async 藏在 __call__ 里 —— iscoroutinefunction(实例) 是 False,
+        # 漏掉它就会重演"运行期报 route_fn 返回未声明 key <coroutine object ...>"
+        # 那条误导性错误 (2026-10-16 实测)。
+        try:
+            _rc = getattr(route_fn, "__call__", None)
+        except Exception:
+            _rc = None
+        if inspect.iscoroutinefunction(route_fn) or inspect.iscoroutinefunction(_rc):
             # 与 stage fn 的 async 检查同款 (上面 @dag.stage 已要求 async), 但
             # route_fn 相反: 必须是**同步**纯函数 —— 图结构层判定, 不 await。
             # 不在声明期拦的后果 (2026-10-16 实测): 声明处一路绿灯, 到运行期
@@ -145,9 +152,14 @@ class DAG:
             # **这条消息指错了方向** (路由压根没被调用), 外加一条
             # "coroutine was never awaited" 警告。同步还是硬约束: docs 的理由是
             # "同 state 必同 key"(重放/resume 可判定), async 破坏的正是这条。
+            # 可调用对象没有 __name__, repr 出来是一串 <X object at 0x...> ——
+            # 报错里要给人看得懂的名字, 故退化到类型名
+            try:
+                _nm = getattr(route_fn, "__name__", None) or type(route_fn).__qualname__
+            except Exception:
+                _nm = "<unknown>"
             raise TypeError(
-                f"route_fn 必须是同步纯函数 (got async def "
-                f"{getattr(route_fn, '__name__', route_fn)!r}). "
+                f"route_fn 必须是同步纯函数 (got async {_nm!r}). "
                 f"需要异步判定请做成 judge-stage 把结论写进 state, 边只读 state"
             )
         if not isinstance(mapping, dict) or not mapping:

@@ -527,6 +527,9 @@ dag.add_conditional_edges(
 ```
 
 - `route_fn(state) -> key`: 同步纯函数, 同 state 必同 key (重放/resume 可判定)。
+  **形态**: plain `def`、绑定方法、带查找表的**可调用对象**都支持 (对象的指纹取
+  它的 `__call__`)。但 async 一律在声明期拒 —— 包括 async 藏在 `__call__` 里的
+  可调用对象 (`inspect.iscoroutinefunction(实例)` 是 False, 只查函数会漏)。
   **声明期强制**: 传 `async def` 直接 `TypeError` —— 不拦的话运行期只会拿到一个
   coroutine 对象, 查 mapping 必 miss, 报"返回未声明 key <coroutine ...>", 消息会把
   人引向错误的方向 (路由压根没被调用)。

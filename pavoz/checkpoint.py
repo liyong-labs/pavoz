@@ -64,24 +64,73 @@ def workflow_hash(dag: DAG) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
+def _src_of(target) -> str | None:
+    """inspect.getsource, 但只把"拿不到"当 None; 其他异常照抛 (由调用方兜)."""
+    try:
+        return inspect.getsource(target)
+    except (OSError, TypeError):
+        return None
+
+
+def _code_fingerprint(target) -> str | None:
+    """字节码指纹; 可调用对象取它的 __call__ (实例本身没有 __code__)."""
+    for t in (target, getattr(target, "__call__", None)):
+        if t is None:
+            continue
+        code = getattr(t, "__code__", None)
+        if code is not None:
+            return (code.co_code.hex() + "|" + repr(code.co_consts)
+                    + "|" + repr(code.co_names))
+        s = _src_of(t)
+        if s is not None:
+            return s
+    return None
+
+
 def _stage_source_id(fn) -> str:
-    """stage fn 的源码指纹. 动态构造 (getsource 失败) 退化为字节码指纹.
+    """stage / route fn 的源码指纹. 动态构造 (getsource 失败) 退化为字节码指纹.
 
     剥掉装饰器行: getsource 返回的块含 @dag.stage(...) — DAG 变量名/装饰
     参数文本会污染指纹 (改个变量名 → 无谓 hash 变化 → 无谓重跑).
     fallback 用 co_code + co_consts + co_names (仅 co_code 会对不同函数体
     产生相同字节码序列, 常量/名字不在其中).
+
+    **本函数绝不能抛** —— 结果喂给 workflow_hash, 而后者出现在 _save_cp /
+    resume 守卫 / fork_run / diff_runs / load_compatible / replay_from 里。
+    抛异常的代价不是"指纹算不出", 而是"**run 报 done 但 checkpoint 根本没落盘**"
+    (2026-10-16 实测: `class Router: def __call__` 当 route_fn → getsource 抛
+    TypeError, 老 fallback 取 `fn.__code__` 又抛 AttributeError → _save_cp 的
+    "失败不杀 run" 兜底把它吞掉 → 每次 save 都失败而 run 报成功; 事后 resume /
+    replay / trace / fork / diff 全部 unavailable, 只剩一行没人读的日志)。
+
+    四层兜底, 层层都不会抛:
+      ① `inspect.getsource(fn)` (剥装饰器行)
+      ② 字节码指纹 (fn 或它的 `__call__`)
+      ③ 类型限定名 —— 跨进程稳定 (不能用 id(): 两个进程算出的 hash 不同, cp 就
+         互相认不出来了)
+      ④ ③ 的 again, 包在 try 里 —— 自定义 `__getattr__` 抛非 AttributeError 时
+         连 ③ 都取不到属性 (getattr 的默认值对它无效)
     """
     try:
-        src = inspect.getsource(fn)
-    except (OSError, TypeError):
-        c = fn.__code__
-        return c.co_code.hex() + "|" + repr(c.co_consts) + "|" + repr(c.co_names)
-    lines = src.splitlines(keepends=True)
-    for i, ln in enumerate(lines):
-        if ln.lstrip().startswith(("async def", "def ")):
-            return "".join(lines[i:])
-    return src
+        src = _src_of(fn)
+        if src is not None:
+            lines = src.splitlines(keepends=True)
+            for i, ln in enumerate(lines):
+                if ln.lstrip().startswith(("async def", "def ")):
+                    return "".join(lines[i:])
+            return src
+        code = _code_fingerprint(fn)
+        if code is not None:
+            return code
+    except Exception:
+        pass  # 探测属性时对方自己炸了 → 落到类型名兜底
+    try:
+        return f"<{type(fn).__module__}.{type(fn).__qualname__}>"
+    except Exception:
+        return "<unknown>"
+
+
+
 
 
 def stage_input_hash(fn, before_state: dict) -> str:
