@@ -128,6 +128,26 @@ _(空 — 见 [0.5.7] 及更早)_
 
 ### Fixed
 
+- ★ **`TestPipe.calls()` 在 mock 抛异常时是空的 —— 而那正是需要它的时刻**。
+  `_wrapped` 把 `self._recorded.append(...)` 写在 `out = _fn(ctx.state)` **之后**,
+  mock 一抛异常那行就走不到。后果不是数字不准, 是**调试夹具在需要它的时候瞎掉**:
+
+  · "我的 mock 到底被调了几次?" —— 抛异常时恒答 0 次, 哪怕真调了 1 次
+  · 配合 `retries`: 恒失败的 mock 被重试 N 次, `calls()` 仍一条都没有
+  · stage 有 mock 但 `calls()` 里查无此 stage, 第一反应是"它根本没被调用" ——
+    于是去查 DAG 调度, 而真因在 mock 里
+
+  修法: 记录前移到调用 mock 之前 (`state_keys` 那时也拿得到)。成功路径记录的内容
+  与顺序完全一致, 只是失败路径从"无记录"变成"有记录"。
+
+  顺带钉住一条引擎契约 (我第一版测试前提写错了): **只有 `RetryableError` /
+  `TimeoutError` 会重试**, 抛 `ValueError` 走 FatalError 语义 attempts=1 ——
+  要验"重试 N 次都记下了", mock 得抛 `RetryableError`。
+
+  判别力: 把记录挪回调用之后 → 1 红。
+
+  同轮另一条 (`docs/replay-params.md` 类型推断表) 在下方。
+
 - **`docs/replay-params.md` 的类型推断表漏掉了所有会静默改写用户字符串的写法, 而且
   "无逃生门"这句是错的**。那张表原本只列了安全的一侧 (`42` / `3.14` / `true` /
   `null` / JSON / 日期), 于是用户只会照着它判断"我的值安不安全" —— 而真正危险的

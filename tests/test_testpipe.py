@@ -4,7 +4,15 @@ import tempfile
 
 import pytest
 
-from pavoz import DAG, Checkpoint, CheckpointMismatchError, Runtime, TestPipe, workflow_hash
+from pavoz import (
+    DAG,
+    Checkpoint,
+    CheckpointMismatchError,
+    RetryableError,
+    Runtime,
+    TestPipe,
+    workflow_hash,
+)
 from pavoz.checkpoint import CheckpointStore
 from pavoz.storage import FileStorage
 
@@ -362,3 +370,71 @@ async def test_loop_replay_final_state_matches_cp_state():
         f"replay={replayed.state} vs cp={cp.state}")
     assert replayed.state["rounds"] == 4
     assert replayed.state["acc"] == 10, f"累加值应被保留, 实得 {replayed.state}"
+
+
+# ── calls() 在 mock 抛异常时是**空的** — 而那正是你要看它的时刻 ─────────────
+#
+# `TestPipe.calls()` 的 docstring 说它"用于断言调用顺序与次数", 且
+# "仅 mock 过的 stage 会记进这里"。但 `_wrapped` 的记录写在 `out = _fn(ctx.state)`
+# **之后**: mock 一抛异常, append 那行根本走不到。
+#
+# 后果不是数字不准, 是**调试夹具在需要它的时候瞎掉**:
+#   · "我的 mock 到底被调了几次?" —— 抛异常时恒答 0 次, 哪怕真的调了 1 次
+#   · 配合 `retries`: 一个总失败的 mock 被重试 N 次, calls() 仍是一条都没有
+#   · stage 有 mock 但 calls() 里查无此 stage, 第一反应是"它根本没被调用" ——
+#     于是去查 DAG 的调度, 而真正的原因在 mock 里
+#
+# 而且失败路径不止抛异常: mock 返回非 dict 时抛的 TypeError 也在同一点之后,
+# 同样不记。
+
+
+async def test_calls_records_the_attempt_even_when_the_mock_raises():
+    """★ mock 抛异常也要留下"被调用过"的记录。"""
+    dag = DAG("TPboom")
+
+    @dag.stage(retries=2)          # 重试 2 次 → 共 3 次尝试
+    async def s_a(ctx):
+        return {"a": 1}
+
+    @dag.stage(depends_on=["s_a"])
+    async def s_b(ctx):
+        return {"b": 2}
+
+    # ★ 必须抛 RetryableError 而不是 ValueError: 引擎只重试 RetryableError /
+    # TimeoutError (其余走 FatalError 不重试), 抛 ValueError 的话 attempts=1,
+    # "记录了几次" 这件事就没得验了。这本身也是一条该记住的引擎契约。
+    def boom(ctx):
+        raise RetryableError("mock 炸了")
+
+    pipe = TestPipe(dag).mock("s_a", boom)
+    r = await pipe.run()
+    assert r.status == "failed", f"前置: mock 恒失败 ⇒ run 应 failed, 实得 {r.status}"
+
+    calls = pipe.calls()
+    assert calls, (
+        "★ mock 抛异常时 calls() 是空的 —— 而 calls() 的用途正是断言调用了几次。"
+        f"此刻它恒答 0 次, 会把排查方向误导到 DAG 调度上 (retries={dag.stages['s_a'].retries})")
+    assert [c["stage"] for c in calls] == ["s_a"] * 3, (
+        f"被 mock 的 stage 应留下每次尝试的记录 (retries=2 → 3 次), 实得 {calls}")
+    assert all(c["mock"] is True for c in calls)
+    # state_keys 在异常路径上也应拿得到 —— 那是"它被调用时看到什么"的证据
+    assert all("state_keys" in c for c in calls)
+
+
+async def test_calls_records_before_returning_non_dict():
+    """相邻路径: mock 返回非 dict。**这条本来就过** —— 类型检查在 append 之后。
+
+    钉它是因为下面的修复要把 append 挪到更前面: 挪的时候别把这个"本来就对"的
+    邻居弄坏 (两条路径的差别只在异常来自 mock 内部还是来自返回值检查)。
+    """
+    dag = DAG("TPbad")
+
+    @dag.stage()
+    async def s_a(ctx):
+        return {"a": 1}
+
+    pipe = TestPipe(dag).mock("s_a", lambda ctx: ["不是 dict"])
+    r = await pipe.run()
+    assert r.status == "failed", f"前置: mock 返回非 dict 应 failed, 实得 {r.status}"
+    assert pipe.calls(), "返回非 dict 也是一次真实调用, 必须记录"
+    assert [c["stage"] for c in pipe.calls()] == ["s_a"]

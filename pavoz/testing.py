@@ -139,10 +139,16 @@ class TestPipe:
             original[name] = self.dag.stages[name].fn
 
             async def _wrapped(ctx, _name=name, _fn=mock_fn):
+                # ⚠️ 记录必须在调用 mock **之前**: 原先写在后面, 于是 mock 一抛异常
+                # 记录就走不到, 而 calls() 的用途恰恰是"它被调用了几次"。
+                # 配合 retries 更糟: 恒失败的 mock 被重试 N 次, calls() 恒空 ——
+                # 第一反应会变成"它根本没被调用", 于是去查 DAG 调度, 而真因在
+                # mock 里。**调试夹具在需要它的时候瞎掉, 比数字不准更坏。**
+                self._recorded.append({"stage": _name, "mock": True,
+                                       "state_keys": list(ctx.state.keys())})
                 out = _fn(ctx.state)
                 if asyncio.iscoroutine(out):
                     out = await out
-                self._recorded.append({"stage": _name, "mock": True, "state_keys": list(ctx.state.keys())})
                 if not isinstance(out, dict):
                     raise TypeError(f"mock '{_name}' 必须返回 dict, got {type(out).__name__}")
                 return out
