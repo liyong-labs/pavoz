@@ -97,9 +97,14 @@ def diff_runs(cp_a: Checkpoint, cp_b: Checkpoint) -> dict:
     输入: 同一 task (或任意) 两个 run 的 checkpoint. 输出全 JSON-serializable
     (R5 闭合), 不做 AI 摘要 — 消费者 (AI agent / 人) 自行解读:
       - workflow_hash_changed: 结构指纹是否不同 (不同则 stage 语义可能不可比)
-      - stages: stage 名 → {status: [a, b], input_hash_changed, output_diff}
-        (output_diff = 各 stage return delta 的 path 级差异, 复用 _state_diff)
+      - stages: stage 名 → {status: [a, b], input_hash_changed, visits, output_diff}
+        (output_diff = 各 stage return delta 的 path 级差异, 复用 _state_diff;
+         visits = 两 run 里该 stage 的执行轮次, 循环图上靠它才看得见"多跑了多少")
       - state_diff: 最终 merged state 的 path 级差异
+
+    ⚠️ `output_diff` 用的是 `stage_deltas` —— **last-write 视图** (每个 stage 只取
+    最后一次执行的 delta)。循环图上 (R1) 它既漏掉中间轮次, 又会把"终态相同但轮数
+    不同"报成有差异。逐轮全貌在 `cp.stage_deltas_visits`, 要自己比就取那个字段。
     """
     names = set(cp_a.stage_deltas) | set(cp_b.stage_deltas) \
         | set(cp_a.done_stages) | set(cp_b.done_stages)
@@ -110,6 +115,13 @@ def diff_runs(cp_a: Checkpoint, cp_b: Checkpoint) -> dict:
         stages[name] = {
             "status": [cp_a.stage_statuses.get(name), cp_b.stage_statuses.get(name)],
             "input_hash_changed": (ha != hb) if ha and hb else None,
+            # 轮次 (R1 条件边引入, 2026-10-16 补): 循环 stage 的**执行次数**是这个
+            # 图上最该被看见的量, 而 output_diff / state_diff 都看不见它 ——
+            # 实测两个终态逐字节相同的 run (3 轮 vs 5 轮), state_diff 是空的,
+            # output_diff 只比出"最后一次 visit 的 delta 差在哪"这种没用的细节。
+            # 不给轮次, 消费者无从知道"这个 run 多干了 67% 的活"。
+            "visits": [len(cp_a.stage_deltas_visits.get(name) or []),
+                       len(cp_b.stage_deltas_visits.get(name) or [])],
             "output_diff": _state_diff(
                 cp_a.stage_deltas.get(name) or {}, cp_b.stage_deltas.get(name) or {}),
         }

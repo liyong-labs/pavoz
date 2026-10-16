@@ -428,10 +428,19 @@ await task   # → RunResult(status="cancelled", failed_stage=..., retryable=Non
 
 两个 run 的 stage 级 structured diff (R4)。输出全 JSON-serializable, 不做 AI 摘要:
 `workflow_hash_changed` / `stages` (每 stage 的 `status [a, b]`、
-`input_hash_changed`、`output_diff` path 级差异) / `state_diff` (最终 state
-path 级差异)。Store 包装的 `run_b=""` 取 latest 指针 (同 load_compatible 惯例);
-任一 run 无 checkpoint → RuntimeError。消费者 (AI agent) 据此判断"改了什么、
-哪些 stage 受影响、要不要重跑"。
+`input_hash_changed`、`visits [a, b]`、`output_diff` path 级差异) / `state_diff`
+(最终 state path 级差异)。Store 包装的 `run_b=""` 取 latest 指针 (同
+load_compatible 惯例); 任一 run 无 checkpoint → RuntimeError。消费者 (AI agent)
+据此判断"改了什么、哪些 stage 受影响、要不要重跑"。
+
+- **`visits` = 该 stage 在两个 run 里各跑了多少轮**。循环图 (R1) 上这是最该被看见
+  的量, 而 `output_diff` / `state_diff` 都表达不出: 实测两个**终态逐字节相同**的
+  run (3 轮 vs 5 轮), `state_diff` 是空的, `output_diff` 只比出"最后一次 visit 的
+  delta 差在哪"——信号方向是反的: 该报的"多干了 67% 的活"没报, 不该当差异的
+  末轮细节反倒成了唯一线索
+- ⚠️ `output_diff` 走 `stage_deltas` —— **last-write 视图** (每个 stage 只取最后
+  一次执行的 delta)。循环图上它漏掉中间轮次。逐轮全貌在
+  `cp.stage_deltas_visits`, 要自己比就取那个字段
 
 ## EventRecorder (v0.5.3)
 

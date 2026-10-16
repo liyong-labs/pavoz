@@ -479,11 +479,22 @@ await task   # → RunResult(status="cancelled", failed_stage=..., retryable=Non
 
 Stage-level structured diff of two runs (R4). Output is fully
 JSON-serializable, no AI summarization: `workflow_hash_changed` / `stages`
-(per-stage `status [a, b]`, `input_hash_changed`, path-level `output_diff`) /
-`state_diff` (final merged state, path-level). The store wrapper's
-`run_b=""` resolves the latest pointer (same convention as load_compatible);
-a missing checkpoint raises RuntimeError. Consumers (AI agents) read it to
-decide "what changed, which stages were affected, what to rerun".
+(per-stage `status [a, b]`, `input_hash_changed`, `visits [a, b]`,
+path-level `output_diff`) / `state_diff` (final merged state, path-level).
+The store wrapper's `run_b=""` resolves the latest pointer (same convention as
+load_compatible); a missing checkpoint raises RuntimeError. Consumers (AI agents)
+read it to decide "what changed, which stages were affected, what to rerun".
+
+- **`visits` is how many times each stage ran in each of the two runs.** On
+  looping graphs (R1) that is the number that matters, and neither `output_diff`
+  nor `state_diff` can express it: measured, two runs whose **final states were
+  byte-identical** (3 rounds vs 5) produced an empty `state_diff`, while
+  `output_diff` only reported how the *last* visit's delta differed — the signal
+  is inverted, since "this run did 67% more work" goes unreported and a
+  meaningless last-round detail becomes the only clue
+- ⚠️ `output_diff` reads `stage_deltas`, the **last-write view** (one delta per
+  stage: its final execution). On looping graphs that drops the intermediate
+  rounds. The full per-round history is `cp.stage_deltas_visits`
 
 ## EventRecorder (v0.5.3)
 

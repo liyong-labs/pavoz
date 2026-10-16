@@ -19,6 +19,18 @@
 
 ### Fixed
 
+- **`diff_runs` 在循环图上给不出"多跑了多少"的信号 (方向还反了)**: `output_diff` /
+  `state_diff` 走的都是 `stage_deltas` —— **last-write 视图** (每个 stage 只取最后
+  一次执行的 delta)。实测: 两个**终态逐字节相同**的 run (循环 stage 跑 3 轮 vs
+  5 轮), `state_diff` 是空的, `output_diff` 只报出 `{"scratch": [3, 5]}` 这种
+  "末轮 delta 差在哪"的细节 —— 该报的"多干了 67% 的活"没报, 不该当差异的末轮
+  细节反倒成了唯一线索。
+  现每 stage 的 diff 条目新增 **`visits: [a, b]`** (两个 run 里各跑了多少轮),
+  循环图上"轮次"是这个图最该被看见的量。**纯新增键**, 原有键语义一个不动
+  (`status` / `input_hash_changed` / `output_diff` / `state_diff` 全部照旧),
+  逐轮全貌仍在 `cp.stage_deltas_visits` —— `output_diff` 有意保持 last-write 语义,
+  逐轮比较是另一套语义, 不在这里改。docstring 与 cn/en api.md 同时写明该限制。
+
 - **`EventRecorder` 的 JSONL sink 会写出非法 JSON** (`NaN` / `Infinity` 字面量):
   Python 的 `json.dumps` 默认 `allow_nan=True`, 而 sink 的存在意义就是给
   jq / Splunk / Loki 这类工具读 —— 一行读不了就等于少一条记录。实测 (修复前): 一个
