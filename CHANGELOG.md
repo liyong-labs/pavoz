@@ -17,6 +17,7 @@
 | **旧 checkpoint 不能续跑** | `CheckpointMismatchError`, 且 **resume / fork_run / replay 三条入口都会报** (都走 `workflow_hash` 校验)。`workflow_hash` 自本版起含 **dag 名**, 已在盘的旧 cp 指纹与新算法不同 | 该 task 重跑一次生成新 cp; 若只是**改了 dag 名**, 把名字改回去或换 task_id |
 | **`state --key <K>` 缺 K 时** | 退出码从 `0` 变 `1`, 并点名缺失的 key + 列可用 key (原来输出 `null`、rc=0, 与"值就是 null"逐字节相同) | 依赖旧语义做 `X=$(pavoz state --key K)` 的脚本改判退出码 |
 | **`EnginePolicy` 构造期校验** | 负值 / 限值类字段的 `0` 现在抛 `ValueError`。此前负 `stage_alive_interval` 会变忙循环 (实测 0.2s 的 stage 喷 58099 条 `stage_alive` 而 run 报 done) | 想"不限 / 关闭"请显式写 `None` |
+| **task_id 为 `.` / `..` / 全点串 现在报 `ValueError`** | 此前是**合法** task_id。`Runtime(debug_dir=D).run(dag, "..")` 会正常跑完 (`status=done`), 而 debug 快照 `00_xx_done.json` 落在 **D 的外面** (D 的父目录); `"."` 则落在 D 根, 与各 task 子目录混在一起 | 换个名字。**只拒整段是 `.` / `..`**, `a..b` / `.hidden` / `v1.0-rc.1` 照旧合法 |
 | **`default_timeout=0` 现在构造期报 `ValueError`** (两侧: `EnginePolicy(...)` 与 `Runtime(...)`) | 此前**静默失效**: run 级 deadline 的调用点是 `now + _to if _to else None` (真值判断), 0 被当成"没设" ⇒ **整个 run 的超时护栏消失**, `status=done` 无任何提示。实测一个跑 0.3s 的 stage 在 `default_timeout=0` 下跑满 0.30s 报 done, 同一个 dag 在 `0.1` 下报 `TimeoutError` | 若你想"不限", 显式写 `default_timeout=None`。**亚秒超时完全合法** (`0.2` / `0.05` 都照跑), 只拒 `0` |
 | **非有限值不能进 state** | `stage` 返回 `NaN`/`±Inf` 或 `--set-file` 里写 `.nan` 现在报 `ValueError`。此前能跑通, 但落盘 JSON 含 `NaN` 字面量, **不是合法 RFC 8259**, 任何严格解析器 (其他语言 / jq / JSONB) 拒收整个文件 | 用 `None` / 字符串表达"无值" |
 | **override 里 list 内的 dict 现在也校验 key** | `{"items": [{"__proto__": 1}]}` 或 `{"items": [{"": 1}]}` 现在报 `ValueError`。此前**完全放行** —— 校验只递归 dict 值, list 被整段跳过, 所以同一个坏 key 挂 dict 上拒、挂 list 里过 | 若你的 list 里**确实**有这些 key, 换个名字 |
@@ -122,6 +123,47 @@
   仍按 **FatalError 语义**处理 (fail、不重试), 携带 category 不改变这一点。
 
 ### Fixed
+
+- ★ **`task_id=".."` 让 debug 快照落出 `debug_dir` 之外 → 入口处拒整段点号**。
+  `_validate_task_id` 的字符集是 `[A-Za-z0-9_.-]`, `.` 在内 (合法名字确实要用:
+  `v1.0-rc.1` / `a..b` / `.hidden`), 于是 `.` 与 `..` 都是合法 task_id。而
+  `_dump_debug` 把它**直接当路径段**拼:
+
+  ```python
+  d = os.path.join(self.debug_dir, task_id)   # task_id=".." → debug_dir 的父目录
+  os.makedirs(d, exist_ok=True)                # 父目录本来就存在 → 成功
+  ```
+
+  实测 (修复前): `Runtime(debug_dir=D).run(dag, "..")` → `status=done`, 而快照
+  `00_s_a_done.json` 落在 **D 的外面**。`task_id="."` 则落在 D 根, 与各 task 子目录
+  混在一起。
+
+  为什么修校验而不是修 `_dump_debug`: `_validate_task_id` 已经是 task_id 的**唯一**
+  入口校验, 而 `run()` / `fork_run()` / `run_stage()` 三个入口都在任何落盘之前
+  调它 —— `_dump_debug` 在 run 循环深处, 拿到的必然是已校验的值。在那里补一份
+  realpath 断言就是**第二份防护**, 迟早与第一份漂。
+
+  为什么不只改 debug 侧: FileStorage 的 key 走哈希 + realpath 断言, 同一个输入
+  在那条路上侥幸没出事 —— 但那是**巧合性的安全**, 不是设计。同一个"用户标识符 →
+  文件路径"的类别, 两处表现不一致本身就是缺陷。
+
+  判据是"**整段**等于 `.` / `..` (或整串全是点)", 不是"含 `..`": `a..b` / `..a` /
+  `.hidden` 都是正常名字。这条我**第一版写错了** —— 把 `..a` / `a..` 放进了拒列表,
+  而实现按"整段"判, 2 条测试当场变红。这与同一天上一条修复 (override key 校验)
+  是同一个毛病的两种触发方式: **收紧校验时必须同时写"哪些必须仍合法"的反向用例**,
+  否则实现和判据会一起往严的方向滑, 而且**绿得看不出问题**。
+
+  判别力 (2 次变异, 方向相反的两侧都验):
+  | 变异 | 结果 |
+  |------|------|
+  | 去掉整段点号的拒 (退回原行为) | **6 红** ✅ |
+  | 判据换成"含 `..` 就拒" (过度收紧) | **6 红** ✅ |
+
+  注: `test_storage_path_containment.py` 里那条端到端用例原先断言
+  `run(dag, task_id="..")` **能跑完** —— 它编码的是旧契约 (在 storage 层观察防线)。
+  改成断言入口拒绝, 并**另起一条**继续直接打 `FileStorage`: storage 侧的 realpath
+  断言仍然存在, 防的是不经 Runtime 的 library 调用方。**少一层防护可以, 少一份
+  覆盖不行。**
 
 - ★ **override key 校验与它自己的 docstring 对不上, 两个方向都错**。
   `_validate_dict_keys` 自称"递归校验 override 源 dict 的**所有** key", 而实现:

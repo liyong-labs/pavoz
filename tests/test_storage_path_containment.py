@@ -70,16 +70,23 @@ def test_list_keys_cannot_walk_outside_root(roots):
         fs.list_keys(_escaping_key(root, victim))
 
 
-def test_dotdot_task_id_cannot_escape_via_checkpoint_store(roots):
-    """端到端: task_id='..' 经 CheckpointStore 落盘, 不得写到 root 之外。
+def test_dotdot_task_id_rejected_at_entry_point(roots):
+    """task_id='..' 现在在**入口**就被拒 —— 比 storage 层那道防线更早。
 
-    实测修复前 task_id='..' 会让 key 变成 runs/../<run_id>/checkpoint。
+    这条测试原先断言 `run(dag, task_id="..")` 能跑完 (`status == "done"`), 然后
+    验证文件仍在 root 内 —— 那是 storage 层防线的观察方式。2026-10-16 把防线
+    提前了: `_validate_task_id` 拒掉整段是 `.` / `..` 的 task_id, 于是这个输入
+    根本到不了 storage。
+
+    ⚠️ 这不是"删掉旧测试换新的"。storage 那道 realpath 断言**仍然存在** (它是
+    library 用户自己拼 key 时的兜底, 不经过 Runtime), 所以下面第二条用例继续
+    直接打 FileStorage —— 少一层防护可以, 少一份覆盖不行。
     """
     import asyncio
 
-    from pavoz import DAG, CheckpointStore, Runtime
+    from pavoz import DAG, CheckpointStore, FileStorage, Runtime
 
-    root, outside, _victim = roots
+    root, _outside, _victim = roots
     dag = DAG("t")
 
     @dag.stage()
@@ -87,10 +94,25 @@ def test_dotdot_task_id_cannot_escape_via_checkpoint_store(roots):
         return {"x": 1}
 
     rt = Runtime(checkpoint_store=CheckpointStore(FileStorage(str(root))))
-    r = asyncio.run(rt.run(dag, task_id=".."))
-    assert r.status == "done"
-    # 一切仍在 root 内
-    assert all(str(root) in str(p) for p in root.rglob("*.json"))
+    for bad in ("..", ".", "..."):
+        with pytest.raises(ValueError, match="task_id"):
+            asyncio.run(rt.run(dag, task_id=bad))
+    assert not list(root.rglob("*.json")), "被拒的 task_id 不该留下任何落盘物"
+
+
+def test_storage_layer_still_defends_when_called_directly(roots):
+    """绕过 Runtime 直接用 FileStorage (library 用户的用法) 时, 第二道防线仍在。
+
+    key 由调用方自己拼, 不经 `_validate_task_id` —— 所以 storage 侧的 realpath
+    断言不是冗余: 它防的是"pavos 之外的调用方"。
+    """
+    root, outside, victim = roots
+    fs = FileStorage(str(root))
+    rel = os.path.relpath(str(outside / "direct.json"), str(root))[: -len(".json")]
+    with pytest.raises(ValueError, match="越界"):
+        fs.put(rel, {"x": 1})
+    assert not (outside / "direct.json").exists()
+    assert victim.exists(), "受害文件不能被读/删"
 
 
 def test_normal_keys_still_work(tmp_path):

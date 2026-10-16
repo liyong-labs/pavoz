@@ -1417,6 +1417,22 @@ def _validate_task_id(task_id: str) -> None:
         raise ValueError("task_id 不能为空")
     if len(task_id) > 128:
         raise ValueError(f"task_id 过长: {len(task_id)} > 128")
+    # `.` 在允许字符集内 (合法名字要用: "v1.0-rc.1" / "a..b" / ".hidden"), 但
+    # **整段等于 `.` 或 `..` 时它不是名字, 是路径操作** —— 而 task_id 会被直接
+    # 当路径段拼进 debug_dir (`os.path.join(debug_dir, task_id)`), 也拼进 storage
+    # key。2026-10-16 实测: `Runtime(debug_dir=D).run(dag, "..")` status=done,
+    # 快照 `00_s_a_done.json` 落在 **D 的外面**; `"."` 则落在 D 根, 与各 task
+    # 子目录混在一起。storage 侧因 key 走哈希而侥幸没出事, 但 debug 侧没有第二道
+    # 防护 —— 所以在这里拒, 一处封住三个入口 (run / fork_run / run_stage)。
+    #
+    # 判据是"**整段**等于 . 或 ..", 不是"含 '..'": `a..b` / `..a` / `.hidden`
+    # 都是正常名字, 按含子串去拒会把它们一起杀掉。
+    if task_id in (".", "..") or set(task_id) == {"."}:
+        raise ValueError(
+            f"task_id {task_id!r} 全是点 — 它是相对路径操作 (当前目录/父目录), "
+            f"不是名字。task_id 会直接进文件路径 (debug_dir / storage key), "
+            f"用它会把文件写到目标目录之外。换个名字。"
+        )
     # str.isalnum() 认 Unicode 字母 (如 "任务" isalpha=True) — 必须显式 ASCII-only
     if not all(c.isascii() and (c.isalnum() or c in "_.-") for c in task_id):
         raise ValueError(

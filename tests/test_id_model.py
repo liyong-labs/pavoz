@@ -284,3 +284,78 @@ async def test_caller_receives_call_meta():
     assert m.attempt == 1
     with pytest.raises(AttributeError):  # frozen dataclass 不可写
         m.task_id = "hack"
+
+
+# ── task_id 的 '.' 段: debug_dir 快照能落出目录外 (2026-10-16) ─────────────
+#
+# `FileStorage` 侧的同类洞在 test_storage_path_containment.py 里修过 (key 哈希
+# + realpath 断言)。但 `_validate_task_id` 的字符集 `[A-Za-z0-9_.-]` **允许 '.'**,
+# 于是 `..` 与 `.` 都是合法 task_id —— 而 `_dump_debug` 把它直接当路径段用:
+#
+#     d = os.path.join(self.debug_dir, task_id)     # task_id=".." → debug_dir 的父目录
+#     os.makedirs(d, exist_ok=True)                  # 父目录本来就存在 → 成功
+#
+# 实测 (修复前): `Runtime(debug_dir=D).run(dag, "..")` → status=done, 而快照
+# `00_s_a_done.json` 落在 **D 的外面** (D 的父目录)。`task_id="."` 则落在 D 根,
+# 与各 task 子目录混在一起。
+#
+# 为什么校验 task_id 就是根因: 它已经是 storage key 的唯一入口校验, 而
+# `run()` / `fork_run()` / `run_stage()` 三个入口都在任何落盘之前调它 ——
+# `_dump_debug` 在 run 循环深处, 拿到的一定是已校验过的值。所以补 `_validate_task_id`
+# 一处, 三个入口 + 两种落盘 (checkpoint / debug) 一起封住; 不必在 `_dump_debug`
+# 里平行实现一遍 realpath 断言 (那会是第二份防护, 迟早漂)。
+
+
+@pytest.mark.parametrize("bad", ["..", ".", "...", "...."])
+async def test_task_id_rejects_dot_segments(bad):
+    """`.` 在允许字符集内, 但**单独成段**的 `.` / `..` 是路径操作, 不是名字。"""
+    dag = DAG("dd")
+
+    @dag.stage()
+    async def s_x(ctx):
+        return {}
+
+    with pytest.raises(ValueError, match="task_id"):
+        await Runtime().run(dag, task_id=bad)
+
+
+@pytest.mark.parametrize("ok", ["a..b", "a.b", ".hidden", "x..", "..a", "a..", "v1.0-rc.1"])
+async def test_task_id_allows_dots_that_are_not_path_segments(ok):
+    """反向约束: **只拒整段是 `.`/`..`**, 不碰正常的点号名字。
+
+    `a..b` / `.hidden` / `v1.0-rc.1` 都是正常 task_id —— 上一版我一度想按
+    "含 '..' 就拒" 来写, 那会把这些一起杀掉。判据必须是"整段等于 . 或 .."。
+
+    ⚠️ 这条用例**当场逮到我自己的错**: 我第一版把 `..a` / `a..` 放进了拒列表,
+    而实现 (和上面 docstring) 判的是"整段等于 . 或 .." —— 于是 2 条红, 差一步
+    就把正常名字也拒掉。这与上一条修复 (override key 校验) 是同一个毛病的两种
+    触发方式: **收紧校验时先写"哪些必须仍合法"的反向用例**, 否则实现和判据
+    会一起往严的方向滑, 而且绿得看不出问题。
+    """
+    dag = DAG("dd2")
+
+    @dag.stage()
+    async def s_x(ctx):
+        return {}
+
+    assert (await Runtime().run(dag, task_id=ok)).status == "done"
+
+
+async def test_debug_snapshot_never_lands_outside_debug_dir(tmp_path):
+    """端到端: 无论 task_id 写成什么, 快照都不许出现在 debug_dir 之外。
+
+    判据不写成"run 要抛 ValueError" —— 那是**实现**。真正的契约是"文件不许
+    落在目录外", 所以这里同时断言越界文件为空。
+    """
+    dag = DAG("dd3")
+
+    @dag.stage()
+    async def s_a(ctx):
+        return {"v": 1}
+
+    outside_before = {p for p in tmp_path.rglob("*") if p.is_file()}
+    for bad in ("..", "."):
+        with pytest.raises(ValueError):
+            await Runtime(debug_dir=str(tmp_path / "debug")).run(dag, task_id=bad)
+    leaked = {p for p in tmp_path.rglob("*") if p.is_file()} - outside_before
+    assert not leaked, f"快照泄漏到 debug_dir 之外: {sorted(str(p) for p in leaked)}"
