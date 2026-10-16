@@ -16,6 +16,7 @@
 | **`EnginePolicy` 构造期校验** | 负值 / 限值类字段的 `0` 现在抛 `ValueError`。此前负 `stage_alive_interval` 会变忙循环 (实测 0.2s 的 stage 喷 58099 条 `stage_alive` 而 run 报 done) | 想"不限 / 关闭"请显式写 `None` |
 | **非有限值不能进 state** | `stage` 返回 `NaN`/`±Inf` 或 `--set-file` 里写 `.nan` 现在报 `ValueError`。此前能跑通, 但落盘 JSON 含 `NaN` 字面量, **不是合法 RFC 8259**, 任何严格解析器 (其他语言 / jq / JSONB) 拒收整个文件 | 用 `None` / 字符串表达"无值" |
 | **旧 cp 的 visit 对齐可能本来就有错位** | 修复前, `stage` 返回 `{}`/`None` 的那次执行只进 `done_stages` 不进 deltas ⇒ 老 cp 里两个列表已经错位, 升级后**照旧错** | 受影响的 cp 重跑一次; 新写的不会错 (见 Fixed 第一条) |
+| **旧 cp 在**循环图**上的 fork 重建取错 visit** | 0.5.6 及更早写的 fork cp 没有 `fork_keep_counts`, 重建按顺序索引取 delta ⇒ 在环图上取到的是**首跑段**那条 (实测 `R4[F]` 取成 `R4[none]`)。**试过推断自愈, 不成立** —— 见下方"为什么老 cp 只能重跑" | 受影响的 cp 重跑一次 |
 | **fork 的 cp 重建结果会变** | 带 `fork_keep_counts` 的旧 cp (0.5.6 写的 fork), 升级后 `cp.state` **变成正确值** (此前取到 fork 之前那条 delta) | 无需操作; 若你**依赖过**旧行为(把重建值当"上次真实产出"), 那是 bug 不是契约 |
 | **可调用对象 route_fn 开始落盘** | `class Router: def __call__` 这种写法, 此前 `run` 报 `done` 但 **checkpoint 一个都存不下来** (save 被"失败不杀 run"吞掉), 升级后正常落盘 | 无需操作; 若你已经在别处绕开, 现在可以去掉 |
 | **`async __call__` 的 route_fn 被拒** | 声明期 `TypeError`。此前 `inspect.iscoroutinefunction(实例)` 是 `False` 会漏网, 运行期才报一条**指错方向**的错 | 异步判定做成 judge-stage 写 state, 边只读 |
@@ -23,6 +24,14 @@
 | **fork 重跑**失败**时的 `export-input`** | 该 checkpoint 下导出**本次 run 还没跑完**的 stage 时, 输出**多出** fork 注入的 key。修复前那些 key 静默消失 (rc=0) | 无需操作; 若你**依赖过**"导出里没有 override"这个行为 (靠缺省值二次加工), 那是 bug 不是契约 |
 
 其余条目 (CLI 友好错误 / 守卫补齐 / 测试加固) 不改变已部署行为。
+
+**为什么老 cp 只能重跑 (不是"懒得兼容", 是信息没了)**: 试过从旧 cp 反推
+`fork_keep_counts` —— 候选公式 `kc[n] = done_stages 里 n 的出现次数` —— 实测 **0/6
+形状与真值相符**。根因: `done_stages` 记的是 `keep + 重跑段` 的**全量**, 与
+`stage_deltas_visits` 逐条 1:1 对齐, 从这两者**无法区分**哪几条是截断前的历史、
+哪几条是重跑产物。缺的那个信息 (截断点位置) 在旧格式里根本没落盘。所以"读旧 cp
+时保留旧语义"和"推断出正确的"之间**不存在取舍** —— 只有错和更错的区别, 而现状
+(错) 已由上表两行明确告知"重跑一次"。别再试一遍推断。
 
 **关于指纹**: 本轮只有 `dag 名` 入指纹这一处变化。上表那行之外, 我们把指纹实现
 改前改后拿出来, 拿仓里 `tests/` + `examples/` 的 **886 个真实函数**逐个比对了

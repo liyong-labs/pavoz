@@ -418,7 +418,11 @@ class Checkpoint:
         for done in self.done_stages:
             occ = visit_idx.get(done, 0)  # 本 stage 第几个 done 条目 (0 起)
             # fork cp 里"没条目"= 全部重跑 (kc=0), 不是"顺序索引" —— 这两件事以前
-            # 被同一个 None 混为一谈, 正是 id=3241 的根因
+            # 被同一个 None 混为一谈, 正是 id=3241 的根因。
+            # `else None` 是**刻意的哨兵**, 不是可以顺手清掉的死分支: 外层虽然
+            # 已经判了 `is_fork_cp`, 但下面两处 (`kc is None` / `kc is not None`)
+            # 仍靠它把"非 fork ⇒ 顺序索引"写成一件事。留着可读性更好; 真要合
+            # 成 `if is_fork_cp` 的写法, 记得连带把两处判据一起改, 别只改一处。
             kc = kcounts.get(done, 0) if is_fork_cp else None
             # 注入点判定必须在 stop_at 的 break **之前**: overrides 是注入给
             # from_stage 的输入, 而"某 stage 执行前的快照" (stop_at 命中 from_stage)
