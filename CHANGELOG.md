@@ -78,6 +78,29 @@
 
 ### Fixed
 
+- **`to_mermaid` 把 stage 名直接当节点 ID → 保留字名字渲染不出图**。stage 名来自
+  `fn.__name__`, Python 侧完全合法: 实测 `async def end / graph / subgraph /
+  style / click / flowchart / direction / classDef / linkStyle` 全都造得出来, 而
+  它们是 Mermaid 的保留字, 当 ID 用会让整张图渲染失败 (嵌 README 的图直接挂)。
+  含连字符的名字 (`load-data`) 同理。现在 ID 经 `_safe_id` 处理 (合法标识符 +
+  非保留字), **但标签恒为 stage 原名** —— 替换只发生在 Mermaid 内部的 ID 上, 图上
+  显示的一直是原名。**合法名字的输出逐字节不变** (`s_a` 之类一个都没动), 这是这次
+  改动的兼容性底线。
+  顺带修两处连带问题:
+  - `_safe_id` 的注释写着"字母数字 + _ -. (兜底防 hyphen)", 而实现只有
+    `name.replace(" ", "_")` —— **连字符根本没防** (`_safe_id("load-data")` 原样
+    返回)。注释声称的边界与实现不符, 让读注释的人以为有防护。
+  - 退化路径会把不同名字归一化成**同一个串** (实测 `"中文名"` / `"别的字"` /
+    `"第三个"` 全变 `___`), 两个节点共用一个 ID 就是渲染错 —— 图少一个节点而
+    **没有任何提示**。唯一性改由 `to_mermaid` 侧的 `_id_map` 保证 (按 sorted 建
+    映射, 冲突加序号, 输出可复现)。
+  **关于那份保留字清单**: 它来自我们对该语法的了解, **无法在本仓离线核对** (Mermaid
+  语法表不在仓内, 且本环境的联网查证工具不可用)。所以机制不只靠清单 —— 正则同时
+  兜住"不合法的 ID 形状", 保留字命中才替换。漏掉某个保留字的**后果 = 修复前的
+  行为**, 不会更糟; 这也是清单可以先留在这里的理由。`to_graph_json` 刻意**不改**
+  (`id` 是给 dagre/cytoscape 消费的, 那些库没有 Mermaid 的保留字限制, stage 原名
+  才是稳定标识)。
+
 - ★ **`export-input` 对"fork 重跑没跑完"的 checkpoint 静默丢掉 `fork_overrides`**。
   `rebuild_state_before(stage)` 的守卫放行了只存在于**历史** `stage_deltas`、不在
   `done_stages` 里的 stage (fork 截断点之后的那些) —— 这是对的, 它们确实跑过;
