@@ -19,6 +19,27 @@
 
 ### Fixed
 
+- **链式 fork 后 checkpoint 重建取到最老 visit 而非最近一次** (ai@home id=3241,
+  2026-10-15 报告 / 2026-10-16 本地修复)。**数据完整性问题**: fork_run 当场返回的
+  值是对的, 但此后任何读该 cp 的路径 (resume / load / diff_runs /
+  `TestPipe.replay_from`) 拿到的都是 fork **之前**的值:
+
+      run1 : C[none]   fork1: C[F1]   fork2: C[F2]     ← 活跑的值正确
+      cp 中 s_c delta: [0] C[none] [1] C[F1] [2] C[F2]
+      cp.state 重建   : C[none]                          ← 取了最老那次
+
+  根因两层:
+  1. `_save_cp` 没有 `fork_keep_counts` 参数 → fork 续跑的每轮 save 都把它清空成 {}
+  2. 更根本 —— `fork_keep_counts` 的语义是"该 stage 的 done 条目里, 有几条来自
+     fork 截断点**之前**", 而 `fork_run` 只给 keep 里的 stage 记条目 → from_stage
+     及其下游一条都没有 → 重建时 `kc is None` 被当成"顺序索引" → 对截断点后的重跑
+     集取 `deltas[0]`。重建逻辑现在**区分"fork cp"与"缺条目 = 全部重跑 (kc=0)"**,
+     且 `fork_run` 对所有带 visits 的 stage 都记条目 (缺的记 0)。
+  连带修好一个此前没人发现的分支: **从第一个 stage fork** (keep 为空) 时 kcounts
+  本会得到空 dict, 连"这是 fork cp"都识别不出来。
+  `tests/test_chained_fork_rebuild.py` 的 xfail 已 **XPASS** (该信号当初就是为验收
+  设的), marker 摘除, 用例转为永久回归防线, 并补了上述分支的 2 条新例。
+
 - **`workflow_hash` 不含 dag 名 → 两条流水线可以静默混流**。结构相同、名字不同的
   两个 DAG (两条不同流水线) 此前拿到同一指纹; task_id 撞车时 resume 拿错 cp 且
   毫无提示。实测:

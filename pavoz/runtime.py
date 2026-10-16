@@ -398,6 +398,13 @@ class Runtime:
         _fork_overrides: dict = {}
         # R2 (0.5.3): stage 名 → 执行输入 hash, 随 cp 持久化 (fork skip_unchanged 用)
         input_hashes: dict[str, str] = {}
+        # fork_keep_counts 与 _fork_overrides 同理: 它标着"done_stages 里哪些条目属于
+        # fork 截断点**之前**", 重建时靠它把重跑段与 visits 尾部对齐 (见
+        # Checkpoint._rebuild_state)。此前 _save_cp 根本没有这个参数 → fork 续跑的
+        # 每一次 save 都把它清空成 {} → 重建退化成"按出现顺序索引", 对截断点后的
+        # 重跑集取到**最老**那条 delta: 链式 fork 的活跑结果对、落盘 cp 错
+        # (ai@home id=3241, tests/test_chained_fork_rebuild.py 曾 xfail 钉住)。
+        _kcounts: dict[str, int] = {}
 
         # ── resume: 恢复 checkpoint 状态 ──
         if cp is not None:
@@ -416,6 +423,7 @@ class Runtime:
             initial_state_saved = dict(cp.initial_state)
             _fork_overrides = dict(cp.fork_overrides)  # fork 分支续保
             input_hashes = dict(cp.stage_input_hashes)  # R2: resume 续记
+            _kcounts = dict(cp.fork_keep_counts)        # fork 截断点标记: 续传 (见上)
             result.state = state
             logger.info(
                 "task=%s run=%s resume: 已完成 %d stages",
@@ -484,7 +492,7 @@ class Runtime:
             result.state = state
             self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                           producers, stage_deltas_visits, initial_state_saved,
-                          stage_ts, _fork_overrides, input_hashes, reset_pending, fn_sources)
+                          stage_ts, _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts)
             self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                    "dag": dag.name, "status": "failed"})
             logger.warning(
@@ -572,7 +580,7 @@ class Runtime:
                 result.state = state
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending, fn_sources)
+                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts)
                 self._emit("stage_end", {"task_id": task_id, "run_id": run_id,
                                          "stage": name, "attempt": 0, "visit": 0,
                                          "status": "skipped", "duration": 0.0,
@@ -600,7 +608,7 @@ class Runtime:
                 _fill_error_context(result, name, "MaxStepsExceeded", state)
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending, fn_sources)
+                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts)
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": "failed"})
                 logger.warning(
@@ -645,7 +653,7 @@ class Runtime:
                 _fill_error_context(result, name, None, state)
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending, fn_sources)
+                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts)
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": "cancelled"})
                 logger.warning(
@@ -684,7 +692,7 @@ class Runtime:
                 _fill_error_context(result, name, err_class, state, err_category)
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending, fn_sources)
+                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts)
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": result.status})
                 return result
@@ -699,7 +707,7 @@ class Runtime:
             visits[name] = visit_no
             self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                           producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                          _fork_overrides, input_hashes, reset_pending, fn_sources)
+                          _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts)
             logger.info(
                 "task=%s run=%s stage=%s done (len state=%d)",
                 task_id, run_id[:8], name, len(state),
@@ -1012,7 +1020,16 @@ class Runtime:
             stage_ts=dict(cp.stage_ts),
             fork_overrides=dict(overrides or {}),
             stage_input_hashes=dict(cp.stage_input_hashes),
-            fork_keep_counts={n: keep.count(n) for n in set(keep)},
+            # **每个带 visits 的 stage 都要有条目** (缺的记 0), 不能只记 keep 里的:
+            # 语义是"这个 stage 的 done 条目里, 有几条来自 fork 截断点之前"。只记
+            # keep 的 stage ⇒ from_stage 及其下游拿不到条目 ⇒ 重建时 `kc is None`
+            # 退化成顺序索引 ⇒ 对截断点后重跑集取到**最老**那条 delta
+            # (ai@home id=3241; 实测: 活跑 C[F2], 落盘 cp 重建出 C[none])。
+            # 从第一个 stage fork 时 keep 为空, 只记 keep 会得到空 dict —— 连
+            # "这是 fork cp" 都识别不出来, 故必须显式记 0。
+            fork_keep_counts={
+                n: keep.count(n) for n in set(keep) | set(cp.stage_deltas_visits)
+            },
             stage_fn_sources=dict(cp.stage_fn_sources),
         )
         self.checkpoint_store.save(fork_cp)  # save 同时把 latest 指针移到 fork
@@ -1226,7 +1243,8 @@ class Runtime:
                  fork_overrides: dict | None = None,
                  input_hashes: dict | None = None,
                  reset_pending: set[str] | None = None,
-                 stage_fn_sources: dict[str, str] | None = None) -> None:
+                 stage_fn_sources: dict[str, str] | None = None,
+                 fork_keep_counts: dict[str, int] | None = None) -> None:
         if self.checkpoint_store is None:
             return
         try:
@@ -1242,6 +1260,7 @@ class Runtime:
                 stage_deltas_visits={
                     k: list(v) for k, v in (stage_deltas_visits or {}).items()},
                 stage_ts=dict(stage_ts or {}),
+                fork_keep_counts=dict(fork_keep_counts or {}),
                 fork_overrides=dict(fork_overrides or {}),
                 stage_input_hashes=dict(input_hashes or {}),
                 reset_pending=sorted(reset_pending or ()),

@@ -345,7 +345,10 @@ class Checkpoint:
         visit_idx: dict[str, int] = {}
         total: dict[str, int] = {}
         kcounts = self.fork_keep_counts
-        if kcounts:
+        # 非空 = 这是 fork cp (从第一个 stage fork 时 keep 为空, 故由 fork_run 显式
+        # 记 0 来标识)。普通 run 的 kcounts 恒空 → 走顺序索引, 行为逐字节不变。
+        is_fork_cp = bool(kcounts)
+        if is_fork_cp:
             for done in self.done_stages:  # fork cp: 每 stage 总条目数 (尾对齐用)
                 total[done] = total.get(done, 0) + 1
         for done in self.done_stages:
@@ -354,7 +357,9 @@ class Checkpoint:
             deltas = self.stage_deltas_visits.get(done, [])
             occ = visit_idx.get(done, 0)  # 本 stage 第几个 done 条目 (0 起)
             visit_idx[done] = occ + 1
-            kc = kcounts.get(done)
+            # fork cp 里"没条目"= 全部重跑 (kc=0), 不是"顺序索引" —— 这两件事以前
+            # 被同一个 None 混为一谈, 正是 id=3241 的根因
+            kc = kcounts.get(done, 0) if is_fork_cp else None
             if kc is not None and occ >= kc:
                 # fork 截断点后的条目: 与 visits 尾部对齐 (该 cp 重跑产生的新
                 # visit 追加在历史之后) — 顺序对齐会错配到截断前的旧 delta.
