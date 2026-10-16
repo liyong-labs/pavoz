@@ -244,3 +244,108 @@ def test_direction_argument_cannot_inject_a_new_line():
     lines = [ln for ln in out.splitlines() if ln.strip()]
     assert len(lines) == 2, (
         f"direction 里的换行造出了额外语句 (行数 {len(lines)}):\n{out}")
+
+
+# ── to_mermaid 与 to_graph_json 是同一张图的两个导出, 必须彼此一致 ────────────
+#
+# 两个导出服务两类消费者 (README 里嵌 Mermaid vs 前端 dagre/cytoscope 吃 JSON),
+# 它们描述的**是同一张图**。而仓库里没有任何一条判据说它们必须一致 ——
+# 哪天有人给 JSON 加了第三种边而忘了 Mermaid (或反过来), 消费者就会拿到两张
+# 不同的图, 而且两边都"看着对"。
+#
+# 本仓反复栽的正是这一类: docstring 说 X 实现做 Y、storage 与 debug_dir 对同一件事
+# 给不一致的答案、文档表格与代码各写一遍互不校验。这条把两个导出**互相钉住**。
+#
+# 提取 mermaid 那侧时踩过一次坑: 正则写成 `--` 而生成器发的是 `-->`, 于是静态边
+# 一条没提出来, 而"两边都空"看起来就是"一致" —— **空集绿灯**。所以下面每个提取
+# 都带非空断言, 提取器与生成器脱节时要**响**, 不是悄悄变空。
+
+
+def _parse_mermaid(mmd: str) -> tuple[set, set, set]:
+    """把 mermaid 拆成 (节点, 静态边, 条件边)。认不出的行直接炸。"""
+    nodes: set = set()
+    static: set = set()
+    cond: set = set()
+    for raw in mmd.splitlines():
+        ln = raw.strip()
+        if not ln or ln.startswith("graph "):
+            continue
+        m = re.fullmatch(r'\w+\["(?P<label>.*)"\]', ln)
+        if m:
+            nodes.add(m.group("label"))
+            continue
+        m = re.fullmatch(r"(?P<a>\w+) --> (?P<b>\w+)", ln)
+        if m:
+            static.add((m.group("a"), m.group("b")))
+            continue
+        m = re.fullmatch(r"(?P<a>\w+) -\.(?P<k>.*)\.-> (?P<b>\w+)", ln)
+        if m:
+            cond.add((m.group("a"), m.group("b")))
+            continue
+        raise AssertionError(f"没认得的 mermaid 行 (提取器与生成器脱节了): {ln!r}")
+    return nodes, static, cond
+
+
+def _graph_with_both_edge_kinds() -> DAG:
+    dag = DAG("viz_cons")
+    @dag.stage()
+    async def s_head(ctx):
+        return {}
+
+    @dag.stage(depends_on=["s_head"])
+    async def s_work(ctx):
+        return {"k": 1}
+
+    @dag.stage(depends_on=["s_work"])
+    async def s_router(ctx):
+        return {"p": "go"}
+
+    @dag.stage()
+    async def s_yes(ctx):
+        return {}
+
+    @dag.stage()
+    async def s_no(ctx):
+        return {}
+
+    dag.add_conditional_edges("s_router", lambda s: s["p"],
+                              {"go": "s_yes", "stop": "s_no"})
+    return dag
+
+
+def test_both_exports_describe_the_same_graph():
+    dag = _graph_with_both_edge_kinds()
+    mnodes, mstatic, mcond = _parse_mermaid(to_mermaid(dag))
+    gj = to_graph_json(dag)
+    jnodes = {n["id"] for n in gj["nodes"]}
+    jstatic = {(e["from"], e["to"]) for e in gj["edges"] if e["kind"] == "static"}
+    jcond = {(e["from"], e["to"]) for e in gj["edges"] if e["kind"] == "conditional"}
+
+    # 自检: 三类都必须非空 —— 否则"两边都空"会被读成一致 (2026-10-17 踩过)
+    assert mnodes and mstatic and mcond, (
+        f"mermaid 侧提取为空 (节点 {len(mnodes)} / 静态边 {len(mstatic)} / "
+        f"条件边 {len(mcond)}) —— 提取器与生成器脱节了, 别拿空集比")
+    assert jnodes and jstatic and jcond, (
+        f"json 侧提取为空 (节点 {len(jnodes)} / 静态边 {len(jstatic)} / "
+        f"条件边 {len(jcond)}) —— 同样不能拿来做比较")
+
+    assert mnodes == jnodes, (
+        f"两个导出的节点集合不一致 (只出现在 mermaid: {sorted(mnodes - jnodes)}; "
+        f"只出现在 json: {sorted(jnodes - mnodes)}) —— 用户按两种导出画出来的图不同")
+    assert mstatic == jstatic, (
+        f"静态边不一致 (只 mermaid: {sorted(mstatic - jstatic)}; "
+        f"只 json: {sorted(jstatic - mstatic)})")
+    assert mcond == jcond, (
+        f"条件边不一致 (只 mermaid: {sorted(mcond - jcond)}; "
+        f"只 json: {sorted(jcond - mcond)})")
+
+
+def test_both_exports_order_nodes_the_same_way():
+    """topo_order 与 mermaid 的节点行序也该一致 (布局依赖顺序)。"""
+    dag = _graph_with_both_edge_kinds()
+    gj = to_graph_json(dag)
+    mmd_order = [re.fullmatch(r'\w+\["(.*)"\]', l.strip()).group(1)
+                 for l in to_mermaid(dag).splitlines()
+                 if l.strip() and "[" in l and "--" not in l]
+    assert gj["topo_order"] == mmd_order, (
+        f"topo_order 与 mermaid 行序不一致: json={gj['topo_order']} mermaid={mmd_order}")
