@@ -192,7 +192,21 @@ async def _cmd_replay(args) -> int:
         if inspect.iscoroutinefunction(patcher):
             print(f"patch 文件 {patch_path} 的 patch 不能是 async — 用同步 def patch(dag)")
             return 1
-        patcher(dag)
+        try:
+            patcher(dag)
+        except Exception as e:
+            # patch 文件是**用户提供的数据** (与 --input 的 JSON 同类), 而 CLI 对
+            # 这类输入的既有口径是"友好一行 + 退出码 1"。此前这里没有 try, patch
+            # 函数体里任何异常都从 cli.py 甩出一整段 runpy/asyncio 栈 ——
+            # 2026-10-17 实测: 用户按最自然的写法用 `@dag.stage()` 重定义一个已存在
+            # 的 stage, 撞 `duplicate stage name`, 而栈指向引擎内部, 真因在 patch
+            # 文件第 3 行。用户拿到的是"引擎炸了"的错觉。
+            #
+            # 消息带 patch 文件路径: 用户往往同时有好几个 patch 文件, 只说
+            # "patch 失败"他不知道是哪个; 同时保留原始异常消息 —— 那是他自己写的,
+            # 真正的原因在里面。类型名放前面是因为前面的分支已各自点名具体问题。
+            print(f"patch 执行失败 ({type(e).__name__}): {e} — 文件 {patch_path}")
+            return 1
     runtime = Runtime(checkpoint_store=CheckpointStore(_storage(args.task_id)))
     try:
         result = await runtime.run_stage(dag, task_id=args.task_id, stage_name=args.stage)
@@ -374,8 +388,11 @@ def main(argv: list[str] | None = None) -> int:
     p_replay.add_argument("dag", help="dag 文件路径")
     p_replay.add_argument("--task-id", required=True)
     p_replay.add_argument("--stage", required=True, help="要重放的 stage 名")
-    p_replay.add_argument("--patch", default=None,
-                          help="patch 文件 (暴露 patch(dag) -> None, 改 stage fn)")
+    p_replay.add_argument(
+        "--patch", default=None,
+        help="patch 文件 (暴露 patch(dag) -> None, 改 stage fn). "
+             "写法: def patch(dag): async def v2(ctx): ...; dag.stages[NAME].fn = v2 "
+             "(不要用 @dag.stage() 重定义 — 已存在的 stage 会撞 duplicate stage name)")
     p_replay.set_defaults(fn=_cmd_replay)
 
     p_export = sub.add_parser("export-input", help="导出某 stage 的执行前输入 (state JSON, 可编辑)")

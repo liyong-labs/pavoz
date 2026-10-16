@@ -128,6 +128,28 @@ _(空 — 见 [0.5.7] 及更早)_
 
 ### Fixed
 
+- ★ **`replay --patch` 里用户代码抛出的异常, 甩出一整段 runpy/asyncio 栈**。
+  `--patch` 加载的是**用户提供的数据** (与 `--input` 的 JSON、`--set-file` 同类),
+  而 CLI 对这类输入的既有口径一直是"友好一行 + 退出码 1" (`--input` 的 JSON 解析、
+  `fork-run` 的四个 override 来源、`prune --keep-last`、patch 文件不存在/缺
+  `patch()`/`patch` 是 async)。唯独 `patcher(dag)` 这一行没有 try。
+
+  2026-10-17 实测: 按最自然的写法用 `@dag.stage()` 重定义一个已存在的 stage,
+  撞 `duplicate stage name: s_a`, 而栈指向 `runpy` / `cli.py:195` —— 用户拿到的
+  是"引擎炸了"的错觉, 真因在他自己 patch 文件的第 3 行。
+
+  修法: 收敛成一行 `patch 执行失败 (<类型>): <消息> — 文件 <路径>` + rc=1。
+  带文件名是因为用户往往同时有好几个 patch 文件; 保留原始消息是因为那是他自己写的,
+  真因在里面。
+
+  连带一条文档缺口 (同一处踩到): 文档只说 patch 模块要暴露 `patch(dag) -> None`,
+  **没给可用写法** —— 而 `@dag.stage()` 重定义必然撞 duplicate stage name, 能用的是
+  直接换 `dag.stages["x"].fn` (测试里一直这么写, 从没写进文档)。现在 `api.md` 与
+  `--patch` 的 `--help` 都给了可复制的示例, 并点明"patch 别的 stage 再 replay 它"
+  不会生效 (只跑 `--stage` 指的那一个, 前序输入从 checkpoint 重建)。
+
+  判别力: 去掉那个 try → 3 红。
+
 - ★ **`TestPipe.calls()` 在 mock 抛异常时是空的 —— 而那正是需要它的时刻**。
   `_wrapped` 把 `self._recorded.append(...)` 写在 `out = _fn(ctx.state)` **之后**,
   mock 一抛异常那行就走不到。后果不是数字不准, 是**调试夹具在需要它的时候瞎掉**:

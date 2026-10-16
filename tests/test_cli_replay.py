@@ -130,3 +130,67 @@ async def s_b(ctx):
     out = json.loads(capsys.readouterr().out)
     assert out["status"] == "failed"
     assert out["overrides_applied"] == {"x": 1}  # stdout 仍带 overrides 供诊断
+
+
+# ── patch 里抛异常 = 参数错误, 不该吐 15 行 traceback ─────────────────────
+#
+# `--patch` 是**用户提供的代码文件** (与 `--input` 的 JSON、`--set-file` 同类), 而
+# CLI 对这类输入的既有口径是"友好一行 + 退出码 1":
+#   · `run --input` 的 JSON 解析错误  → "参数错误: ..."
+#   · `fork-run` 四个 override 来源   → "参数错误: ..."
+#   · `prune --keep-last`             → "参数错误: ..."
+#   · patch 文件不存在 / 缺 patch() / patch 是 async → 各自一行
+#
+# 唯独**patch 函数体里抛出的异常**没有 try: `_cmd_replay` 直接 `patcher(dag)`。
+# 我第一次写 patch 就撞上了 —— 用 `@dag.stage()` 重新定义一个已存在的 stage,
+# `duplicate stage name: s_a` 从 cli.py 第 195 行甩出一整段 runpy/asyncio 栈,
+# 而真因是 patch 文件第 3 行。用户拿到的是"引擎内部炸了"的错觉。
+#
+# 另一条同源的: 文档只说 patch 模块要暴露 `patch(dag) -> None`, **没给可用写法**。
+# 最自然的写法就是重挂装饰器, 而那必然撞 duplicate stage name。真正能用的是直接
+# 换 `dag.stages["x"].fn` (测试里一直这么写, 但从没写进文档)。
+
+
+async def test_patch_raising_is_reported_as_one_line_not_traceback(monkeypatch, tmp_path, capsys):
+    """★ patch 函数体抛异常 → 一行 + rc=1, 且**不吐 traceback**。"""
+    monkeypatch.setattr(cli_mod, "DEFAULT_STORAGE", str(tmp_path / "store"))
+    dag_path = _write_dag(str(tmp_path))
+    assert await _cmd_run(_Args(dag=dag_path, task_id="pr-1", input=None, resume=False)) == 0
+    capsys.readouterr()
+
+    path = os.path.join(str(tmp_path), "bad_patch.py")
+    with open(path, "w") as f:
+        f.write('''
+def patch(dag):
+    @dag.stage()                 # 最自然的写法, 但重定义已存在的 stage 必然撞车
+    async def s_b(ctx):
+        return {"b": 1}
+''')
+    rc = await _cmd_replay(_Args(dag=dag_path, task_id="pr-1", stage="s_b", patch=path))
+    cap = capsys.readouterr()          # 只能取一次: 第二次已是空
+    out, err = cap.out, cap.err
+    assert rc == 1, f"patch 失败应返回 1, 实得 {rc}"
+    assert "Traceback" not in err, (
+        f"★ 用户 patch 的异常不该吐 traceback (它会指向 runpy/cli 而非 patch 文件), 实得:\n{err[:400]}")
+    assert "duplicate stage name" in (out + err), (
+        f"报错要点名真因 (duplicate stage name), 而不是只说'patch 失败'。实得: {(out+err)[:300]}")
+    assert "patch" in (out + err), f"报错要点明是哪个 patch 文件, 实得: {(out+err)[:200]}"
+
+
+async def test_patch_error_names_the_patch_file(monkeypatch, tmp_path, capsys):
+    """异常消息里带 patch 文件路径 —— 用户可能同时有好几个 patch 文件。"""
+    monkeypatch.setattr(cli_mod, "DEFAULT_STORAGE", str(tmp_path / "store"))
+    dag_path = _write_dag(str(tmp_path))
+    assert await _cmd_run(_Args(dag=dag_path, task_id="pr-2", input=None, resume=False)) == 0
+    capsys.readouterr()
+
+    path = os.path.join(str(tmp_path), "raises.py")
+    with open(path, "w") as f:
+        f.write("def patch(dag):\n    raise RuntimeError('我自己炸的')\n")
+    rc = await _cmd_replay(_Args(dag=dag_path, task_id="pr-2", stage="s_b", patch=path))
+    cap = capsys.readouterr()
+    out, err = cap.out, cap.err
+    assert rc == 1
+    blob = out + err
+    assert "raises.py" in blob, f"要带 patch 文件名, 实得: {blob[:300]}"
+    assert "我自己炸的" in blob, f"要保留原始异常消息 (那是用户自己写的), 实得: {blob[:300]}"

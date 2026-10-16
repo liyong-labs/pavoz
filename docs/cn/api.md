@@ -544,6 +544,26 @@ python -m pavoz replay <dag.py> --task-id X --stage Y [--patch P.py]   # v0.5.1
   `--patch P.py` 加载暴露 `patch(dag) -> None` 的模块先换实现 (必须 sync —
   async patch 拒绝)。输出 result JSON; 不落任何盘 (不写 cp, 不动 latest 指针)
 
+  patch 的**可用写法**是直接换 `dag.stages[名].fn`:
+
+  ```python
+  # patch.py
+  def patch(dag):                     # 必须同步 def
+      async def s_b_v2(ctx):
+          return {"b": ctx.state["a"] * 10}
+      dag.stages["s_b"].fn = s_b_v2   # ← 换实现, 不是再加一个 stage
+  ```
+
+  ⚠️ **不要用 `@dag.stage()` 重定义** —— 已存在的 stage 名会撞
+  `duplicate stage name` (这是 stage 级的保护, 不是 bug)。2026-10-17 之前文档只说
+  "暴露 `patch(dag) -> None`"却没给写法, 最自然的写法正是重挂装饰器。
+  patch 函数体抛出的异常现在收敛成一行 (`patch 执行失败 (<类型>): <消息> — 文件
+  <路径>`) + 退出码 1, 与 CLI 其余参数路径一致, 不再甩 runpy/asyncio 的栈。
+
+  ⚠️ 只跑**被重放的那一个** stage: patch 了别的 stage 再 replay 它, 补丁不会生效
+  (前序 stage 的输入是从 checkpoint 重建的, 不会重跑)。要试改 prompt, patch 的就是
+  `--stage` 指的那个。
+
 ## 参数覆盖 (fork-run 的库等价物)
 
 ```python
