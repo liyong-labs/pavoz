@@ -446,6 +446,12 @@ rec.names()  # ["run_start", "stage_start", ...]
 - 生命周期事件: `run_start` / `stage_start` / `stage_end` / `stage_retry` /
   `stage_progress` / `run_end` (与 `on_event` 同一事件流)
 - 不想手写收集 lambda 时的现成观察者; 落盘留档供事后排查
+- **sink 的每一行都是合法 RFC 8259 JSON**: 载荷里的非有限 float (`NaN` / `±Inf`)
+  落盘时字符串化成 `"nan"` / `"inf"` / `"-inf"`, 而不是写成非法字面量 ——
+  这份文件是给 jq / Splunk / Loki 读的, 一行读不了就等于少一条记录。
+  只动**序列化**, 不动内存: `recorder.events` 里仍是原始 float。
+  (state 侧的非有限值早在 `deep_validate_state` 就被拒了, 但事件载荷是
+  caller/stage 自报的数据, 不经那个 chokepoint)
 
 ## CLI
 

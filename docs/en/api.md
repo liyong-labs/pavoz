@@ -499,6 +499,14 @@ rec.names()  # ["run_start", "stage_start", ...]
   `stage_progress` / `run_end` (same stream as `on_event`)
 - A ready-made observer for callers who don't want a hand-written lambda;
   the JSONL sink keeps an audit trail for post-mortems
+- **Every sink line is valid RFC 8259 JSON**: non-finite floats (`NaN` / `±Inf`)
+  in a payload are stringified to `"nan"` / `"inf"` / `"-inf"` on the way to disk
+  rather than written as invalid literals — this file exists to be read by
+  jq / Splunk / Loki, and one unreadable line is one lost record. Only the
+  **serialization** is normalized; `recorder.events` still holds the original
+  float. (Non-finite values in *state* are already rejected by
+  `deep_validate_state`, but event payloads are caller/stage-reported data and
+  never pass through that chokepoint.)
 
 ## CLI
 

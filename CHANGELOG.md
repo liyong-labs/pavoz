@@ -19,6 +19,20 @@
 
 ### Fixed
 
+- **`EventRecorder` 的 JSONL sink 会写出非法 JSON** (`NaN` / `Infinity` 字面量):
+  Python 的 `json.dumps` 默认 `allow_nan=True`, 而 sink 的存在意义就是给
+  jq / Splunk / Loki 这类工具读 —— 一行读不了就等于少一条记录。实测 (修复前): 一个
+  上报 `set_progress(float("nan"))` 的 stage 就能让 7 行 sink 里 2 行不是合法
+  RFC 8259 JSON。
+  **注意与 `set_progress` 不校验 fraction 的区别**: 那个"不校验"是**故意**的 ——
+  它是 best-effort 瞬态信号, 让装饰性错误把业务 stage 带崩更糟; 而 sink 是 pavoz
+  **自己产出的**机器可读产物, 格式该由 pavoz 负责。
+  修法: 序列化时把非有限 float 换成 `"nan"` / `"inf"` / `"-inf"`, 并配
+  `allow_nan=False` (前者兜住已知情况, 后者保证再有别的非标准值时**响**而不是悄悄
+  写坏文件)。**不用**直接 `allow_nan=False` 一刀切: 那会让该事件整条丢失
+  (`Runtime._emit` 隔离 observer 异常 → 只剩一行日志), 而 sink 的职责是留住记录。
+  只动序列化, 内存里的 `recorder.events` 仍是原始 float。
+
 - **扩展面的错误语义矩阵补齐回归防线** (`ctx.call` → 注入的 caller)。实测四行全部
   正确 (RetryableError 重试 3 次且 `error_category` 透传 / StageError 不重试 /
   自定义异常带 `.category` 也透传 / 裸异常 category=None), 但**零测试覆盖** ——
