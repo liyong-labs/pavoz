@@ -394,6 +394,16 @@ class Runtime:
         """
 
         dag.validate()
+        # DAG 结构指纹**整次 run 只算一次** (2026-10-17): 它是 dag 的纯函数, 而
+        # `_save_cp` 每个 stage 都要写进 cp ⇒ 此前 N 个 stage 重算 N 次。
+        # 160 stage 的线性 DAG profile: _save_cp 占 92% 运行时, 其中 workflow_hash
+        # 占 31% —— 全花在重算一个常量上, 且**所有规模都按这个比例** (不是到几百个
+        # stage 才出现的规模问题)。resume 的指纹校验复用同一个值。
+        #
+        # 不做"缓存到 dag 对象上": dag.validate() 已把 dag 冻结, run 期间结构根本
+        # 不可能变 —— 但把值当**参数**传下去比加一层带失效语义的缓存更简单, 也没有
+        # "陈旧指纹"这一类风险 (那正是这个函数存在的理由)。
+        wf_hash = workflow_hash(dag)
         result = RunResult(task_id=task_id, dag_name=dag.name)
 
         # ── run_id: 每次 run 一个 UUID4; resume 复用 cp 的 run_id ──
@@ -446,7 +456,7 @@ class Runtime:
 
         # ── resume: 恢复 checkpoint 状态 ──
         if cp is not None:
-            cur_hash = workflow_hash(dag)
+            cur_hash = wf_hash          # run 开头已算 (见上)
             if cp.workflow_hash != cur_hash:
                 raise CheckpointMismatchError(dag_mismatch_msg(
                     task_id, cp, dag, action="DAG 结构变了, 不能 resume",
@@ -559,7 +569,7 @@ class Runtime:
             result.state = state
             self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                           producers, stage_deltas_visits, initial_state_saved,
-                          stage_ts, _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts)
+                          stage_ts, _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, wf_hash=wf_hash)
             self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                    "dag": dag.name, "status": "failed"})
             logger.warning(
@@ -647,7 +657,7 @@ class Runtime:
                 result.state = state
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts)
+                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, wf_hash=wf_hash)
                 self._emit("stage_end", {"task_id": task_id, "run_id": run_id,
                                          "stage": name, "attempt": 0, "visit": 0,
                                          "status": "skipped", "duration": 0.0,
@@ -675,7 +685,7 @@ class Runtime:
                 _fill_error_context(result, name, "MaxStepsExceeded", state)
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts)
+                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, wf_hash=wf_hash)
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": "failed"})
                 logger.warning(
@@ -747,7 +757,7 @@ class Runtime:
                 })
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts)
+                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, wf_hash=wf_hash)
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": "cancelled"})
                 logger.warning(
@@ -789,7 +799,7 @@ class Runtime:
                 _fill_error_context(result, name, err_class, state, err_category)
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts)
+                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, wf_hash=wf_hash)
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": result.status})
                 return result
@@ -815,7 +825,7 @@ class Runtime:
             visits[name] = visit_no
             self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                           producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                          _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts)
+                          _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, wf_hash=wf_hash)
             logger.info(
                 "task=%s run=%s stage=%s done (len state=%d)",
                 task_id, run_id[:8], name, len(state),
@@ -1382,7 +1392,8 @@ class Runtime:
                  input_hashes: dict | None = None,
                  reset_pending: set[str] | None = None,
                  stage_fn_sources: dict[str, str] | None = None,
-                 fork_keep_counts: dict[str, int] | None = None) -> None:
+                 fork_keep_counts: dict[str, int] | None = None,
+                 wf_hash: str | None = None) -> None:
         if self.checkpoint_store is None:
             return
         try:
@@ -1390,7 +1401,9 @@ class Runtime:
                 task_id=task_id,
                 run_id=run_id,
                 dag_name=dag.name,
-                workflow_hash=workflow_hash(dag),
+                # wf_hash 由调用点整次 run 算一次传下来 (见 _run_inner 的说明);
+                # None = 自己算 (run_stage / fork_run / 库调用等单次场景)
+                workflow_hash=wf_hash if wf_hash is not None else workflow_hash(dag),
                 stage_statuses=dict(statuses),
                 done_stages=list(done_stages),
                 producers=dict(producers or {}),
