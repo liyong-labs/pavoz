@@ -128,6 +128,29 @@ _(空 — 见 [0.5.7] 及更早)_
 
 ### Fixed
 
+- **`error_category` 的 9 类建议值里有 3 类是结构性拿不到的 —— 文档已写清**。
+  `docs/{cn,en}/api.md` 推荐 9 个 category, 其中 `CHECKPOINT_LOAD_FAIL` /
+  `STATE_VALIDATION` / `PROTOCOL_BREACH` 描述的是**引擎侧**失败。而引擎**不替 caller
+  猜业务类别** (不猜是对的), 于是这 3 类永远到不了那个字段。实测矩阵:
+
+  | 引擎侧失败 | 实际拿到 |
+  |---|---|
+  | `STATE_VALIDATION` (stage 返回非有限值) | failed / `ValueError` / `category=None` |
+  | `PROTOCOL_BREACH` (router 返回未声明 key) | failed / `UnmappedRouteError` / `category=None` |
+  | `CHECKPOINT_LOAD_FAIL` (resume 结构变了) | **抛 `CheckpointMismatchError`**, 没有 `RunResult` |
+
+  文档接着写"caller 据此分流重试/通知策略" —— 只 dispatch `error_category` 的话, 引擎
+  引发的失败**全落进 `None` 分支**, 而那恰恰是最需要分诊的一类。
+
+  修文档而不是加行为: 让引擎给引擎失败打默认类别是**新功能**, 且会把
+  `error_category` 从"caller 没分类就是 None"变成"有时引擎会填" —— 对已经在 dispatch
+  `None` 的 caller 是行为变更。分流该走两条腿: caller 自打的看 `error_category`,
+  引擎侧失败看 `error_class` (或捕获那个异常)。
+
+  矩阵钉进 `tests/test_error_category.py` (含一条正向对照: caller 自带的 category 仍
+  透传 —— 引擎侧为 `None` ≠ 透传坏了)。判别力: 让所有失败兜一个 `CODE_BUG` → 3 红。
+  哪天真给引擎失败补默认类别, 这条会红, 那时该同步改文档。
+
 - ★ **`dag.stages` 是"每次访问都建一份 dict 副本"的 property, 却被放在循环里**。
   接着前两条 perf 查下去: 它服务两个读者 (① 每 stage 全量落盘 = 崩溃可从任意点续跑,
   ② 每 stage 对全量 state 算输入指纹 = resume 能跳过未变 stage), **两个都是文档化的

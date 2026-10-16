@@ -8,6 +8,8 @@
 """
 
 
+import pytest
+
 from pavoz import DAG, FatalError, RetryableError, Runtime, StageError
 
 
@@ -144,3 +146,115 @@ async def test_category_in_9_enum_set():
 
         r = await Runtime().run(dag, f"c_{c}")
         assert r.error_category == c, f"category {c} 没传过"
+
+# ── 那 9 类里, 引擎自己产不出来 3 类 (2026-10-17 实测 + 文档修正) ────────────
+#
+# 实测矩阵 (拿真实 run 跑出来, 不是读代码猜的):
+#
+# | 场景                          | 异常? | status | error_class         | error_category |
+# |-------------------------------|-------|--------|---------------------|----------------|
+# | StageError(category=LLM_TIMEOUT)| 否   | failed | StageError          | LLM_TIMEOUT ✅  |
+# | StageError(不带 category)      | 否   | failed | StageError          | None           |
+# | RetryableError / FatalError    | 否   | failed | 同名                | None           |
+# | 裸 ValueError / TimeoutError   | 否   | failed | 同名                | None           |
+# | stage 返回 NaN                 | 否   | failed | ValueError          | **None**       |
+# | router 返回未声明 key          | 否   | failed | UnmappedRouteError  | **None**       |
+# | resume 时结构变了              | **是** | -     | CheckpointMismatchError | -          |
+# | max_steps 熔断                 | 否   | failed | RetryableError      | None           |
+#
+# 文档(api.md)推荐 9 类里有 **3 类是引擎侧的**: CHECKPOINT_LOAD_FAIL /
+# STATE_VALIDATION / PROTOCOL_BREACH。但引擎自己**一个都不产出**:
+#   · STATE_VALIDATION 那个失败以 failed/ValueError + category=None 到达
+#   · PROTOCOL_BREACH 那个以 failed/UnmappedRouteError + category=None 到达
+#   · CHECKPOINT_LOAD_FAIL 那个**直接抛异常**, RunResult 压根不存在
+# 而文档接着写"caller 据此分流重试/通知策略" —— 对这 3 类, 字段是结构性拿不到的。
+#
+# 这不是 bug 而是**契约没写清**: category 是 caller 自带的自由 string, 引擎不替
+# caller 猜业务类别 (不猜是对的)。所以修文档而不是加行为: 让引擎自己给引擎失败打
+# 类别 = 新功能, 且会改变 `error_category` 从"caller 没分类就是 None"变成"有时引擎
+# 会填" —— 对已经在 dispatch None 的 caller 是行为变更。
+#
+# 下面把矩阵钉住: 透传通着, 且引擎侧三类确实是 None / 抛异常。哪天真给引擎失败补上
+# 默认类别, 这条会红 —— 那时该同步改文档 (而不是让文档继续说一个不存在的现状)。
+
+
+async def test_engine_side_failures_carry_no_category():
+    """★ 引擎自己引发的三类失败: 要么 category=None, 要么压根是异常。"""
+    import tempfile
+
+    from pavoz import CheckpointStore, FileStorage
+
+    # (a) STATE_VALIDATION 形状: stage 返回非有限值
+    dag = DAG("cat_nf")
+
+    @dag.stage()
+    async def s_bad(ctx):
+        return {"v": float("nan")}
+
+    with tempfile.TemporaryDirectory() as td:
+        r = await Runtime(
+            checkpoint_store=CheckpointStore(FileStorage(td))).run(dag, "nf")
+    assert r.status == "failed"
+    assert r.error_class == "ValueError", f"实得 {r.error_class}"
+    assert r.error_category is None, (
+        f"引擎自己产的 category 实得 {r.error_category!r} —— 若将来补了默认类别, "
+        f"请同步改 docs/cn/api.md 那 9 类的说明 (本条就是那个提醒)")
+
+    # (b) PROTOCOL_BREACH 形状: router 返回未声明 key
+    dag2 = DAG("cat_um")
+
+    @dag2.stage()
+    async def s_gate(ctx):
+        return {}
+
+    @dag2.stage()
+    async def s_tgt(ctx):
+        return {}
+
+    dag2.add_conditional_edges("s_gate", lambda s: "未声明", {"ok": "s_tgt"})
+    with tempfile.TemporaryDirectory() as td:
+        r2 = await Runtime(
+            checkpoint_store=CheckpointStore(FileStorage(td))).run(dag2, "um")
+    assert r2.status == "failed"
+    assert r2.error_class == "UnmappedRouteError", f"实得 {r2.error_class}"
+    assert r2.error_category is None
+
+
+async def test_checkpoint_load_failure_raises_instead_of_returning_result():
+    """★ CHECKPOINT_LOAD_FAIL 形状: **抛异常**, 没有 RunResult 也没有 category。"""
+    import tempfile
+
+    from pavoz import CheckpointMismatchError, CheckpointStore, FileStorage
+
+    d1 = DAG("cat_mm_a")
+
+    @d1.stage()
+    async def s_a(ctx):
+        return {"a": 1}
+
+    with tempfile.TemporaryDirectory() as td:
+        store = CheckpointStore(FileStorage(td))
+        await Runtime(checkpoint_store=store).run(d1, "mm")
+
+        d2 = DAG("cat_mm_b")            # 结构不同的另一个 dag
+
+        @d2.stage()
+        async def s_b(ctx):
+            return {"b": 2}
+
+        with pytest.raises(CheckpointMismatchError):
+            await Runtime(checkpoint_store=store).run(d2, "mm", resume=True)
+
+
+async def test_category_pass_through_still_works():
+    """正向对照: 透传机制本身没坏 (引擎侧为 None ≠ 透传失效)。"""
+    dag = DAG("cat_ok")
+
+    @dag.stage()
+    async def s_bad(ctx):
+        raise StageError("x", category="LLM_TIMEOUT")
+
+    r = await Runtime().run(dag, "ok")
+    assert r.status == "failed"
+    assert r.error_category == "LLM_TIMEOUT", (
+        f"caller 自带的 category 必须透传, 实得 {r.error_category!r}")

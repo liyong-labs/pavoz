@@ -197,6 +197,22 @@ of silent. It never blocks or refuses to continue — it only tells you.
   SEARCH_NO_RESULT / CODE_BUG / NETWORK / AUTH / INFRA / CHECKPOINT_LOAD_FAIL /
   STATE_VALIDATION / PROTOCOL_BREACH (free-form string, not an enforced enum);
   `None` when not passed / done / cancelled
+
+  ⚠️ **Only the first 6 of those are values a caller can raise. The last 3 describe
+  engine-side failures, and the engine never assigns them** (guessing a business
+  category for you would be wrong) — so they **can never reach this field**
+  (measured 2026-10-17; the matrix is pinned in `tests/test_error_category.py`):
+
+  | engine-side failure | what you actually get |
+  |---|---|
+  | `STATE_VALIDATION` (stage returns a non-finite value, etc.) | `status=failed`, `error_class="ValueError"`, `error_category=None` |
+  | `PROTOCOL_BREACH` (router returns an undeclared key) | `status=failed`, `error_class="UnmappedRouteError"`, `error_category=None` |
+  | `CHECKPOINT_LOAD_FAIL` (resume with a changed DAG) | **raises `CheckpointMismatchError`** — there is no `RunResult` at all |
+
+  So dispatch needs **both** legs: caller-raised categories via `error_category`,
+  engine-side failures via `error_class` (or by catching the exception). Dispatching
+  on `error_category` alone sends every engine-originated failure into the `None`
+  branch — which is exactly the class that most needs triage.
 - **`error_category` is independent of the exception type (unreleased, see CHANGELOG
   [Unreleased])**: any exception carrying a `.category` attribute passes it through —
   **subclassing `StageError` is not required**. Custom exceptions work the same way:

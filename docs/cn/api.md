@@ -166,6 +166,20 @@ WARNING — fn 体不计 `workflow_hash` 是有意设计(改 prompt 免全链重
   建议值 9 类: LLM_TIMEOUT / SEARCH_NO_RESULT / CODE_BUG / NETWORK / AUTH / INFRA /
   CHECKPOINT_LOAD_FAIL / STATE_VALIDATION / PROTOCOL_BREACH (自由 string, 不强制枚举);
   未传 / done / cancelled 为 `None`
+
+  ⚠️ **这 9 类里只有前 6 类是 caller 自己能打的; 后 3 类是引擎侧失败, 而引擎
+  **不替 caller 分类** (不猜业务类别是对的), 所以它们**永远到不了这个字段**
+  (2026-10-17 实测, 矩阵钉在 `tests/test_error_category.py`):
+
+  | 引擎侧失败 | 你实际拿到的 |
+  |---|---|
+  | `STATE_VALIDATION` (stage 返回非有限值等) | `status=failed`, `error_class="ValueError"`, `error_category=None` |
+  | `PROTOCOL_BREACH` (router 返回未声明 key) | `status=failed`, `error_class="UnmappedRouteError"`, `error_category=None` |
+  | `CHECKPOINT_LOAD_FAIL` (resume 时结构不匹配) | **抛 `CheckpointMismatchError`**, 压根没有 `RunResult` |
+
+  所以分流要**两条腿**: caller 自己打的类别看 `error_category`, 引擎侧失败看
+  `error_class` (或捕获那个异常)。只 dispatch `error_category` 的话, 引擎引发的失败
+  全落进 `None` 分支 —— 而那恰恰是最需要分诊的一类。
 - **`error_category` 与异常类型无关 (未发布, 见 CHANGELOG [Unreleased])**: 只要异常对象
   带 `.category` 属性就会透传 —— **不要求继承 `StageError`**。自定义异常同理:
 
