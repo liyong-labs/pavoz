@@ -345,3 +345,151 @@ async def test_selected_branch_with_deep_chain_completes(tmp_path):
     assert ran == ["s_a", "s_b", "s_gate", "s_c", "s_d", "s_e"], f"实得 {ran}"
     assert r.status == "done"
     assert r.state["e"] == 1
+
+
+async def test_gate_check_does_not_block_loop_reentry(tmp_path):
+    """★ 闸门检查**不能**拦住 `reset_pending` 驱动的回路重跑。
+
+    这条钉的是闸门检查那个改动自身的回归风险: `s_judge` 的静态上游闭包里含
+    `s_build` (条件边的 target ⇒ route-only), 所以 `_gated_by[s_judge]` 非空 ——
+    它**真的会**经过闸门分支。而回路能继续靠的是 `reset_pending`: 回跳落点
+    `s_build` 的静态下游 (含 s_review / s_judge) 被标记重跑。
+
+    闸门若在这里误拦, 回路会在第一圈后停住 —— 表现是 `s_build` 只跑 1 次而 run
+    报 done (静默少跑, 与本文件开头那个缺陷同一类形态)。
+
+    形状是**闭合**的: `s_judge` 依赖 `s_review`, 所以第二圈它能被 auto 推进回
+    判断链。写成回路未闭合的形状会得到"两边行为一致"的假对照 (实测踩过)。
+
+    ⚠️ 定位要说准: 这个形状**不经过**闸门判断分支 —— `s_build` 是回路目标
+    (有静态父 s_start), 按 `route_only_targets` 的定义它**不算** route-only,
+    所以 `_gated_by` 算出来是空集 (下面有断言把这一点钉住, 免得日后有人以为
+    它测了闸门)。它守住的是"闸门改动没有**间接**影响回路": `auto_order` 的
+    构造变了、`_next_auto` 多了一个 continue, 回路重跑都得照样跑满。
+    真正与闸门判断**交互**的形状见下一条。
+    """
+    ran: list[str] = []
+    dag = DAG("closed_loop_gate")
+
+    @dag.stage()
+    async def s_start(ctx):
+        ran.append("s_start")
+        return {}
+
+    @dag.stage(depends_on=["s_start"])
+    async def s_build(ctx):
+        ran.append(f"s_build:{ctx.state.get('rev', 0) + 1}")
+        return {"rev": ctx.state.get("rev", 0) + 1}
+
+    @dag.stage(depends_on=["s_build"])
+    async def s_review(ctx):
+        ran.append(f"s_review:{ctx.state['rev']}")
+        return {"reviewed": ctx.state["rev"]}
+
+    @dag.stage(depends_on=["s_review"])       # ← 闭合回路的关键依赖
+    async def s_judge(ctx):
+        ran.append(f"s_judge:{ctx.state['rev']}")
+        return {}
+
+    @dag.stage()
+    async def s_fin(ctx):
+        ran.append("s_fin")
+        return {"out": "done"}
+
+    dag.add_conditional_edges(
+        "s_judge", lambda s: "revise" if s.get("rev", 0) < 3 else "ship",
+        {"revise": "s_build", "ship": "s_fin"}, max_visits=12)
+
+    r = await Runtime(checkpoint_store=CheckpointStore(
+        FileStorage(tmp_path / "cp"))).run(dag, "C")
+
+    counts = {}
+    for entry in ran:
+        counts[entry.split(":")[0]] = counts.get(entry.split(":")[0], 0) + 1
+
+    assert r.status == "done", f"实测 {r.status}: {r.error}"
+    assert counts.get("s_build") == 3, f"回跳落点应重跑 3 轮, 实得 {counts} —— 回路被闸门误拦了?"
+    assert counts.get("s_review") == 3, f"s_review 应随回跳重跑 3 轮, 实得 {counts}"
+    assert counts.get("s_judge") == 3, f"s_judge 应重判 3 轮, 实得 {counts}"
+    assert counts.get("s_fin") == 1
+    assert r.state["out"] == "done"
+
+    # 把"这个形状不走闸门判断"**钉成断言** —— 定位写在 docstring 里没有约束力,
+    # 日后有人误以为它测了闸门分支, 就不会再补真正的交互用例了。
+    route_only = dag.route_only_targets()
+    anc: set[str] = set()
+    stack = list(dag.stages["s_judge"].depends_on)
+    while stack:
+        x = stack.pop()
+        if x not in anc:
+            anc.add(x)
+            stack.extend(dag.stages[x].depends_on)
+    assert route_only == {"s_fin"}, f"前置条件: 只有分支终点是 route-only, 实得 {route_only}"
+    assert not (anc & route_only), (
+        "回路目标有静态父 ⇒ 不算 route-only ⇒ 闸门前置为空。本用例若哪天开始"
+        "经过闸门分支了, 说明形状变了, 要重新定位它到底在守什么")
+
+
+async def test_route_branch_can_be_reentered_and_unlocks_its_gated_downstream(tmp_path):
+    """★ 闸门判断与路由回跳的**交互**形状。
+
+    前一条用例的闸门前置是空的 (回路目标有静态父 ⇒ 不算 route-only), 所以真正
+    与闸门交互的形状在这里: `s_branch` 是**分支目标**(无静态父 ⇒ route-only),
+    `s_down` 是它的静态下游 ⇒ `_gated_by[s_down] = {s_branch}` —— 回跳到
+    `s_branch` 之前, `s_down` 必须被闸门**卡住**; `s_branch` 重跑完之后, 闸门
+    必须**放行**。两个方向都要对: 早放行 = 抢跑 (本文件开头那个缺陷), 永不放行
+    = 回路第二圈直接停住。
+    """
+    ran: list[str] = []
+    dag = DAG("branch_reentry")
+
+    @dag.stage()
+    async def s_gate(ctx):
+        ran.append(f"s_gate:{ctx.state.get('rev', 0)}")
+        return {}
+
+    @dag.stage()                                   # 无静态父 ⇒ route-only
+    async def s_branch(ctx):
+        r = ctx.state.get("rev", 0) + 1
+        ran.append(f"s_branch:{r}")
+        return {"rev": r}
+
+    @dag.stage(depends_on=["s_branch"])            # ★ 闸门前置 = {s_branch}
+    async def s_down(ctx):
+        ran.append(f"s_down:{ctx.state['rev']}")
+        return {"checked": ctx.state["rev"]}
+
+    @dag.stage(depends_on=["s_down"])
+    async def s_judge(ctx):
+        ran.append(f"s_judge:{ctx.state['rev']}")
+        return {}
+
+    @dag.stage()
+    async def s_end(ctx):
+        ran.append("s_end")
+        return {"out": "done"}
+
+    dag.add_conditional_edges(
+        "s_gate", lambda s: "again" if s.get("rev", 0) < 3 else "stop",
+        {"again": "s_branch", "stop": "s_end"}, max_visits=12)
+    # s_judge 也要能把控制送回 s_gate, 否则第一圈后就没得判了
+    dag.add_conditional_edges(
+        "s_judge", lambda s: "again" if s.get("rev", 0) < 3 else "stop",
+        {"again": "s_gate", "stop": "s_end"}, max_visits=16)
+
+    r = await Runtime(checkpoint_store=CheckpointStore(
+        FileStorage(tmp_path / "cp"))).run(dag, "BR")
+
+    counts: dict[str, int] = {}
+    for e in ran:
+        k = e.split(":")[0]
+        counts[k] = counts.get(k, 0) + 1
+
+    # s_branch 的每一轮, s_down 都必须紧跟着跑一次 (闸门在该放行时放行)
+    for i in range(1, 4):
+        assert f"s_branch:{i}" in ran, f"第 {i} 轮回跳没发生, 实得轨迹 {ran}"
+        assert f"s_down:{i}" in ran, (
+            f"★ 第 {i} 轮: s_branch 跑完后它被闸门卡住的下游 s_down 必须放行。"
+            f"实得轨迹 {ran}")
+    assert r.status == "done", f"实测 {r.status}: {r.error}"
+    assert r.state["out"] == "done"
