@@ -120,6 +120,27 @@ task 的 latest。
 - `run_id`: 指定则在给定 run_id 上 fork (默认新 UUID4)
 - `from_stage` 不在该 task 的 checkpoint 记录里 → 明确报错, 不静默新建
 
+##### 链式 fork 不继承祖先的 `overrides`
+
+在一次 fork 的结果之上再 fork, 新 cp 的 `fork_overrides` **只含本次给的**,
+祖先那次 fork 注入的值不会带过来。这是有意的, 不是疏漏:
+
+    r1 = await rt.fork_run(dag, "T", from_stage="s_a", overrides={"a": "A9"})
+    #   s_a 重跑后把 a 覆盖回 'A' —— overrides 是注入输入, 不是最终值
+    r2 = await rt.fork_run(dag, "T", from_stage="s_c", overrides={"extra": "X"})
+    #   r2.state == r1.state["a"] == 'A'  (s_a 在 keep 段, 不重跑)
+
+祖先 override 是**注入输入**, 早已被 `from_stage` 那次重跑消费; 而新 cp 的 keep 段
+**不重跑**, 那些 stage 的产出已经定死。若把祖先 override 带上, 它会在截断点注入
+一次本次 run 里根本没发生过的注入, 盖掉 keep 段的真实产出 —— 上例里 `a` 会从 `'A'`
+变成 `'A9'`。
+
+注意这**不是**"落盘与活跑分叉": 实测把合并真写进去, runtime 与重建同源, 两边会
+一起变成 `'A9'`, 一致性不变式仍然成立。被破坏的是**可复现性** —— 同一份
+`(dag, from_stage, overrides)`, fork 之前的历史不同, 结果就不同。
+
+需要"在祖先配置之上再改几个", 把祖先那次的 `overrides` 一起传给新的 `fork_run`。
+
 #### 源码漂移提示 (未发布, 见 CHANGELOG [Unreleased])
 
 checkpoint 记 `stage_fn_sources` (上次真实执行的 stage 函数源码指纹; 重放不覆盖)。

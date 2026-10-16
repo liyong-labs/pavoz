@@ -1029,6 +1029,18 @@ class Runtime:
             initial_state=dict(cp.initial_state),
             stage_deltas_visits={k: list(v) for k, v in cp.stage_deltas_visits.items()},
             stage_ts=dict(cp.stage_ts),
+            # ⚠️ 只带**本次**的 overrides, 不合并 cp.fork_overrides —— 这是契约不是
+            # 疏漏 (2026-10-16 实测钉的)。链式 fork 的祖先 override 是**注入输入**,
+            # 早已被 from_stage 那次重跑消费掉了; 而新 cp 的 keep 段**不重跑**, 那些
+            # stage 的产出已经定死。携带祖先 override 的后果不是"落盘与活跑分叉"
+            # (实测: 合并后 runtime 与重建同源, 那个不变式**仍然成立**), 而是
+            # keep 段的真实产出被一个本次 run 里没发生过的注入盖掉, 于是**结果开始
+            # 依赖历史链** —— 同一份 (dag, from_stage, overrides), fork 之前的历史
+            # 不同, 结果就不同:
+            #   fork#1 from s_a, a=A9 → s_a 重跑覆盖回 'A'
+            #   fork#2 from s_c (keep=[s_a,s_b]) → 活跑 a='A'  (契约)
+            #   合并祖先后               → 活跑 a='A9'  (s_a 的产出没了)
+            # 见 docs 的"链式 fork 不继承祖先 overrides"。
             fork_overrides=dict(overrides or {}),
             stage_input_hashes=dict(cp.stage_input_hashes),
             # **每个带 visits 的 stage 都要有条目** (缺的记 0), 不能只记 keep 里的:

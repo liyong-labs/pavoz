@@ -137,6 +137,33 @@ run_id and becomes the task's latest.
   the checkpoint said `a='A9'`
 - `run_id`: fork onto a specific run_id (defaults to a fresh UUID4)
 
+##### Chained forks don't inherit ancestor `overrides`
+
+Forking on top of an earlier fork, the new checkpoint's `fork_overrides` holds
+**only what you passed this time** — values injected by the ancestor fork are not
+carried over. That is deliberate, not an oversight:
+
+    r1 = await rt.fork_run(dag, "T", from_stage="s_a", overrides={"a": "A9"})
+    #   s_a re-runs and overwrites a back to 'A' — overrides are injected input,
+    #   not final values
+    r2 = await rt.fork_run(dag, "T", from_stage="s_c", overrides={"extra": "X"})
+    #   r2.state["a"] == r1.state["a"] == 'A'  (s_a sits in the kept prefix)
+
+An ancestor's override is *injected input* that `from_stage`'s re-run already
+consumed, while the new checkpoint's kept prefix **does not re-run** — those
+stages' outputs are final. Carrying the ancestor's override forward would inject
+something that never happened in this run and overwrite a real output from the
+kept prefix: in the example above `a` would turn from `'A'` into `'A9'`.
+
+Note this is *not* a checkpoint-vs-live divergence: measuring a build that
+actually merges them, the runtime and the rebuild share the same override dict
+and both end up at `'A9'` — the consistency invariant still holds. What breaks is
+**reproducibility**: the same `(dag, from_stage, overrides)` would yield different
+results depending on what forks preceded it.
+
+To change a few values *on top of* an ancestor's configuration, pass that
+ancestor's `overrides` to the new `fork_run` as well.
+
 #### Source-drift notice (unreleased, see CHANGELOG [Unreleased])
 
 The checkpoint carries `stage_fn_sources` (a fingerprint of each stage function's

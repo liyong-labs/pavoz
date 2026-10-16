@@ -132,3 +132,102 @@ async def test_plain_run_checkpoint_is_not_marked_as_fork():
     cp = store.load_latest("p1")
     assert cp.fork_keep_counts == {}, "普通 run 不该有任何 fork 标记"
     assert cp.state["a"] == "A[none]"
+
+
+# ── 契约: 链式 fork **不继承**祖先的 overrides (2026-10-16) ─────────────────
+#
+# 这条是被一次对抗性审查的误报钉下来的 —— 它把"链式 fork 后祖先 override 消失"
+# 报成缺陷。实测: 现象是真的, 但直觉修法 (新 cp 合并 cp.fork_overrides) 会
+# **制造**一个新的不一致, 所以现有实现是对的, 缺的是契约本身。
+#
+# 反对合并的实测形状: 祖先 override 打在会被 from_stage 覆盖的 key 上, 而新 cp
+# 的 keep 段**不重跑** —— 那些 stage 的产出已定死, 注入值没人覆盖得回来:
+
+#     fork#1 from s_a, a=A9  →  s_a 重跑覆盖回 'A'   (overrides 是注入输入)
+#     fork#2 from s_c        →  活跑 a='A'  (keep=[s_a,s_b], s_a 不重跑)
+#     若合并祖先 overrides     →  cp.state a='A9'   ← 与活跑分叉
+
+def _overwritten_override_dag() -> DAG:
+    dag = DAG("chain_override_contract")
+
+    @dag.stage()
+    async def s_a(ctx):
+        return {"a": "A"}  # 字面量: 永远覆盖回注入值, 制造"注入≠最终值"
+
+    @dag.stage(depends_on=["s_a"])
+    async def s_b(ctx):
+        return {"b": "B"}
+
+    @dag.stage(depends_on=["s_b"])
+    async def s_c(ctx):
+        return {"c": "C"}
+
+    return dag
+
+
+async def test_chained_fork_does_not_carry_ancestor_overrides():
+    """祖先 override 不被继承, 且**落盘与活跑一致** (两个断言缺一不可).
+
+    只断言"不继承"会被一个把 ancestor 塞进 initial_state 的实现骗过; 只断言
+    "一致"则分不清是不继承带来的还是恰好两边都错。故这里把"现象"与"不变式"
+    分别钉住。
+    """
+    store = CheckpointStore(FileStorage(tempfile.mkdtemp()))
+    rt = Runtime(checkpoint_store=store)
+    await rt.run(_overwritten_override_dag(), "co")
+
+    r1 = await rt.fork_run(_overwritten_override_dag(), "co",
+                           from_stage="s_a", overrides={"a": "A9"})
+    assert r1.state["a"] == "A", f"活跑的 s_a 应覆盖注入值, 实得 {r1.state['a']}"
+    assert store.load_latest("co").fork_overrides == {"a": "A9"}
+
+    r2 = await rt.fork_run(_overwritten_override_dag(), "co",
+                           from_stage="s_c", overrides={"extra": "X"})
+    cp = store.load_latest("co")
+
+    assert cp.fork_overrides == {"extra": "X"}, (
+        "新 cp 只带本次的 overrides —— 祖先那次是**注入输入**, 已被消费; "
+        f"带上它会让重建声称一次本 run 没发生的注入, 实得 {cp.fork_overrides}")
+    assert cp.state == r2.state, (
+        f"落盘与活跑必须一致: cp={cp.state} vs 活跑={r2.state}")
+    assert cp.state["a"] == "A", (
+        f"keep 段的 s_a 不重跑, 它的产出 'A' 不该被祖先注入值盖成 'A9'; "
+        f"实得 {cp.state['a']!r}")
+
+
+async def test_carrying_ancestor_overrides_would_corrupt_kept_output():
+    """★ 把"合并祖先"这个改法**自己**证伪 —— 用数据, 不用论证。
+
+    ⚠️ 这里踩过一个坑, 记下来免得重走: 我最初以为合并祖先会破坏
+    **`cp.state == 活跑`** 这个一致性不变式。手工造了个"合并后的 cp"跟活跑
+    比, 确实分叉了 —— **但那个结论是假的**: 手工造的 cp 绕过了 runtime 侧,
+    而真把代码改成合并之后, runtime 与重建**同源**, 两边会一起变成 'A9',
+    依然一致 (变异实测: 一致性不变式两处都绿)。
+
+    被真正破坏的是另一件事: **keep 段的产出是既成事实**。s_a 明明跑出 'A',
+    合并后它在 state 里成了 'A9' —— 一个本次 run 里从未发生过的注入, 盖掉了已经
+    定死的真实产出。后果是**结果依赖历史链**: 同一份 (dag, from_stage, overrides),
+    fork 之前的历史不同, 结果就不同。
+
+    所以判据钉在"可复现性"这个行为上, 而不是钉在某一种实现。
+    """
+    store = CheckpointStore(FileStorage(tempfile.mkdtemp()))
+    rt = Runtime(checkpoint_store=store)
+    await rt.run(_overwritten_override_dag(), "co3")
+    await rt.fork_run(_overwritten_override_dag(), "co3",
+                      from_stage="s_a", overrides={"a": "A9"})
+    r_dirty = await rt.fork_run(_overwritten_override_dag(), "co3",
+                                from_stage="s_c", overrides={"extra": "X"})
+
+    store2 = CheckpointStore(FileStorage(tempfile.mkdtemp()))
+    rt2 = Runtime(checkpoint_store=store2)
+    await rt2.run(_overwritten_override_dag(), "co4")   # 同样起点, 但不先 fork
+    r_clean = await rt2.fork_run(_overwritten_override_dag(), "co4",
+                                 from_stage="s_c", overrides={"extra": "X"})
+
+    assert r_dirty.state == r_clean.state, (
+        "同一次 fork (同 dag / from_stage / overrides) 的结果**不该**取决于之前 "
+        f"fork 过什么: 有历史={r_dirty.state} vs 无历史={r_clean.state} —— "
+        "合并祖先 overrides 会让'改一个参数'意外改到无关的 key")
+    assert r_dirty.state["a"] == "A", (
+        f"s_a 在 keep 段不重跑, 它的产出 'A' 是既成事实, 实得 {r_dirty.state['a']!r}")
