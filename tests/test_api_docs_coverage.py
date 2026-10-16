@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib
 import pathlib
+import re
 
 import pytest
 
@@ -83,3 +84,62 @@ def test_declared_public_names_are_importable_by_name() -> None:
     assert not unimportable, (
         f"在 pavoz.__all__ 里但 `from pavoz import X` 失败: {unimportable} —— "
         f"那等于对外承诺了一个拿不到的名字")
+
+
+# ── 反方向: 文档里**用到**的名字, 必须真的存在 ──────────────────────────────
+#
+# 上面两条是"公开面 ⊆ 文档"。这条是它的**反向**: 文档里写的每个
+# `from pavoz import X` / `pavoz.X` 都必须真的拿得到。理由很具体 ——
+# `examples/03_compare_diff.py` 调的是 `pavoz state --run-id`, 而 `state`
+# 压根没有那个 flag: **文档/示例引用了一个不存在的东西, 而仓库里零条判据看着
+# 这件事** (那 5 个 example 的问题同源, 见 test_examples_runnable.py)。
+#
+# 扫描前先剥 URL 与 markdown 链接目标 —— 否则 `.../pvos.git` 里的 `git`
+# 会被当成 `pvos` 的属性 (第一版就被这个误报过: contrib / git 两个假阳性)。
+#
+# 非空自检是硬要求: 提取不到任何东西时, "没发现问题"是空集绿灯而不是通过
+# (2026-10-17 本周第四次栽这个形状, 前三次是路径前缀 / 空集合 / 坏正则)。
+
+_DOC_FILES = sorted((_ROOT / "docs").rglob("*.md")) + [
+    _ROOT / "README.md", _ROOT / "README.cn.md",
+    _ROOT / "llms.txt", _ROOT / "MIGRATION.md",
+]
+
+_IMPORT = re.compile(r"from\s+pavoz\s+import\s+([^\n#`]+)")
+_URL = re.compile(r"https?://\S+|\]\([^)]*\)")
+
+
+def _doc_text(path: pathlib.Path) -> str:
+    """文档正文, 去掉 URL 与链接目标 (里面的 'pvos.xxx' 不是 API 引用)。"""
+    return _URL.sub(" ", path.read_text(encoding="utf-8"))
+
+
+def test_docs_only_import_names_that_exist():
+    """★ 文档里 `from pavoz import X` 的每个 X 都必须 import 得到。"""
+    import pavoz
+
+    unimportable: dict[str, list[str]] = {}
+    seen = 0
+    for path in _DOC_FILES:
+        if not path.exists():
+            continue
+        for m in _IMPORT.finditer(_doc_text(path)):
+            for raw in m.group(1).split(","):
+                name = raw.strip().split(" as ")[0].strip().strip("()")
+                if not name or not name.isidentifier():
+                    continue
+                seen += 1
+                if not hasattr(pavoz, name):
+                    unimportable.setdefault(name, []).append(path.name)
+
+    assert seen >= 5, (
+        f"只扫到 {seen} 个 import —— 提取与文档写法脱节了, 下面的'通过'是空集绿灯")
+    assert not unimportable, (
+        f"文档里 import 了 pavoz 上不存在的名字: "
+        f"{ {k: sorted(set(v)) for k, v in sorted(unimportable.items())} } —— "
+        f"照着抄会 ImportError")
+
+
+# ⚠️ 这里**故意不**写"`pvos.X` 属性必须存在"那条: 实测文档里从不这么引用 (全是
+# `from pavoz import X`), 剥掉 URL 后匹配数为 0 —— 那是一条**永远扫不到东西**的
+# 判据, 也就是永远绿的假判据。与其立一条骗自己的门禁, 不如不写。
