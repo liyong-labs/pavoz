@@ -776,3 +776,92 @@ def test_conditional_edge_after_validate_is_rejected():
     dag.validate()
     with pytest.raises(RuntimeError, match="已冻结"):
         dag.add_conditional_edges("s_a", lambda s: "yes", {"yes": "s_yes"}, max_visits=2)
+
+
+# ── V2'/V3' 的**组合**行为 (2026-10-16) ─────────────────────────────────────
+#
+# 上面两条用例各测一条规则, 但它们**单独看会骗人**。2026-10-16 复审时我把
+# "下游 ∈ mapping" 当成合法形状, 实测它也被拒 —— 而且拒它的不是 V2' 是 **V3'**
+# (该 stage 既是 mapping 目标、又静态依赖 router, 两条规则都违反)。
+# 单测任何一条都看不到这个边界。
+#
+# 组合起来的三种形状:
+#   ① 只违反 V2' (静态依赖 router, ∉ mapping)        → V2' 报
+#   ② 只违反 V3' (是 mapping 目标 + 静态依赖 router)  → V3' 报
+#   ③ 两条都违反 (静态依赖 router1, 是 router2 的目标, 不在 router1 mapping) → 先 V2'
+
+def _router_dag(name: str):
+    """s_a → s_r(router); s_c 静态依赖 s_r; router 的 mapping 由调用方定。"""
+    dag = DAG(name)
+
+    @dag.stage()
+    async def s_a(ctx):
+        return {}
+
+    @dag.stage(depends_on=["s_a"])
+    async def s_r(ctx):
+        return {}
+
+    @dag.stage(depends_on=["s_r"])
+    async def s_c(ctx):
+        return {}
+
+    return dag, dag.stages["s_a"].fn, dag.stages["s_r"].fn, dag.stages["s_c"].fn
+
+
+def test_v2_only_downstream_not_in_mapping():
+    """① 只违反 V2': s_c 静态依赖 router s_r, 但不在 s_r 的 mapping 里。"""
+    dag, fa, fr, fc = _router_dag("v2_only")
+
+    dag.add_conditional_edges("s_r", lambda s: "go", {"go": "s_a"}, max_visits=3)
+    with pytest.raises(ValueError, match="静态旁路"):
+        dag.validate()
+
+
+def test_v3_only_mapping_target_that_depends_on_router():
+    """② 只违反 V3': s_c 是 mapping 目标, 却静态依赖 router s_r。
+
+    这正是上一轮我误判成"合法"的形状 —— 看着像"下游在 mapping 里所以合规",
+    但 V3' 独立地禁止"条件边目标静态依赖 router"。**规则不是只看 mapping 的**。
+    """
+    dag, fa, fr, fc = _router_dag("v3_only")
+
+    dag.add_conditional_edges("s_r", lambda s: "go", {"go": "s_c"}, max_visits=3)
+    with pytest.raises(ValueError, match="不可静态依赖 router"):
+        dag.validate()
+
+
+def test_both_rules_violated_reports_v2_first():
+    """③ 两条都违反时, V2' 先报 (它在代码里排在前面) 且消息点名那个 stage。
+
+    顺序不是契约, 但**必须有且只有一条**规则被报出来 —— 两条都触发却只报
+    后一条, 用户就永远看不到自己违反的另一条, 改完一条再撞另一条, 来回两轮。
+    """
+    dag = DAG("both")
+
+    @dag.stage()
+    async def s_a(ctx):
+        return {}
+
+    @dag.stage(depends_on=["s_a"])
+    async def s_r1(ctx):          # router 1
+        return {}
+
+    @dag.stage(depends_on=["s_r1"])
+    async def s_r2(ctx):          # router 2
+        return {}
+
+    @dag.stage(depends_on=["s_r2"])
+    async def s_t(ctx):           # ★ 静态依赖 router2, 又是 router1 的目标
+        return {}
+
+    dag.add_conditional_edges("s_r1", lambda s: "go", {"go": "s_t"}, max_visits=3)
+
+    with pytest.raises(ValueError) as ei:
+        dag.validate()
+    msg = str(ei.value)
+    assert "静态旁路" in msg and "s_r2" in msg, (
+        f"应先报 V2' 并点名 s_r2 (静态依赖 router1 却不在其 mapping), 实得: {msg}")
+    assert "不可静态依赖 router" not in msg, (
+        f"V3' 也违反, 但一次只报一条 —— 这条断言是为了钉住'不会两条一起报', "
+        f"不是要求顺序。若将来调了顺序, 改这里")
