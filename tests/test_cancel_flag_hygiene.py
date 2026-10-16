@@ -459,3 +459,72 @@ async def test_finished_handle_does_not_count_as_occupied(tmp_path):
     r = await rt.run(_one_stage(0.0, "win"), "win")   # 不该抛 TaskIdInUse
     assert r.status == "done"
     assert "win" not in reg._tasks, "新 run 应正常接管并清理该键"
+
+
+# ── TaskIdInUse 的**前提**: 只有配了 cancel_registry 才有 (2026-10-17) ──────
+#
+# docs/{cn,en}/api.md 与 CHANGELOG 升级注意都写着"并发 run 共用一个 task_id →
+# 第二个 run() 抛 TaskIdInUse"。这句话**漏了前提** —— `Runtime.cancel_registry`
+# 默认是 `None`, 而占用登记 (`CancelRegistry._register`) 就发生在那条路径上。
+#
+# 实测 (默认 Runtime, 共用一个 FileStorage):
+#     gather(Runtime().run(dag,"same"), Runtime().run(dag,"same"))
+#     → 两个都 status=done, 一个 run_id, latest 指针指向最后写完的那个
+#
+# 也就是说**默认配置下完全没有这层保护**, 而文档读起来像是有的。危害不是数据
+# 损坏 (各 run 的 cp 文件独立), 是 latest 指针与 resume/trace 的指向变得不确定。
+#
+# 这里把三种配置的实际行为**钉成判据**, 让文档那句话不再是一句没人验证的承诺:
+#   (1) 默认 (无 registry)        → 两个都跑完, 不报错
+#   (2) 共用同一个 registry       → 第二个 TaskIdInUse   ← 文档现在推荐这个
+#   (3) 各自各传各的 registry    → 两个都跑完 (等于没传)
+
+
+async def test_default_runtime_gives_no_in_use_protection(tmp_path):
+    """(1) 默认 Runtime: 并发同 task_id 不报错 —— 这是**当前契约**, 不是 bug。
+
+    写这条不是承认现状合理, 而是把"文档那句话的前提"变成机器可验证的事实。
+    若将来决定让 `Runtime()` 默认带 registry (或把守卫提到进程级), 这条会红 ——
+    那时该同步改 docs 与 CHANGELOG, 而不是让文档继续说一个不存在的默认行为。
+    """
+    store = CheckpointStore(FileStorage(tmp_path / "cp"))
+    a = Runtime(checkpoint_store=store)
+    b = Runtime(checkpoint_store=store)
+    assert a.cancel_registry is None, "前提: 默认没有 registry"
+
+    ra, rb = await asyncio.gather(
+        a.run(_two_stage(0.1, "d1"), "same"),
+        b.run(_two_stage(0.1, "d2"), "same"),
+    )
+    assert ra.status == "done" and rb.status == "done"
+    assert ra.run_id != rb.run_id, "两个 run 是独立的 (只是 latest 指针会指后者)"
+    assert store.load_latest("same") is not None
+
+
+async def test_shared_registry_guards_across_runtime_instances(tmp_path):
+    """(2) 共用同一个 registry: 跨 Runtime 实例也拦得住 —— 这是文档推荐的配置。
+
+    既有那条并发用例只覆盖了"一个 Runtime + 一个 registry"。而实际用法往往是
+    一堆 Runtime 实例, 守卫**只**在它们共享 registry 时成立 —— 这条把那个前提
+    本身钉住。
+    """
+    reg = CancelRegistry()
+    a = _rt(tmp_path, reg)
+    b = _rt(tmp_path, reg)          # 同一个 reg, 不同 Runtime
+
+    first = asyncio.create_task(a.run(_two_stage(0.2, "s1"), "shared"))
+    await asyncio.sleep(0.02)
+    with pytest.raises(TaskIdInUse):
+        await b.run(_two_stage(0.05, "s2"), "shared")
+    assert (await first).status == "done"
+
+
+async def test_separate_registries_are_equivalent_to_none(tmp_path):
+    """(3) 各自各传各的 registry = 没有保护 —— 文档现在明说了, 这里也钉住。"""
+    a = _rt(tmp_path, CancelRegistry())
+    b = _rt(tmp_path, CancelRegistry())
+    ra, rb = await asyncio.gather(
+        a.run(_two_stage(0.1, "x1"), "same"),
+        b.run(_two_stage(0.1, "x2"), "same"),
+    )
+    assert ra.status == "done" and rb.status == "done"

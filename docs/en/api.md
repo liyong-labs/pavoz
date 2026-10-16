@@ -533,7 +533,16 @@ await task   # → RunResult(status="cancelled", failed_stage=..., retryable=Non
   **did not raise `TimeoutError`** — the caller's timeout protection silently
   stopped working
 - **At most one active run per task_id**: a second `run()` raises
-  `TaskIdInUse`. The registry addresses runs by task_id, so `cancel(task_id)`
+  `TaskIdInUse`. ⚠️ **This only holds when a `cancel_registry` is configured** —
+  `Runtime()` defaults `cancel_registry` to `None`, and the in-use registration
+  (`_register`) happens on that path. A `Runtime` without a registry has no
+  `cancel()` at all, so two runs may share a task_id and both finish
+  **without any error**; the consequence is that the checkpoint `latest`
+  pointer becomes "whichever finished last", and `resume` / `trace` follow it
+  (each run's own file is separate, so nothing is corrupted). For the
+  protection, give every `Runtime` that may run the same task_id **the same**
+  `CancelRegistry` instance — two separate registries are the same as none.
+  The registry addresses runs by task_id, so `cancel(task_id)`
   has no well-defined target when two runs share one (and checkpoints are keyed
   by task_id too — they'd fight over the latest pointer). This used to collide
   silently: whichever run finished first unregistered the *other* one's handle,

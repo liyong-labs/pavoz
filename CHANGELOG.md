@@ -11,7 +11,7 @@
 
 | 变化 | 你会看到什么 | 怎么办 |
 |------|-------------|--------|
-| **并发 run 共用一个 `task_id`** | 第二个 `run()` 现在抛 `TaskIdInUse` (需 `from pavoz import TaskIdInUse`)。此前是**静默撞车**: 硬杀不生效却报告成功、`killable=False` 被绕过、目标 run 被误伤 | 给并发 run 各自独立的 `task_id`。**串行**复用同一 task_id 不受影响 |
+| **并发 run 共用一个 `task_id`** | ⚠️ **本条只在配置了 `cancel_registry` 时成立** —— `Runtime()` 默认 `cancel_registry=None`, 而占用登记就发生在那条路径上。不带 registry 的 Runtime 连 `cancel()` 都不可用, 两个 run 仍可共用 task_id 并发跑完且**不报错** (`latest` 指针变成"最后写完的那个")。配了同一个 registry 时: 第二个 `run()` 抛 `TaskIdInUse` (需 `from pavoz import TaskIdInUse`)。此前是**静默撞车**: 硬杀不生效却报告成功、`killable=False` 被绕过、目标 run 被误伤 | 给并发 run 各自独立的 `task_id` (最省事); 或让相关 Runtime **共用同一个** `CancelRegistry` 实例 —— 两个各传各的等于没传 |
 | **`asyncio.wait_for(rt.run(...), t)` 现在会抛 `TimeoutError`** | 此前即使 run 被外部超时取消, 也可能返回一个 `RunResult(status="cancelled")` 而**不抛异常** —— 你的超时保护静默失效 | 若你**依赖**"不抛异常、返回 cancelled RunResult"这个行为, 改判返回值; 正常依赖超时的代码无需改 |
 | **取消日志措辞变了** | graceful / hard 两条日志都多了一句 `先 registry.reset(task_id)`, 旧的"resume 可续跑"被去掉 | 仅日志文本, 无行为影响 |
 | **旧 checkpoint 不能续跑** | `CheckpointMismatchError`, 且 **resume / fork_run / replay 三条入口都会报** (都走 `workflow_hash` 校验)。`workflow_hash` 自本版起含 **dag 名**, 已在盘的旧 cp 指纹与新算法不同 | 该 task 重跑一次生成新 cp; 若只是**改了 dag 名**, 把名字改回去或换 task_id |
@@ -123,6 +123,38 @@
   仍按 **FatalError 语义**处理 (fail、不重试), 携带 category 不改变这一点。
 
 ### Fixed
+
+- ★ **"并发同 task_id 会抛 TaskIdInUse" 这句承诺漏了前提, 而默认配置下根本没有
+  这层保护**。`Runtime.cancel_registry` 默认是 `None`, 占用登记
+  (`CancelRegistry._register`) 就发生在那条路径上。实测 (两个默认 `Runtime`,
+  共用一个 `FileStorage`):
+
+  ```
+  gather(rt_a.run(dag, "same"), rt_b.run(dag, "same"))
+    → 两个都 status=done, run_id 各不相同, latest 指针指向最后写完的那个
+  ```
+
+  而 docs/{cn,en}/api.md 的 bullet 与本文件上方那条升级注意都读起来像是"默认就有
+  保护"。危害不是数据损坏 (各 run 的 cp 文件独立), 是 **latest 指针与
+  resume/trace 的指向变得不确定** —— 而那正是用户当初不敢并发跑同 task_id 的原因。
+
+  为什么只改文档、不把守卫提到进程级: 守卫存在的**原始理由**是 `cancel(task_id)`
+  在两个 run 共用时无法定义目标 (寻址歧义), 而**没有 registry 时 `cancel()` 压根
+  不可用**, 不存在这个歧义; 剩下的只有 latest 指针竞争, 那是调用方自己的选择。
+  为一个推断出来的需求引入进程级全局状态, 会让互不相干的 `Runtime` 实例互相
+  干扰 (700 条测试都在一个进程里跑), 爆炸半径远大于问题本身。
+
+  三种配置的实际行为**钉成判据** (`test_cancel_flag_hygiene.py` 末尾三条), 让文档
+  那句话不再是一句没人验证的承诺:
+  | 配置 | 行为 |
+  |------|------|
+  | 默认 (无 registry) | 两个都跑完, 不报错 |
+  | **共用同一个 registry** | 第二个 `TaskIdInUse` ← 文档现在推荐这个 |
+  | 各自各传各的 registry | 两个都跑完 (等于没传) |
+
+  既有那条并发用例只覆盖了"一个 Runtime + 一个 registry", 而实际用法往往是一堆
+  Runtime 实例 —— "跨实例共享同一个 registry 也拦得住"这个**被推荐的前提本身**
+  此前没有判据。判别力: 关掉 `_register` 的守卫 → 4 红。
 
 - ★ **`task_id=".."` 让 debug 快照落出 `debug_dir` 之外 → 入口处拒整段点号**。
   `_validate_task_id` 的字符集是 `[A-Za-z0-9_.-]`, `.` 在内 (合法名字确实要用:

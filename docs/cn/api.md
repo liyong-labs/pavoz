@@ -463,6 +463,13 @@ await task   # → RunResult(status="cancelled", failed_stage=..., retryable=Non
   `RunResult(status="cancelled")`, 于是 `wait_for(rt.run(...), t)` **不抛
   `TimeoutError`**, 调用方的超时保护静默失效
 - **一个 task_id 同时只能有一个活跃 run**: 第二个 `run()` 抛 `TaskIdInUse`。
+  ⚠️ **仅在配置了 `cancel_registry` 时成立** —— `Runtime()` 的 `cancel_registry`
+  默认是 `None`, 而占用登记 (`_register`) 就发生在那条路径上。不带 registry 的
+  `Runtime` 连 `cancel()` 都不可用, 于是两个 run 可以共用 task_id 并发跑完,
+  **不报任何错**; 后果是 checkpoint 的 `latest` 指针变成"最后写完的那个",
+  `resume` / `trace` 随之指向它 (各 run 自己的 cp 文件独立, 不会损坏)。要这层
+  保护, 让所有可能跑同一 task_id 的 Runtime **共用同一个** `CancelRegistry`
+  实例 —— 两个各传各的 registry 等于没传。
   registry 按 task_id 寻址, `cancel(task_id)` 在两个 run 共用时无法定义该取消
   哪一个 (且 checkpoint 也按 task_id 存, 两者会抢 latest 指针)。此前是静默
   撞车: 先收尾的 run 会把还在跑的那个的句柄一起摘掉, 导致硬杀**根本没执行**却
