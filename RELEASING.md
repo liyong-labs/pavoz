@@ -21,7 +21,11 @@
 3. **提交** — `git commit -m "release: vX.Y.Z"`
 4. **打 tag 并推送** — `git tag vX.Y.Z && git push origin main && git push origin vX.Y.Z`
 5. **验证** — CI 绿; `pip install pavoz==X.Y.Z` 成功; `python -c "import pavoz; print(pavoz.__version__)"`
-   与 tag 一致
+   与 tag 一致; **再跑深度验证** — `tools/verify-release.sh X.Y.Z`
+
+   深度验证拿 **PyPI 上装的那个包** 跑仓库全套测试。前三步证不出**打包有没有漏东西**:
+   少打一个模块 / 少一个子包 / `pyproject.toml` 的 package 列表写漏, 三样都能通过
+   "装得上、import 得到、版本号对", 直到用户 `from pavoz import X` 才炸。
 
 ## 版本号怎么定
 
