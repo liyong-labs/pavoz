@@ -351,6 +351,23 @@
 
 ### Tests
 
+- **形状矩阵: 空 delta × 环图 × 重叠 key × fork 点的交叉** (新增, `tests/
+  test_shape_matrix.py`)。现有测试各钉一个维度, 但**交叉**没人钉 —— 而 bug 恰恰
+  躲在交叉里。27 个形状覆盖三条不变式: lockstep (每个 stage 的 done 次数 ==
+  visits 长度) / `cp.state == 活跑` / `rebuild_state_before` == 该 stage 首次执行
+  时观测到的输入。**扫完 432 个形状零问题** (线性链 2-5 级 × 空 delta 位置 ×
+  相邻 stage 重叠 key × fork 点, 加环图阈值 × 空 router × fork 点 × override)。
+  顺带把两条**判据自己写错**的教训留在了文件头, 它们各自都给出过"漂亮的 0 问题":
+  - 用 `done_stages` 的**全局下标**比该 stage 自己的 visits 长度 → 576 个误报;
+  - 遍历 `stage_deltas_visits` 的 key 找 lockstep 断 → **漏掉"有 done 无 delta"的
+    stage** (正是空 delta 的形态), 环图族因此报 0/0, 连人工变异都抓不到。
+
+  判据有效性靠**变异**验证而非"跑通了": 退回 `if delta:` 前置 → 12 个用例转红;
+  环图 visits 的尾对齐退化成顺序索引 → 6 个用例转红。覆盖边界也如实写在文件里 ——
+  对 `export-input` 丢 `fork_overrides` 那一类 (a035821) 本矩阵**实测无判别力**,
+  那条钉在 `test_rebuild_consistency.py`。绿色测试的边界不写清楚, 等于把下一个
+  人送去信它。
+
 - **CI 的文档链接闸门只查文件、不查锚点** —— 而且 `SKIP_PREFIXES` 里带了个 `"#"`,
   连**同文件内**的纯锚点跳转都整体跳过。后果: 写错或改名的锚点照发, 读者点过去
   落在文件顶部, 而 **CI 绿**。docs 之间互链密度很高 (架构 → API → 快速上手), 这类
