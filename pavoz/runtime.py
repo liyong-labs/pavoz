@@ -707,7 +707,16 @@ class Runtime:
             # R1a: 记当前 stage (含 killable) — registry 硬杀时判定可否杀
             if self.cancel_registry is not None:
                 self.cancel_registry._set_stage(task_id, name, stage.killable)
-            input_hashes[name] = stage_input_hash(stage.fn, state)  # R2: 执行前记
+            # R2: 执行前记输入指纹 —— 但只在**有人会读**时才算 (2026-10-17):
+            # 它的两个读者是 ① checkpoint.stage_input_hashes (resume 的跳过判定
+            # 与 diff_runs 的诊断) 与 ② run 循环内的"重放命中"判定 (仅 skip_replay
+            # 为真时才走)。没有 store 时 ① 不存在, 且 skip_replay 默认 False
+            # (`policy.skip_unchanged`, 没传 policy 就是 False) ⇒ 算了没人读。
+            # 实测 30 stage × 100KB 的无 store run: _run_inner 共 0.206s, 其中
+            # stage_input_hash 0.195s = **95%** —— 纯内存跑法 (TestPipe 就是) 在
+            # 为一个不会落盘的字段付 95% 的运行时。
+            if self.checkpoint_store is not None or skip_replay:
+                input_hashes[name] = stage_input_hash(stage.fn, state)
             visit_no = visits.get(name, 0) + 1  # R1: 本次执行序 (1 起; 事件/retry 外层不变)
             try:
                 status, new_state, err, err_class, err_category, producers, delta, attempts = \

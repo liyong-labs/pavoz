@@ -255,3 +255,74 @@ def test_workflow_hash_cache_invalidated_by_retries_change():
     dag.stages["s_a"].retries = 3          # 直接改 (与 TestPipe 换 fn 同类操作)
     assert workflow_hash(dag) != before, (
         "retries 变了但 hash 没变 —— 缓存没被打破, 旧 cp 会被当成同结构 cp")
+
+
+# ── 没有 checkpoint store 时, 输入指纹算了没人读 (2026-10-17) ──────────────
+#
+# 接着上一条的规模线索换个变量: 固定 30 个 stage × 100KB payload, profile 显示
+#
+#   _run_inner          0.206s
+#     └ stage_input_hash 0.195s   ← **95%**
+#
+# 也就是说"不配 checkpoint store"的 run (纯内存跑法, TestPipe 就是这么用的),
+# 95% 的运行时花在算一个**永远不会被读**的指纹上 —— 它唯一的落盘去向是
+# `Checkpoint.stage_input_hashes`, 而没有 store 就没有 checkpoint。
+#
+# 唯一另一个读者是 run 循环内的"重放命中"判定 (`input_hashes.get(name) == ...`),
+# 那条路只在 `skip_replay` 为真时才会走 (默认 False: `skip_replay` 取
+# policy.skip_unchanged, 没传 policy 就是 False)。所以判据是:
+# **有 store, 或开了 skip 重放, 才需要算**。
+
+import asyncio as _asyncio
+import tempfile as _tempfile
+
+
+def _count_input_hashes(monkeypatch, *, store: bool, skip_unchanged: bool | None):
+    import pavoz.checkpoint as ckpt
+    import pavoz.runtime as rt
+
+    real = ckpt.stage_input_hash
+    calls = {"n": 0}
+
+    def counting(fn, before_state):
+        calls["n"] += 1
+        return real(fn, before_state)
+
+    monkeypatch.setattr(rt, "stage_input_hash", counting)
+
+    store_obj = None
+    if store:
+        from pavoz.checkpoint import CheckpointStore
+        store_obj = CheckpointStore(_tempfile.mkdtemp())   # FileStorage 走默认解析
+
+    dag = _linear_dag("ih", 4)
+    kwargs = {} if skip_unchanged is None else {"skip_unchanged": skip_unchanged}
+    r = _asyncio.run(rt.Runtime(checkpoint_store=store_obj).run(dag, "ih", **kwargs))
+    assert r.status == "done", f"前置: run 应完成, 实得 {r.status}"
+    return calls["n"]
+
+
+def test_input_hash_not_computed_without_store_or_skip_replay(monkeypatch):
+    """★ 无 store + 未开 skip 重放 → 一个指纹都不该算 (此前 4 个 stage 算 4 次)。"""
+    n = _count_input_hashes(monkeypatch, store=False, skip_unchanged=None)
+    assert n == 0, (
+        f"没有 checkpoint store 且 skip_replay=False 时算了 {n} 次输入指纹 —— "
+        f"它们不落盘、RunResult 也不带, 没有人读 (30×100KB 的 run 里这是 95% 运行时)")
+
+
+def test_input_hash_still_computed_when_store_present(monkeypatch):
+    """反向约束: 有 store 必须照算 (resume 的 skip 判定与 diff_runs 都靠它)。"""
+    n = _count_input_hashes(monkeypatch, store=True, skip_unchanged=None)
+    assert n == 4, f"4 个 stage 应各记一次指纹, 实得 {n}"
+
+
+def test_input_hash_still_computed_for_skip_replay_without_store(monkeypatch):
+    """★ 反向约束: 即使无 store, 开了 skip 重放也得算 —— 环图重入的判定要读它。
+
+    这是这个优化唯一可能踩空的地方: `skip_replay` 为真时 run 循环会比对
+    `input_hashes.get(name)`, 少记一次就变成"永远不命中", 于是本该跳过的 stage
+    全部重跑 —— 行为变了, 而且是"变慢 + 结果可能不同"那种不易察觉的方向。
+    """
+    n = _count_input_hashes(monkeypatch, store=False, skip_unchanged=True)
+    assert n == 4, (
+        f"开了 skip_replay 就必须记指纹 (环图重入的跳过判定要读), 4 个 stage 实得 {n}")

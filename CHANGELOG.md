@@ -128,6 +128,31 @@ _(空 — 见 [0.5.7] 及更早)_
 
 ### Fixed
 
+- ★ **不配 checkpoint store 时, 每个 stage 仍在算一个没人读的输入指纹 (95% 运行时)**。
+  接着结构指纹那条换个变量查 (固定 30 stage × 100KB payload), profile:
+
+  ```
+  _run_inner          0.206s
+    └ stage_input_hash 0.195s   ← 95%
+  ```
+
+  `stage_input_hash` (fn 源码 + 执行前全量 state 的指纹) 的读者只有两个: ①
+  `Checkpoint.stage_input_hashes` (resume 的跳过判定 + `diff_runs` 的诊断) 与 ②
+  run 循环内的"重放命中"判定 —— 而 ② 只在 `skip_replay` 为真时才走 (默认 False:
+  取 `policy.skip_unchanged`, 没传 policy 就是 False)。**没有 store 时 ① 根本不存在**,
+  `RunResult` 也不带这个字段 —— 也就是说纯内存跑法 (TestPipe 就是这么用的) 在为
+  一个不会落盘的字段付 95% 的运行时。
+
+  修法: 只在**有人会读**时才算 —— `checkpoint_store is not None or skip_replay`。
+  实测同一场景 `_run_inner` 0.206s → **0.006s**。
+
+  `or skip_replay` 那半边是**这个优化唯一可能踩空的地方**, 专门钉住: 少了它,
+  环图重入时 `input_hashes.get(name)` 永远取不到值 ⇒ 本该跳过的 stage 全部重跑 ——
+  行为变了, 而且是"变慢 + 结果可能不同"那种不易察觉的方向。
+
+  判别力 (2 次变异, 两个方向各一次): 去掉整个守卫 → 1 红; 去掉 `or skip_replay` →
+  1 红。
+
 - ★ **结构指纹每个 stage 重算一次 → 整次 run 只算一次** (纯性能, 行为不变)。
   起因是 profile 不是猜测: 160 stage 的线性 DAG, `_save_cp` 占 **92%** 运行时,
   其中 `workflow_hash` 占 **31%** —— 而 `workflow_hash(dag)` 是 dag **结构**的纯函数,
