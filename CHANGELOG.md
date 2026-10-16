@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+### ⚠️ 升级注意 (0.5.6 → 下一版)
+
+下面几条会改变**已部署系统的可观察行为**, 逐条写明"升级后你会看到什么", 免得从
+细节条目里自己拼。
+
+| 变化 | 你会看到什么 | 怎么办 |
+|------|-------------|--------|
+| **旧 checkpoint 不能续跑** | `CheckpointMismatchError`, 且 **resume / fork_run / replay 三条入口都会报** (都走 `workflow_hash` 校验)。`workflow_hash` 自本版起含 **dag 名**, 已在盘的旧 cp 指纹与新算法不同 | 该 task 重跑一次生成新 cp; 若只是**改了 dag 名**, 把名字改回去或换 task_id |
+| **`state --key <K>` 缺 K 时** | 退出码从 `0` 变 `1`, 并点名缺失的 key + 列可用 key (原来输出 `null`、rc=0, 与"值就是 null"逐字节相同) | 依赖旧语义做 `X=$(pavoz state --key K)` 的脚本改判退出码 |
+| **`EnginePolicy` 构造期校验** | 负值 / 限值类字段的 `0` 现在抛 `ValueError`。此前负 `stage_alive_interval` 会变忙循环 (实测 0.2s 的 stage 喷 58099 条 `stage_alive` 而 run 报 done) | 想"不限 / 关闭"请显式写 `None` |
+| **非有限值不能进 state** | `stage` 返回 `NaN`/`±Inf` 或 `--set-file` 里写 `.nan` 现在报 `ValueError`。此前能跑通, 但落盘 JSON 含 `NaN` 字面量, **不是合法 RFC 8259**, 任何严格解析器 (其他语言 / jq / JSONB) 拒收整个文件 | 用 `None` / 字符串表达"无值" |
+| **fork 的 cp 重建结果会变** | 带 `fork_keep_counts` 的旧 cp (0.5.6 写的 fork), 升级后 `cp.state` **变成正确值** (此前取到 fork 之前那条 delta) | 无需操作; 若你**依赖过**旧行为(把重建值当"上次真实产出"), 那是 bug 不是契约 |
+| **可调用对象 route_fn 开始落盘** | `class Router: def __call__` 这种写法, 此前 `run` 报 `done` 但 **checkpoint 一个都存不下来** (save 被"失败不杀 run"吞掉), 升级后正常落盘 | 无需操作; 若你已经在别处绕开, 现在可以去掉 |
+| **`async __call__` 的 route_fn 被拒** | 声明期 `TypeError`。此前 `inspect.iscoroutinefunction(实例)` 是 `False` 会漏网, 运行期才报一条**指错方向**的错 | 异步判定做成 judge-stage 写 state, 边只读 |
+| **`diff_runs` 多一个键** | 每个 stage 条目新增 `visits: [a, b]` (两 run 各跑了多少轮)。其余键语义不变 | 纯新增; 按 key 取值的代码不受影响 |
+
+其余条目 (CLI 友好错误 / 守卫补齐 / 测试加固) 不改变已部署行为。
+
 ### Added
 
 - **未知异常的 `error_category` 透传** (ai@home id=2925 提出): `_run_stage` 的泛型
