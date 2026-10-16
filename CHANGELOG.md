@@ -43,6 +43,14 @@
 
 ### Added
 
+- **`pavoz trace` 输出多两个字段**: `is_latest` 与 `total_runs`。`trace` 只显示
+  latest 那一个 run, 而输出里原先**没有任何迹象**表明这是个多 run 的 task ——
+  跑过 5 次和只跑过 1 次的输出长得一模一样, 用户据此以为"这就是全部"。尤其在
+  `diff_runs` 需要两个 run_id、而 CLI 层没有命令能列出它们的时候 (`prune
+  --dry-run` 能, 但那是另一回事)。纯增字段, 原有键一个不改 (有用例钉住)。
+  存储后端枚举不了 run 时 `total_runs` 退成 `null` 而不是让整条命令报错 ——
+  `trace` 的本职是打印 latest checkpoint, 因一个附加字段失败是本末倒置。
+
 - **文档写明 `max_visits` 熔断后的出路**: `resume` 无效 (计数**跨 resume 累计**,
   预算耗尽后一个 stage 都不跑就再 `MaxVisitsExceeded`), 调大 `max_visits` 会被
   `workflow_hash` 拦住 (`resume` / `fork_run` 双双 `CheckpointMismatchError`) ——

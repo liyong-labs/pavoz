@@ -122,9 +122,21 @@ async def _cmd_trace(args) -> int:
     if cp is None:
         print(f"task {args.task_id} 无 checkpoint (没跑过)")
         return 1
+    # ⚠️ 输出里原先**没有任何迹象**表明这是个多 run 的 task —— `trace` 只显示
+    # latest, 而一个跑过 5 次的 task 看起来和只跑过 1 次的完全一样。用户据此以为
+    # "这就是全部", 而 `diff_runs` 需要两个 run_id, CLI 层又没有任何命令能列出它们
+    # (`prune --dry-run` 能, 但那是另一回事)。纯增两个字段, JSON 消费方不受影响。
+    # 同样的道理: 输出里也没说这是 latest —— 而 checkpoint 是会变的 (fork 会让
+    # latest 指向新 run)。
+    try:
+        total_runs = len(store.list_runs(args.task_id))
+    except Exception:                      # 存储后端不支持枚举时不该让整条命令挂掉
+        total_runs = None
     print(json.dumps({
         "task_id": cp.task_id,
         "run_id": cp.run_id,
+        "is_latest": True,
+        "total_runs": total_runs,
         "dag": cp.dag_name,
         "workflow_hash": cp.workflow_hash,
         "stage_statuses": cp.stage_statuses,
