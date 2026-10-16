@@ -700,6 +700,17 @@ dag.add_conditional_edges(
 - `max_visits`: max executions of the router per run; exceeding it raises
   `MaxVisitsExceeded`. validate() requires it when conditional edges form a
   loop (anti-runaway guard); branch-only graphs may omit it.
+- ⚠️ **`resume` is useless once `max_visits` is exhausted — use `resume=False`
+  to re-run.** The count is **carried across resumes** (recovered from the
+  checkpoint's completion order), so resuming after the budget is spent raises
+  `MaxVisitsExceeded` again **without running a single stage**; and raising
+  `max_visits` changes `workflow_hash`, so both `resume` and `fork_run` then
+  refuse with `CheckpointMismatchError`. The way out is `resume=False` (a fresh
+  run_id that ignores the old checkpoint) — fix the exit condition and run once
+  more. Measured: after an exhausted budget caused by an exit condition that
+  never fires, correcting it plus `resume=False` completes normally. This is
+  not a dead end, but without it written down every user who hits it has to
+  rediscover it by retrying `resume`.
 - validate() structural rules: a conditional target must not statically depend
   on a router; a router's static dependents must be mapping targets; a loop-edge
   target with a static parent joins topo (loop head), otherwise it is route-only

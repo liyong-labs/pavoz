@@ -590,6 +590,13 @@ dag.add_conditional_edges(
   构成豁免。路由未选中的分支 (judge 直接 pass) 是合法豁免。
 - `max_visits`: router 单次 run 最大执行次数, 超限 → `MaxVisitsExceeded`;
   条件边构成回路时 validate() 强制非 None (防 LLM 循环烧钱), 分支-only 图可不设。
+- ⚠️ **`max_visits` 耗尽后 `resume` 无效, 要重跑请用 `resume=False`**。计数**跨
+  resume 累计** (从 cp 的完成序恢复), 所以预算用尽后再 resume 会**一个 stage 都不
+  跑**就再次 `MaxVisitsExceeded`; 而调大 `max_visits` 又会改 `workflow_hash` ⇒
+  `resume` / `fork_run` 双双 `CheckpointMismatchError`。出路是 `resume=False`
+  (起新 run_id, 不读旧 cp) —— 修好退出条件后重跑一次即可。实测: 退出条件写错
+  (永远不满足)导致熔断后, 改对条件 + `resume=False` 正常跑完。这不是死锁, 但
+  不写出来的话, 每个撞上的用户都要自己在 resume 上反复试几轮才发现。
 - validate() 结构规则: 条件边目标不可静态依赖 router; router 的静态下游必须是
   mapping 目标; 回路边目标带静态父 → 参与 topo 初始触发 (循环头), 否则 route-only
   (分支/循环体)。

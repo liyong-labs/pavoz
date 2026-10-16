@@ -43,6 +43,18 @@
 
 ### Added
 
+- **文档写明 `max_visits` 熔断后的出路**: `resume` 无效 (计数**跨 resume 累计**,
+  预算耗尽后一个 stage 都不跑就再 `MaxVisitsExceeded`), 调大 `max_visits` 会被
+  `workflow_hash` 拦住 (`resume` / `fork_run` 双双 `CheckpointMismatchError`) ——
+  出路是**修好退出条件 + `resume=False`** (新 run_id, 不读旧 cp)。附 6 个用例把
+  这张表钉住, 免得它只是纸上说明。
+
+  顺带记一笔排查过程, 因为我**差点改错方向**: 我试到第三条路 (调大 `max_visits`
+  被拒) 就下了"死锁"的结论, 并准备把 `max_visits` 移出 `workflow_hash` 来"修复"
+  —— 那会让**全体旧 checkpoint 再次失效** (继 dag 名那次之后), 解决的是一个根本
+  不存在的问题。教训: **穷举出路再下"死锁"的判断**, 尤其是那种"看起来无解"的
+  结论。已把四条路各自的可观察行为写成用例。
+
 - **`diff_runs` 多一个 `dag_names` 字段** —— 让"纯改名"这个**最常见的假警报**
   能被单独排除。dag 名自 d21aab8 起是 `workflow_hash` 的一部分, 所以改名就会让
   `workflow_hash_changed` 变 `true`; 而改名恰恰是最该被判成"这不是真差异"的那种
