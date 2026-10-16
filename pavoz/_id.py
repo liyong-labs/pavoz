@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 
-__all__ = ["new_id"]
+__all__ = []   # 内部: ID 生成是实现细节, 不是公开面
 
 
 def new_id() -> str:

@@ -43,6 +43,25 @@
 
 ### Added
 
+- **`CallMeta` 补进顶层公开 API** (此前只有 `pavoz.runtime.__all__` 声明了它,
+  顶层没导出)。caller 是**核心扩展点** (Runtime 的注入参数 / `Ctx.caller` 字段 /
+  `TestPipe(caller=...)`), 而 `CallMeta` 是它的签名类型 —— 用户写自定义 caller 时
+  无法标注 `Callable[[str, str, dict, CallMeta], Awaitable[dict]]`, 只能走内部路径
+  `from pavoz.runtime import ...`。同族的 `CallResult` / `Ctx` 都导出了, 只有它没有。
+  更实际的一层: **`CallMeta` 其实早就写在 `docs/cn/api.md` 和 `docs/en/api.md` 里** ——
+  用户读到文档说能用, 却 `import` 不到。
+
+- **公开面一致性门禁** (`test_api_docs_coverage.py` 新增两条)。原有那条只查"已在
+  `pavoz.__all__` 里的名字有没有写进文档", 对**"某个公开名压根没被导出"完全无感** ——
+  那种名字不在 `__all__` 里, 循环压根碰不到它, 门禁一路绿灯 (CallMeta 就是这样漏了)。
+  新判据: 子模块 `__all__` 声明的每个名字, 必须"顶层可 import"**或**"文档里能找到"。
+  这条门禁上线当场又逮到 3 个同类: `NodeFn` / `merge_state` / `new_id` —— 三个都是
+  内部工具被写进了子模块 `__all__`, 既没进顶层也没进文档。已从各自的 `__all__` 移除
+  (而不是导出到顶层: 它们确实不是公开面)。
+  判据特意**不是**"必须在顶层" —— `key_sha256` 就是合法的模块级公开面
+  (`docs/storage.md` 明确记了它的用法), 只查顶层会误报。所以门禁扫**整个 `docs/`**,
+  而不只是 `api.md` 两份。
+
 - **`pavoz trace` 输出多两个字段**: `is_latest` 与 `total_runs`。`trace` 只显示
   latest 那一个 run, 而输出里原先**没有任何迹象**表明这是个多 run 的 task ——
   跑过 5 次和只跑过 1 次的输出长得一模一样, 用户据此以为"这就是全部"。尤其在

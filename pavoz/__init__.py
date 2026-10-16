@@ -29,7 +29,14 @@ from .checkpoint import (
 from .dag import DAG, CycleError, Stage, UnknownDepError
 from .events import EventRecorder
 from .policy import EnginePolicy
-from .runtime import CallResult, Ctx, Runtime
+from .runtime import CallMeta, CallResult, Ctx, Runtime
+
+# ⚠️ CallMeta 曾漏在这里 (2026-10-16 修): `pavoz.runtime.__all__` 一直把它
+# 列为公开名, 但顶层没导出 ⇒ 用户写自定义 caller 时**无法标注签名**
+# `Callable[[str, str, dict, CallMeta], Awaitable[dict]]`, 只能走内部路径
+# `from pavoz.runtime import ...`。而 caller 是核心扩展点 (Runtime 的注入
+# 参数 / Ctx.caller 字段 / TestPipe(caller=...)), 同族的 CallResult / Ctx
+# 都导出了, 只有它没有。
 from .state import (
     ReadOnlyStateView,
     StateConflictError,
@@ -57,6 +64,7 @@ __version__ = "0.5.6"
 
 __all__ = [
     "DAG",
+    "CallMeta",
     "CallResult",
     "CancelRegistry",
     "Checkpoint",

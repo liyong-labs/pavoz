@@ -16,7 +16,9 @@ __all__ = [
     "StateConflictError",
     "apply_overrides",
     "merge_overrides",
-    "merge_state",
+    # "merge_state" 曾在这里: 它是 runtime 内部用来折叠 delta 的实现细节, 既没进
+    # 顶层也没进文档 —— 公开面与实际可用面不一致 (2026-10-16 新门禁逮到)。用户要
+    # 折叠/合并自己的 state 用 apply_overrides / merge_overrides。
     "parse_set_args",
     "parse_set_file",
 ]

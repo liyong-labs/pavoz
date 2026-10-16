@@ -20,7 +20,9 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
 
-__all__ = ["DAG", "CycleError", "NodeFn", "Stage", "UnknownDepError"]
+# ⚠️ NodeFn 曾在这里: 它是内部类型别名 (Stage.fn 的注解), 既没进顶层也没进文档
+# —— 声明为公开而实际拿不到, 属于"公开面与实际可用面不一致" (2026-10-16 新门禁逮到)。
+__all__ = ["DAG", "CycleError", "Stage", "UnknownDepError"]
 
 logger = logging.getLogger(__name__)
 
