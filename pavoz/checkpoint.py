@@ -34,13 +34,22 @@ __all__ = [
 def workflow_hash(dag: DAG) -> str:
     """DAG 结构的稳定指纹: stage 名 + 依赖 + retries + timeout + 条件边 (R1).
 
-    任何影响执行语义的结构改动 → hash 变 → 旧 checkpoint 拒 resume.
-    只改 stage 函数体 (fn) 不改结构 → hash 不变 (resume 兼容, fn 重新 import 即新代码).
+    任何影响执行语义的结构改动 → hash 变 → 旧 checkpoint 拒 resume. **dag 名也计入**
+    (改名视为结构变, 见下方注释里的代价说明). 只改 stage 函数体 (fn) 不改结构 →
+    hash 不变 (resume 兼容, fn 重新 import 即新代码).
     条件边 (R1, 0.5.5): route_fn 源码 + mapping + max_visits 全计入 — 改路由 =
     结构变 (skip_unchanged/fork 拿陈旧路由是这个特性最大的雷). 无条件边 DAG 的
     hash 行集与 0.5.4 完全一致.
     """
-    rows = []
+    # dag 名计入指纹 (2026-10-16): 结构相同但**名字不同**的两个 DAG (两条不同
+    # 流水线) 此前拿到同一个 hash, 于是 task_id 撞车时 resume 会拿错 cp 且毫无
+    # 提示 —— 实测: dag "extract" 的部分完成 cp 被 dag "classify" 顺利 resume,
+    # 结果 RunResult.dag_name 报 "classify", 而 state 全是 extract 的数据
+    # (by=EXTRACT)。task_id 是幂等键, 拿它续跑的前提是"同一个工作流", 名字是
+    # 工作流身份的一部分。
+    # **代价**: 改名 = 结构指纹变了 = 旧 cp 不能续跑。这是刻意的 —— 宁可拒绝,
+    # 不可静默混流; 想要续跑就把名字改回去 (或换 task_id)。
+    rows = [f"dag={dag.name}"]
     for name in dag.topo_order():
         s = dag.stages[name]
         rows.append(f"{name}:dep={','.join(s.depends_on)}:retry={s.retries}:to={s.timeout}")
@@ -85,6 +94,34 @@ def stage_input_hash(fn, before_state: dict) -> str:
     raw = _stage_source_id(fn) + "|" + json.dumps(
         before_state, ensure_ascii=False, sort_keys=True, default=str)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def dag_mismatch_msg(task_id: str, cp: Checkpoint, dag: DAG, *, action: str,
+                     hint: str = "") -> str:
+    """DAG 指纹不匹配的报错文案 —— **唯一构造点**.
+
+    三处 (resume / fork_run / TestPipe.replay_from) 各写一份, 措辞已经漂过一次:
+    runtime 那份少了 "只改 stage 函数体不影响 hash" 的提示, testing 那份少了
+    "强制重跑" 的出路。而 dag 名计入指纹后 (2026-10-16), 三处都该提"名字不同"
+    这条最常见的原因 —— 三处各改一遍就是下一轮漂移的起点。
+
+    `action` = 接下来该做什么 ("不能 resume" / "不能 replay"), `hint` = 该入口特有
+    的出路说明。
+    """
+    name_differs = cp.dag_name != dag.name
+    cause = (
+        f"尤其注意: checkpoint 属于 DAG '{cp.dag_name}', 你是拿 DAG '{dag.name}' "
+        f"来续的 —— 两者只是结构相同 (2026-10-16 起 dag 名计入指纹, 就是为了拦住"
+        f"这种跨流水线混流). "
+        if name_differs else
+        "常见原因: 改了 stage 依赖/retries/timeout/条件边, 或**改了 dag 名** "
+        "(名字计入指纹). 只改 stage 函数体 (fn) 不影响 hash. "
+    )
+    return (
+        f"task {task_id} run {cp.run_id[:8]} checkpoint 的 DAG hash "
+        f"{cp.workflow_hash} ≠ 当前 DAG hash {workflow_hash(dag)}. {cause}"
+        f"{action}.{hint}"
+    )
 
 
 class CheckpointMismatchError(Exception):
@@ -515,10 +552,7 @@ class CheckpointStore:
             return None
         cur_hash = workflow_hash(dag)
         if cp.workflow_hash != cur_hash:
-            raise CheckpointMismatchError(
-                f"task {task_id} run {cp.run_id[:8]} checkpoint 的 DAG hash {cp.workflow_hash} "
-                f"≠ 当前 DAG hash {cur_hash}. DAG 结构变了, 不能 resume."
-                f"(只改 stage 函数体不影响 hash; 改依赖/retries/timeout 会). "
-                f"如需强制重跑: 删 checkpoint 或 Runtime(..., resume=False)"
-            )
+            raise CheckpointMismatchError(dag_mismatch_msg(
+                task_id, cp, dag, action="DAG 结构变了, 不能 resume",
+                hint=" 如需强制重跑: 删 checkpoint 或 Runtime(..., resume=False)"))
         return cp

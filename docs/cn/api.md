@@ -52,7 +52,8 @@ result: RunResult = await rt.run(
   (跳过已完成 stage, 恢复 state)。无 checkpoint → `RuntimeError`; run 已全部
   完成 (done guard) → `RuntimeError` 防静默 no-op。重跑 = `resume=False`
   (起新 run_id)
-- resume 时 `workflow_hash` 不匹配 (DAG 结构变了) → `CheckpointMismatchError`
+- resume 时 `workflow_hash` 不匹配 (结构变了, **或 dag 名变了**) →
+  `CheckpointMismatchError`; 名字不同时消息会点名两个 dag 名
 - run 级 absolute deadline 来自 `Runtime(default_timeout=...)`, 缺省回退到
   `EnginePolicy(default_timeout=...)` — `run()` 无 deadline 参数; stage 级
   `timeout` 受 run 剩余 deadline 封顶。**同一 deadline 适用于全部三个入口**
@@ -264,8 +265,11 @@ removed: dict = store.prune(task_id, keep_last=5, dry_run=False)  # 修剪旧 ru
   按"最后活动时间" (`max(stage_ts)`) 保留最新 `keep_last` 个, 其余删除 (key 级
   `delete` + 返回释放字节数近似值)。**latest 指针指向的 run 无条件保留**, 指针
   文件本身不动 (不会让指针悬空)。`dry_run=True` 只算不删。CLI: `pavoz prune`
-- `workflow_hash(dag)`: stage 名+依赖+retries+timeout 的 sha256 指纹
-  (改函数体不影响 hash)
+- `workflow_hash(dag)`: **dag 名** + stage 名+依赖+retries+timeout (+条件边) 的
+  sha256 指纹 (改函数体不影响 hash)。dag 名计入是刻意的: 结构相同但名字不同的
+  两条流水线曾拿到同一指纹, task_id 撞车时 resume 会拿错 cp 且毫无提示 ——
+  实测 `RunResult.dag_name` 报的是新 DAG, 而 state 全是旧 DAG 的数据。
+  **代价**: 改名 = 指纹变了 = 旧 cp 不能续跑 (想续就把名字改回去, 或换 task_id)
 - `CheckpointMismatchError`: resume 时结构变了 → 拒续跑 (`resume=False`
   强制重跑, 或删该 run 的 checkpoint)
 

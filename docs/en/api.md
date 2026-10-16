@@ -302,8 +302,18 @@ removed: dict = store.prune(task_id, keep_last=5, dry_run=False)   # trim old ru
   `latest` pointer names is always kept** and the pointer file itself is untouched
   (the pointer can never dangle). `dry_run=True` reports without deleting.
   CLI: `pavoz prune`
-- `workflow_hash(dag)`: sha256 over stage names + dependencies + retries + timeout (function-body changes don't affect the hash)
-- `CheckpointMismatchError`: structure changed on resume → refuse to resume (rerun with `resume=False`, or delete the run's checkpoint)
+- `workflow_hash(dag)`: sha256 over the **DAG name** + stage names + dependencies +
+  retries + timeout (+ conditional edges); function-body changes don't affect the
+  hash. Counting the name is deliberate: two pipelines with identical structure used
+  to hash identically, so a task_id collision let `resume` pick up the wrong
+  checkpoint with no warning at all — measured, `RunResult.dag_name` reported the
+  new DAG while every value in `state` came from the old one. **Cost**: renaming a
+  DAG changes its fingerprint, so old checkpoints stop resuming (rename it back, or
+  use a fresh task_id)
+- `CheckpointMismatchError`: resume found a different fingerprint (structure
+  changed, **or the DAG name changed**) → refuse to resume (rerun with
+  `resume=False`, or delete the run's checkpoint). When the names differ, the
+  message names both DAGs
 
 ## `StorageBackend` (Protocol, business-injected)
 

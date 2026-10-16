@@ -35,6 +35,7 @@ from .cancel import CancelRegistry
 from .checkpoint import (
     Checkpoint,
     CheckpointMismatchError,
+    dag_mismatch_msg,
     CheckpointStore,
     _stage_source_id,
     stage_input_hash,
@@ -402,12 +403,9 @@ class Runtime:
         if cp is not None:
             cur_hash = workflow_hash(dag)
             if cp.workflow_hash != cur_hash:
-                raise CheckpointMismatchError(
-                    f"task {task_id} run {cp.run_id[:8]} checkpoint 的 DAG hash "
-                    f"{cp.workflow_hash} ≠ 当前 DAG hash {cur_hash}. "
-                    f"DAG 结构变了, 不能 resume. "
-                    f"如需强制重跑: 删 checkpoint 或 Runtime(..., resume=False)"
-                )
+                raise CheckpointMismatchError(dag_mismatch_msg(
+                    task_id, cp, dag, action="DAG 结构变了, 不能 resume",
+                    hint=" 如需强制重跑: 删 checkpoint 或 Runtime(..., resume=False)"))
             state = cp.state  # property: 从 deltas 重建 (v0.8 不落盘)
             done_stages = list(cp.done_stages)
             stage_statuses = dict(cp.stage_statuses)

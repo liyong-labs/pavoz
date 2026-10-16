@@ -16,7 +16,12 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 
-from .checkpoint import Checkpoint, CheckpointMismatchError, workflow_hash
+from .checkpoint import (
+    Checkpoint,
+    CheckpointMismatchError,
+    dag_mismatch_msg,
+    workflow_hash,
+)
 from .dag import DAG
 from .runtime import Runtime, _noop_caller
 from .state import ReadOnlyStateView
@@ -73,11 +78,8 @@ class TestPipe:
         """
         cur_hash = workflow_hash(dag)
         if cp.workflow_hash != cur_hash:
-            raise CheckpointMismatchError(
-                f"task {cp.task_id} run {cp.run_id[:8]} checkpoint 的 DAG hash "
-                f"{cp.workflow_hash} ≠ 当前 DAG hash {cur_hash}. DAG 结构变了, "
-                f"不能 replay (只改 stage 函数体不影响 hash; 改依赖/retries/timeout 会)."
-            )
+            raise CheckpointMismatchError(dag_mismatch_msg(
+                cp.task_id, cp, dag, action="DAG 结构变了, 不能 replay"))
         # ⚠️ 环图 (条件边回路, R1/0.5.5) 上本夹具**只保证终态自洽, 不保证路径
         # 一致**: 每个已完成 stage 被 mock 成"返回它**最后一次** visit 的 delta"
         # (cp.stage_deltas 是 last-write 视图), 于是回路里每轮都拿终值 —— 真实的

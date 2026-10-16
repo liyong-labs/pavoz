@@ -19,6 +19,28 @@
 
 ### Fixed
 
+- **`workflow_hash` 不含 dag 名 → 两条流水线可以静默混流**。结构相同、名字不同的
+  两个 DAG (两条不同流水线) 此前拿到同一指纹; task_id 撞车时 resume 拿错 cp 且
+  毫无提示。实测:
+
+      ① dag "extract" 首跑, 末 stage 失败 → cp 部分完成 (by=EXTRACT)
+      ② dag "classify" resume 同一 task → status=done
+         state  = {'by': 'EXTRACT', ..., 'final': 'EXTRACT'}   ← 全是 extract 的数据
+         dag_name = 'classify'                                  ← 却报告是 classify
+
+  即 `RunResult.dag_name` 撒谎、state 跨流水线污染, 而 task_id 是幂等键 —— 拿它
+  续跑的前提本就是"同一个工作流", 名字是工作流身份的一部分。现 dag 名计入指纹,
+  resume / fork_run / `TestPipe.replay_from` 三条入口一并拦住。
+  **代价 (刻意)**: 改名 = 指纹变了 = 旧 cp 不能续跑; 想续就把名字改回去或换
+  task_id。宁可拒绝, 不可静默混流。**数据面影响**: 已在盘的旧 cp 指纹与新算法不
+  同, 升级后不能 resume (与 0.5.x 的向前看口径一致)。
+
+- **DAG 指纹不匹配的报错收敛到唯一构造点** (`checkpoint.dag_mismatch_msg`)。三处
+  (resume / fork_run / `TestPipe.replay_from`) 各写一份, 措辞**已经漂过**: runtime
+  那份少了"只改 stage 函数体不影响 hash"的提示, testing 那份少了"强制重跑"的
+  出路。而 dag 名计入后, 三处都该提"名字不同"这条最常见的原因 —— 三处各改一遍
+  就是下一轮漂移的起点。名字不同时消息点名两个 dag 名。
+
 - **`load_storage` 只包住 `TypeError`, adapter 连不上时报的是裸驱动异常**:
   四条失败路径里 (格式错 / 模块不可用 / 类不存在 / 实例化) 只有实例化那条按
   `TypeError` 包, 而真实 adapter 的 `__init__` 基本都要连服务 (Redis / PG / MinIO /
