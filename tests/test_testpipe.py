@@ -213,3 +213,152 @@ async def test_run_default_still_works_without_resume_kwarg():
     pipe = TestPipe(_dag(), initial_state={"items": [1]})
     pipe.mock("s_fetch", lambda st: {"fetched": [1]})
     assert (await pipe.run()).status == "done"
+
+
+# ── 记录的生命周期 ──────────────────────────────────────────────────────────
+#
+# `calls()` 是这个夹具的主要断言面, 所以它的生命周期必须是"每次 run 独立"。
+# `run()` 的 finally 明说"实例可复用", 而记录此前跨 run 累积 —— 复用实例跑第二遍
+# 时会拿到第一遍的记录。
+#
+# 失败形态是**假红**而非假绿 (该红的红), 但"只跑了一遍却拿到两条记录"没法用直觉
+# 排除, 用户得先怀疑自己的用法才查得到。测试工具出假红仍然算缺陷: 它消耗的是
+# 别人的信任。
+
+async def test_calls_are_per_run_not_cumulative():
+    """★ 复用实例跑第二遍, `calls()` 只该有第二遍的记录。"""
+    dag = DAG("tp_reuse")
+
+    @dag.stage()
+    async def s_a(ctx):
+        return {"a": 1}
+
+    @dag.stage(depends_on=["s_a"])
+    async def s_b(ctx):
+        return {"b": 2}
+
+    pipe = TestPipe(dag)
+    pipe.mock("s_a", lambda st: {"a": 10})
+    pipe.mock("s_b", lambda st: {"b": 20})
+
+    await pipe.run()
+    assert [c["stage"] for c in pipe.calls()] == ["s_a", "s_b"], (
+        f"第一遍: {[c['stage'] for c in pipe.calls()]}")
+
+    await pipe.run()
+    assert [c["stage"] for c in pipe.calls()] == ["s_a", "s_b"], (
+        f"第二遍只该有它自己的两条记录, 实得 "
+        f"{[c['stage'] for c in pipe.calls()]} —— 记录跨 run 累积了")
+
+
+async def test_reusing_the_pipe_with_different_mocks_tracks_the_latest():
+    """改 mock 再跑第二遍 → 记录反映第二遍的调用与 state。"""
+    dag = DAG("tp_reuse2")
+
+    @dag.stage()
+    async def s_a(ctx):
+        return {"a": 1}
+
+    @dag.stage(depends_on=["s_a"])
+    async def s_b(ctx):
+        return {"b": 2}
+
+    pipe = TestPipe(dag)
+    pipe.mock("s_a", lambda st: {"a": 10})
+    await pipe.run()
+    assert pipe.calls()[-1]["state_keys"] == []
+
+    # 第二遍: 多给一个初始 key, 下游看到的 state_keys 就该变
+    pipe.initial_state = {"extra": 1}
+    pipe.mock("s_b", lambda st: {"b": 20})
+    await pipe.run()
+    # ⚠️ mock 是**累积**的 (dict 语义): 第一遍设的 s_a 在第二遍依然生效, 所以
+    # 这里期望两条记录 —— 我第一版按"再 mock 一次就换掉"写, 期望成一条, 红了。
+    # 顺带记一笔: `mock()` 没有 unmock, 想让某 stage 走真实现只能新建一个 pipe。
+    assert [c["stage"] for c in pipe.calls()] == ["s_a", "s_b"], (
+        f"第二遍 s_a 的 mock 仍然生效, 实得 {[c['stage'] for c in pipe.calls()]}")
+    # 按 stage 找记录, 不靠下标 —— 下标依赖调用序, 读断言的人得先在脑子里重跑一遍
+    # 才能确认指的是谁 (我第一版写成 calls()[0], 指向的是 s_a, 于是"少了 a")
+    s_b_call = next(c for c in pipe.calls() if c["stage"] == "s_b")
+    assert s_b_call["state_keys"] == ["extra", "a"], (
+        f"s_b 应看到 extra 与 s_a 的产出 a, 实得 {s_b_call['state_keys']}")
+
+
+async def test_snapshot_before_second_run_if_you_want_cross_run_history():
+    """反向约束/用法说明: 跨轮次累计要自己取快照 —— `calls()` 返回的是拷贝。
+
+    同时钉住"返回的是拷贝不是内部列表": 直接 `pipe.calls().append(...)` 不该
+    影响后续记录 (否则测试之间会互相污染)。
+    """
+    dag = DAG("tp_snapshot")
+
+    @dag.stage()
+    async def s_a(ctx):
+        return {"a": 1}
+
+    pipe = TestPipe(dag)
+    pipe.mock("s_a", lambda st: {"a": 1})
+    await pipe.run()
+    snap = pipe.calls()
+
+    snap.append({"stage": "伪造", "mock": True, "state_keys": []})
+    assert len(pipe.calls()) == 1, "calls() 必须返回拷贝, 否则调用方能改坏内部状态"
+
+    await pipe.run()
+    assert [c["stage"] for c in pipe.calls()] == ["s_a"], (
+        "跨 run 累计请自己留着快照 —— calls() 只给最近一次")
+    assert len(snap) == 2, "快照本身不受影响 (它就是调用方自己的列表)"
+
+
+# ── replay_from 的环图断言: docstring 说了, 但一直没人验过 ────────────────
+#
+# `replay_from` 的 docstring 写着"多数场景下终态仍与 cp.state 相等 (因为终值本身
+# 就是终点), 但轮次敏感的 stage (计数/累加) 会算错"。前半句是一个**未经实测的
+# 承诺** —— 而它正是用户照着写 `assert result.state == cp.state` 的依据。
+# 后半句也要验, 否则那句警告可能是在防一个不存在的问题。
+
+async def test_loop_replay_final_state_matches_cp_state():
+    """★ 累加型 (轮次敏感) 的环图上, replay 的**终态**仍与 cp.state 相等。
+
+    形状上 s_work 同时产出 `n` (计数) 和 `acc` (累加), 两者对轮次都敏感。replay
+    把每轮压成"返回最后一次 visit 的 delta", 所以过程一定不同 —— 这里钉的是
+    **终态相等**这个 docstring 承诺。
+    """
+    def _dag(cap: int) -> DAG:
+        dag = DAG("tp_loop_replay")
+
+        @dag.stage()
+        async def s_start(ctx):
+            return {}
+
+        @dag.stage(depends_on=["s_start"])
+        async def s_work(ctx):
+            n = ctx.state.get("n", 0) + 1
+            return {"n": n, "acc": ctx.state.get("acc", 0) + n}
+
+        @dag.stage(depends_on=["s_work"])
+        async def s_router(ctx):
+            return {}
+
+        dag.add_conditional_edges(
+            "s_router", lambda s: "more" if s.get("n", 0) < cap else "stop",
+            {"more": "s_work", "stop": "s_end"}, max_visits=12)
+
+        @dag.stage()
+        async def s_end(ctx):
+            return {"rounds": ctx.state["n"]}
+
+        return dag
+
+    store = CheckpointStore(FileStorage(tempfile.mkdtemp()))
+    real = await Runtime(checkpoint_store=store).run(_dag(4), "TP")
+    cp = store.load_latest("TP")
+
+    replayed = await TestPipe.replay_from(cp, _dag(4)).run()
+
+    assert real.state == cp.state, "前置条件: 活跑与 cp 应一致"
+    assert replayed.state == cp.state, (
+        f"docstring 承诺环图 replay 的终态与 cp.state 相等, 实得 "
+        f"replay={replayed.state} vs cp={cp.state}")
+    assert replayed.state["rounds"] == 4
+    assert replayed.state["acc"] == 10, f"累加值应被保留, 实得 {replayed.state}"

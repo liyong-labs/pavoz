@@ -51,7 +51,12 @@ class TestPipe:
         self._caller = caller or _noop_caller
 
     def mock(self, stage_name: str, fn: MockFn) -> TestPipe:
-        """mock 指定 stage (跳过真实现). fn 收 ctx.state (ReadOnlyStateView)."""
+        """mock 指定 stage (跳过真实现). fn 收 ctx.state (ReadOnlyStateView).
+
+        同一 stage 再 mock 一次是**替换**。⚠️ mock 是**累积**的: 没有 unmock,
+        所以第一遍设过的 mock 在第二遍 `run()` 里依然生效, 不会因为你在第二遍只
+        mock 了别的 stage 就消失。想让某个 stage 回到真实现, 只能新建一个 pipe。
+        """
         if stage_name not in self.dag.stages:
             raise KeyError(f"stage '{stage_name}' 不在 DAG {self.dag.name} 里")
         self._mocks[stage_name] = fn
@@ -63,6 +68,12 @@ class TestPipe:
         用于断言调用顺序与次数; `state_keys` 是该 stage 被调用时**看到的 state
         顶层 key** (断言"下游确实拿到了上游的产出"时用)。仅 mock 过的 stage 会
         记进这里 —— 未 mock 的 stage 走真实现, 不留调用记录。
+
+        **只覆盖最近一次 `run()`** —— `run()` 开头会清空 (2026-10-16 修)。此前
+        记录跨 run 累积, 而 `run()` 的 finally 又明说"实例可复用", 于是复用实例跑
+        第二遍时 `calls()` 会数到第一遍的记录。该红的不红只是噪声, 但用户得先
+        怀疑自己的用法才查得到, 而"只跑了一遍却拿到两条记录"是没法用直觉排除的。
+        要跨轮次累计的话自己 `out = pipe.calls()` 取快照。
         """
         return list(self._recorded)
 
@@ -113,6 +124,9 @@ class TestPipe:
                 "checkpoint. 要在真 cp 上回归用 TestPipe.replay_from(cp, dag); "
                 "要真续跑用 Runtime(checkpoint_store=...).run(..., resume=True)."
             )
+        # 每次 run 的调用记录是独立的 —— 见 calls() 的说明 (跨 run 累积会把
+        # "只跑了一遍却拿到两条记录"这种没法用直觉排除的现象丢给用户)
+        self._recorded.clear()
 
         runtime = Runtime(
             checkpoint_store=None,  # TestPipe 不落盘 (回归用, 不恢复)

@@ -93,6 +93,14 @@
 
 ### Fixed
 
+- **`TestPipe.calls()` 的记录跨 `run()` 累积**。`run()` 的 finally 明说"实例可复用",
+  而记录不清空 ⇒ 复用实例跑第二遍时 `calls()` 会数到第一遍的记录。
+  失败形态是**假红**而非假绿 (该红的红), 但"只跑了一遍却拿到两条记录"没法用直觉
+  排除, 用户得先怀疑自己的用法才查得到。测试工具出假红仍然算缺陷 —— 它消耗的是
+  别人的信任。现在 `run()` 开头清空, `calls()` 的 docstring 写明"只覆盖最近一次",
+  以及跨轮次累计要自己 `snap = pipe.calls()` 取快照 (`calls()` 返回的是拷贝,
+  调用方改不动内部状态, 这条也钉住了)。
+
 - ★ **两个并发 run 共用一个 task_id → 取消既杀不到、又误伤, 且绕过 `killable`**。
   `CancelRegistry` 以 `task_id` 为唯一键, 而 `_register` 是纯覆盖写入。实测:
   run#1 正常收尾时的 `_unregister("SAME")` 把**还在跑的 run#2** 的句柄一起摘掉,
@@ -494,6 +502,14 @@
   `UPPER/../outside/secret` 归一化后仍在 root 内) 必须**放行**, 把"边界是 realpath
   containment 而不是'字符串里有 `..`'"钉死, 免得日后有人"顺手收紧"字符集而误伤
   CheckpointStore 的日常 key。
+
+- **`TestPipe.replay_from` 那条"环图终态仍相等"的承诺, 一直没人验过**。
+  docstring 写着"多数场景下终态仍与 cp.state 相等 (因为终值本身就是终点), 但
+  轮次敏感的 stage 会算错" —— 前半句是用户照着写 `assert result.state ==
+  cp.state` 的依据, 却从未被实测过。补的用例用**累加型**环图 (`acc` 逐轮累加,
+  对轮次双敏感) 实测: 过程确实不同 (每轮被压成"返回最后一次 visit 的 delta"),
+  但**终态相等**这个承诺成立。若哪天实现变了而这条失效, 会立刻转红而不是让用户
+  在 `assert` 上撞墙。
 
 - **形状矩阵: 空 delta × 环图 × 重叠 key × fork 点的交叉** (新增, `tests/
   test_shape_matrix.py`)。现有测试各钉一个维度, 但**交叉**没人钉 —— 而 bug 恰恰
