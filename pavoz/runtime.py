@@ -784,7 +784,17 @@ class Runtime:
                 if strays:
                     stale[rname] = strays
                 else:
-                    covered.update(edge.mapping.values())
+                    # 被声明的分支**整体**豁免, 不只是 target 本身 —— 还有它的
+                    # 可达闭包 (2026-10-16)。只豁免 target 时, "分支目标带静态下游"
+                    # 的形状里那个下游既没人跑、又不在豁免名单里 → 被判孤儿, 于是
+                    # **"选了某分支"这件事本身让 run 永远 failed**。实测 (与
+                    # _gated_by 那条同源): router 选 end, 而 s_d 是 go 分支
+                    # s_c 的静态下游, s_c/s_d 都不该跑, s_d 却被报成 orphan。
+                    # 与"只豁免 target"并不矛盾: target 既然合法地没跑, 属于
+                    # 同一个未选中分支的下游同理。
+                    for _t in edge.mapping.values():
+                        covered.add(_t)
+                        covered |= reach[_t]
             orphans = [n for n in order
                        if n not in done_stages and n not in covered]
             if orphans or stale:

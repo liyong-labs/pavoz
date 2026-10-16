@@ -78,6 +78,33 @@
 
 ### Fixed
 
+- ★ **条件边的分支闸门失效 → 未选中分支的下游跑到了闸门之前, 静默错结果**。
+  形状 `s_a → s_b → s_gate{go→s_c, end→s_fin}`, `s_c → s_d`, router 选 `end`
+  时实测执行序是
+
+      s_a → s_b → **s_d** → s_gate → s_fin
+
+  **`s_d` 在它自己的闸门 `s_gate` 之前就跑了**: `s_c` 一次没跑, `s_d` 读到的是
+  "从未执行过的上游"的默认值, 而 run 报 `status=done`、无异常无日志。
+  **最要命的是第三层**: `cp.state == 活跑 state` —— 落盘与活跑**一致**, 所以
+  一致性类的不可变测试抓不到它。它潜伏至今不是因为状态矛盾, 是因为**整个系统
+  一致地算出了错误的答案**。
+  根因: `_next_auto` 从表头扫第一个"没 done"的, **完全不看静态依赖**。无环图靠
+  拓扑序兜住 (上游没 done 时下游不会是第一个); 而 route-only 节点被从
+  `auto_order` 剔除后, 它的静态下游**失去位置约束** —— Kahn 把 indeg=0 的
+  route-only 提前弹出, 拓扑序的兜底随之失效。
+  修法是**闸门状态检查** (逐项看静态上游闭包里的 route-only 是否已跑), 而不是
+  把下游踢出 `auto_order` —— 后者是**永久**的, 会让选中分支的下游永远不跑
+  (这个坑实测踩过, 测试用"条件取反"那一侧钉住)。无条件边图该检查恒不触发,
+  行为逐字节不变。
+  **同源的另一半也修了**: 孤儿检查的豁免名单原本只含 router 声明的**直接
+  target**, 不含其可达闭包 ⇒ "分支目标带静态下游"时那个下游既没人跑又不在豁免
+  名单里 → 报 `OrphanStagesError`, 也就是**"选了某分支"这件事本身就让 run
+  永远 failed**。现在豁免覆盖被声明分支的整条链 (深两级也覆盖)。
+  升级后: 含条件边且**分支目标还有静态下游**的 DAG, 未选中分支的 stage 不再
+  抢跑, 且跳过是合法的 (run 能报 done)。既有正确行为全部不变 (583 个既有用例
+  全绿, 含 `test_conditional_edges.py` 的孤儿/stale 用例)。
+
 - **`to_mermaid` 把 stage 名直接当节点 ID → 保留字名字渲染不出图**。stage 名来自
   `fn.__name__`, Python 侧完全合法: 实测 `async def end / graph / subgraph /
   style / click / flowchart / direction / classDef / linkStyle` 全都造得出来, 而
