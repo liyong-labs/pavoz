@@ -83,3 +83,20 @@ class EnginePolicy:
                     f"EnginePolicy.{name} 必须 >= 1 (got {value!r}); "
                     f"不限请显式传 None"
                 )
+        # default_timeout 只拒 **0**, 不并进上面那组 —— 亚秒超时是完全合法的
+        # 需求 (`default_timeout=0.2` 本仓测试就在用), 拿 "< 1" 去卡它会误伤。
+        #
+        # 为什么单独拒 0 (2026-10-16): 调用点是 `if _to` 真值判断
+        # (`run_deadline = time.time() + _to if _to else None`), 0 被当成"没设"
+        # ⇒ **run 级超时护栏静默消失**。实测 default_timeout=0 时一个跑 0.3s 的
+        # stage 跑满 0.30s 报 done, 而 0.1 报 TimeoutError。而 default_timeout
+        # 的**全部意义**就是给 LLM 调用封顶, "0 = 完全不管" 是最坏的一种失效:
+        # 用户以为护栏在, 实际 LLM 可以无限烧。
+        # 旁证: 同语义的 `@dag.stage(timeout=0)` 是**正确的** (那边用
+        # `is not None` 判断 ⇒ 0 是真值设置, 超时生效) —— 同一件事两个入口两种行为。
+        # 那边的 0 不是"立即", `_with_timeout` 有 0.1s 下限, 至少给 0.1s。
+        if self.default_timeout is not None and self.default_timeout == 0:
+            raise ValueError(
+                "EnginePolicy.default_timeout 不能为 0 (got 0): 调用点按真值判断, "
+                "0 会被当成'没设' ⇒ 超时护栏静默消失。不限请显式传 None"
+            )

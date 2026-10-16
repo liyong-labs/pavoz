@@ -227,7 +227,28 @@ class Runtime:
     cancel_registry: CancelRegistry | None = None  # R1a: graceful|hard 取消登记处
     policy: EnginePolicy | None = None  # W3: run 级策略 (additive, 显式参数优先)
     _run_sem: asyncio.Semaphore | None = field(
-        default=None, init=False, repr=False, compare=False)  # W3: 并发闸 (懒建)
+        default=None, init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        """`default_timeout=0` 在**构造期**就拒 (2026-10-16).
+
+        `_effective_timeout()` 返回 `self.default_timeout` (显式值优先于
+        policy), 而调用点是 `run_deadline = time.time() + _to if _to else None`
+        —— 真值判断。于是 `Runtime(default_timeout=0)` 被放行却**等于没设**:
+        实测一个跑 0.3s 的 stage 跑满 0.30s 报 done, 而 0.1 报 TimeoutError。
+        而 `default_timeout` 的全部意义就是给 LLM 调用封顶, "0 = 完全不管" 是
+        最坏的失效方向 —— 用户以为护栏在, 实际可以无限烧。
+
+        与 `EnginePolicy` 那侧同一处理: 只拒 0 (亚秒超时合法), `None` 才是"不限"。
+        与 `@dag.stage(timeout=0)` 不同 —— 那边用 `is not None` 判断, 0 是**真值设置**
+        ⇒ 超时生效 (failed), 是对的, 不受影响。注: 那边的 0 并非"立即", `_with_timeout`
+        有 0.1s 下限 (`max(0.1, deadline - now)`), 即"至少给 0.1s"。
+        """
+        if self.default_timeout is not None and self.default_timeout == 0:
+            raise ValueError(
+                "Runtime.default_timeout 不能为 0 (got 0): 调用点按真值判断, "
+                "0 会被当成'没设' ⇒ 超时护栏静默消失。不限请显式传 None"
+            )
 
     # ── 并发闸 (W3 EnginePolicy.max_concurrent_runs) ──────
     @asynccontextmanager

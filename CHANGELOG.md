@@ -17,6 +17,7 @@
 | **旧 checkpoint 不能续跑** | `CheckpointMismatchError`, 且 **resume / fork_run / replay 三条入口都会报** (都走 `workflow_hash` 校验)。`workflow_hash` 自本版起含 **dag 名**, 已在盘的旧 cp 指纹与新算法不同 | 该 task 重跑一次生成新 cp; 若只是**改了 dag 名**, 把名字改回去或换 task_id |
 | **`state --key <K>` 缺 K 时** | 退出码从 `0` 变 `1`, 并点名缺失的 key + 列可用 key (原来输出 `null`、rc=0, 与"值就是 null"逐字节相同) | 依赖旧语义做 `X=$(pavoz state --key K)` 的脚本改判退出码 |
 | **`EnginePolicy` 构造期校验** | 负值 / 限值类字段的 `0` 现在抛 `ValueError`。此前负 `stage_alive_interval` 会变忙循环 (实测 0.2s 的 stage 喷 58099 条 `stage_alive` 而 run 报 done) | 想"不限 / 关闭"请显式写 `None` |
+| **`default_timeout=0` 现在构造期报 `ValueError`** (两侧: `EnginePolicy(...)` 与 `Runtime(...)`) | 此前**静默失效**: run 级 deadline 的调用点是 `now + _to if _to else None` (真值判断), 0 被当成"没设" ⇒ **整个 run 的超时护栏消失**, `status=done` 无任何提示。实测一个跑 0.3s 的 stage 在 `default_timeout=0` 下跑满 0.30s 报 done, 同一个 dag 在 `0.1` 下报 `TimeoutError` | 若你想"不限", 显式写 `default_timeout=None`。**亚秒超时完全合法** (`0.2` / `0.05` 都照跑), 只拒 `0` |
 | **非有限值不能进 state** | `stage` 返回 `NaN`/`±Inf` 或 `--set-file` 里写 `.nan` 现在报 `ValueError`。此前能跑通, 但落盘 JSON 含 `NaN` 字面量, **不是合法 RFC 8259**, 任何严格解析器 (其他语言 / jq / JSONB) 拒收整个文件 | 用 `None` / 字符串表达"无值" |
 | **旧 cp 的 visit 对齐可能本来就有错位** | 修复前, `stage` 返回 `{}`/`None` 的那次执行只进 `done_stages` 不进 deltas ⇒ 老 cp 里两个列表已经错位, 升级后**照旧错** | 受影响的 cp 重跑一次; 新写的不会错 (见 Fixed 第一条) |
 | **旧 cp 在**循环图**上的 fork 重建取错 visit** | 0.5.6 及更早写的 fork cp 没有 `fork_keep_counts`, 重建按顺序索引取 delta ⇒ 在环图上取到的是**首跑段**那条 (实测 `R4[F]` 取成 `R4[none]`)。**试过推断自愈, 不成立** —— 见下方"为什么老 cp 只能重跑" | 受影响的 cp 重跑一次 |
@@ -119,6 +120,44 @@
   仍按 **FatalError 语义**处理 (fail、不重试), 携带 category 不改变这一点。
 
 ### Fixed
+
+- ★ **`default_timeout=0` 静默废掉 run 级超时护栏 → 两条入口都在构造期拒 0**。
+  这是一次典型的**假值陷阱**, 而且失效方向是最坏的那种:
+
+  | 配置 | 实测行为 |
+  |------|---------|
+  | `EnginePolicy(default_timeout=0)` | `done`, 耗时 0.30s —— 护栏**不存在** |
+  | `Runtime(default_timeout=0)` | `done`, 耗时 0.30s —— 同上 |
+  | `@dag.stage(timeout=0)` | `failed` / `TimeoutError` (正确) |
+
+  根因是三处判断方式不一致: run 级是 `run_deadline = time.time() + _to if _to
+  else None` (**真值判断**) ⇒ `0` 与"没设"不可区分; stage 级是 `if stage.timeout is
+  not None` ⇒ `0` 是真值设置, 超时照常生效。所以**同一件事, 两个入口, 两种行为**,
+  而 run 级那个方向是错的。
+
+  为什么这条比一般的"参数没校验"严重: `default_timeout` 的**全部意义**就是给 LLM
+  调用封顶 —— "0 = 完全不管" 意味着用户以为护栏在, 实际 LLM 可以无限烧。所以不是
+  补一条 `>= 0` 就能了事, 必须在**构造期**拒: 报错发生在写代码时, 而不是等某天
+  一笔 LLM 账单出来才发现。
+
+  只拒 `0`, **不并进 `max_steps` / `max_concurrent_runs` 那组 `< 1` 判据** —— 亚秒
+  超时是完全正当的需求 (LLM 首 token 延迟就这么卡), 而 `default_timeout=0.2` 本仓
+  测试就在用。第一版正是并进去了, 结果把合法配置一起拒掉 (变异 2 复现: `< 1`
+  → 7 条测试红)。**不限要显式写 `None`**。
+
+  `@dag.stage(timeout=0)` **不动**: 它那边的 0 已经是"真值设置 ⇒ 超时生效"。这里
+  有一处容易记错的细节 —— 那边的 0 并非"立即超时", `_with_timeout` 里
+  `timeout = max(0.1, deadline - now)` 有 0.1s 下限, 即"至少给 0.1s"。我第一版按
+  "立即"写断言 (`fn` 不该被执行), 实测失败才发现是这个下限 —— 又是先读代码确认
+  机制、再造形状。
+
+  判别力 (4 次变异验证, 全部被逮):
+  | 变异 | 结果 |
+  |------|------|
+  | 撤掉 `EnginePolicy` 侧拒 0 | 1 红 ✅ |
+  | 拒 0 放宽成 `< 1` (第一版的错) | **7 红** ✅ |
+  | 撤掉 `Runtime` 侧拒 0 | 1 红 ✅ |
+  | stage 级 `is not None` 改回真值判断 | 1 红, 且该用例真跑满 30s ✅ |
 
 - **`--set` / `apply_overrides` 的 dot-path 覆盖: 静默丢数据与静默拼错, 现在都留痕**。
   `_deep_set` 对两件事**完全沉默** (原 docstring 自称 "warning implicit in behavior",
@@ -549,6 +588,17 @@
   `replay` 既有口径一致。
 
 ### Tests
+
+- ★ **pyflakes 门禁从 6 条违规清到 0 —— 此前 CI 是红的**。`.github/workflows/
+  test.yml` 把 `python -m pyflakes pavoz tests examples tools` 当门禁, 而这几轮
+  新增的测试文件带进 6 条违规 (2 个未用 import / 2 个无占位符的 f-string / 1 个
+  未用的局部变量 / …), 全是"测试文件里的死代码"级别, 但门禁就是门禁 —— **测试绿了
+  不等于 CI 绿**。顺带把那条未用的 `r` 用起来: 补 `assert r.status == "done"`,
+  原用例只查了 `ran`, 漏掉 run 自身结论 (而"闸门把 stage 挡在门外"这类改动的
+  典型失效恰恰是 status 变了)。
+
+  教训记在这: 我一直把"全套 pytest 绿"当门禁全绿, 实际 CI 有 5 个门禁, 只跑了
+  1 个。**别用最熟的那个门禁代表全部。**
 
 - **条件边两条结构规则 (V2'/V3') 的组合行为补测**。两条规则各自已有用例, 但
   **单独看会骗人**: 复审时我把"下游 ∈ mapping"当成合法形状, 实测它也被拒 ——
