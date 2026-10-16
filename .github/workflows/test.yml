@@ -13,6 +13,12 @@ jobs:
         python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # ⚠️ 必须 fetch-depth: 0 —— 默认的 depth=1 **不拉 tag**, 而
+          # tools/check_changelog.py 靠 `git show v<x.y.z>:CHANGELOG.md` 判断
+          # 已发布段有没有被改动过。拿不到 tag 时它会**显式判失败** (而不是静默
+          # 通过: 那等于一个恒绿的门禁)。所以这一行不是可有可无的优化。
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -29,6 +35,9 @@ jobs:
         run: |
           python tools/check_doc_links.py
           python tools/check_doc_style.py
+      - name: CHANGELOG released sections frozen
+        run: |
+          python tools/check_changelog.py
       - name: Test (coverage gate 80%)
         run: |
           python -m pytest tests/ -q --cov=pavoz --cov-fail-under=80

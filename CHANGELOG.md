@@ -4,127 +4,8 @@
 
 ## [Unreleased]
 
-_(空 — 见 [0.5.7] 及更早)_
-
-## [0.5.7] — 2026-10-17
-
-### ⚠️ 升级注意 (0.5.6 → 0.5.7)
-
-下面几条会改变**已部署系统的可观察行为**, 逐条写明"升级后你会看到什么", 免得从
-细节条目里自己拼。
-
-| 变化 | 你会看到什么 | 怎么办 |
-|------|-------------|--------|
-| **并发 run 共用一个 `task_id`** | ⚠️ **本条只在配置了 `cancel_registry` 时成立** —— `Runtime()` 默认 `cancel_registry=None`, 而占用登记就发生在那条路径上。不带 registry 的 Runtime 连 `cancel()` 都不可用, 两个 run 仍可共用 task_id 并发跑完且**不报错** (`latest` 指针变成"最后写完的那个")。配了同一个 registry 时: 第二个 `run()` 抛 `TaskIdInUse` (需 `from pavoz import TaskIdInUse`)。此前是**静默撞车**: 硬杀不生效却报告成功、`killable=False` 被绕过、目标 run 被误伤 | 给并发 run 各自独立的 `task_id` (最省事); 或让相关 Runtime **共用同一个** `CancelRegistry` 实例 —— 两个各传各的等于没传 |
-| **`asyncio.wait_for(rt.run(...), t)` 现在会抛 `TimeoutError`** | 此前即使 run 被外部超时取消, 也可能返回一个 `RunResult(status="cancelled")` 而**不抛异常** —— 你的超时保护静默失效 | 若你**依赖**"不抛异常、返回 cancelled RunResult"这个行为, 改判返回值; 正常依赖超时的代码无需改 |
-| **取消日志措辞变了** | graceful / hard 两条日志都多了一句 `先 registry.reset(task_id)`, 旧的"resume 可续跑"被去掉 | 仅日志文本, 无行为影响 |
-| **旧 checkpoint 不能续跑** | `CheckpointMismatchError`, 且 **resume / fork_run / replay 三条入口都会报** (都走 `workflow_hash` 校验)。`workflow_hash` 自本版起含 **dag 名**, 已在盘的旧 cp 指纹与新算法不同 | 该 task 重跑一次生成新 cp; 若只是**改了 dag 名**, 把名字改回去或换 task_id |
-| **`state --key <K>` 缺 K 时** | 退出码从 `0` 变 `1`, 并点名缺失的 key + 列可用 key (原来输出 `null`、rc=0, 与"值就是 null"逐字节相同) | 依赖旧语义做 `X=$(pavoz state --key K)` 的脚本改判退出码 |
-| **`EnginePolicy` 构造期校验** | 负值 / 限值类字段的 `0` 现在抛 `ValueError`。此前负 `stage_alive_interval` 会变忙循环 (实测 0.2s 的 stage 喷 58099 条 `stage_alive` 而 run 报 done) | 想"不限 / 关闭"请显式写 `None` |
-| **task_id 为 `.` / `..` / 全点串 现在报 `ValueError`** | 此前是**合法** task_id。`Runtime(debug_dir=D).run(dag, "..")` 会正常跑完 (`status=done`), 而 debug 快照 `00_xx_done.json` 落在 **D 的外面** (D 的父目录); `"."` 则落在 D 根, 与各 task 子目录混在一起 | 换个名字。**只拒整段是 `.` / `..`**, `a..b` / `.hidden` / `v1.0-rc.1` 照旧合法 |
-| **`default_timeout=0` 现在构造期报 `ValueError`** (两侧: `EnginePolicy(...)` 与 `Runtime(...)`) | 此前**静默失效**: run 级 deadline 的调用点是 `now + _to if _to else None` (真值判断), 0 被当成"没设" ⇒ **整个 run 的超时护栏消失**, `status=done` 无任何提示。实测一个跑 0.3s 的 stage 在 `default_timeout=0` 下跑满 0.30s 报 done, 同一个 dag 在 `0.1` 下报 `TimeoutError` | 若你想"不限", 显式写 `default_timeout=None`。**亚秒超时完全合法** (`0.2` / `0.05` 都照跑), 只拒 `0` |
-| **非有限值不能进 state** | `stage` 返回 `NaN`/`±Inf` 或 `--set-file` 里写 `.nan` 现在报 `ValueError`。此前能跑通, 但落盘 JSON 含 `NaN` 字面量, **不是合法 RFC 8259**, 任何严格解析器 (其他语言 / jq / JSONB) 拒收整个文件 | 用 `None` / 字符串表达"无值" |
-| **override 里 list 内的 dict 现在也校验 key** | `{"items": [{"__proto__": 1}]}` 或 `{"items": [{"": 1}]}` 现在报 `ValueError`。此前**完全放行** —— 校验只递归 dict 值, list 被整段跳过, 所以同一个坏 key 挂 dict 上拒、挂 list 里过 | 若你的 list 里**确实**有这些 key, 换个名字 |
-| **override 里嵌套 dict 的点号 key 不再按"路径"判** | `{"cfg": {"a.b.c.d.e.f": 1}}` (6 段) 此前报"深度 6 > 5", **现在放行** —— 嵌套 key 不会被展开, 它就是一个字面 key, 会原样落进 state | 无需操作; 若你**依赖过**那个拒绝 (比如拿它当深度探针), 改成自己数点号 |
-| **旧 cp 的 visit 对齐可能本来就有错位** | 修复前, `stage` 返回 `{}`/`None` 的那次执行只进 `done_stages` 不进 deltas ⇒ 老 cp 里两个列表已经错位, 升级后**照旧错** | 受影响的 cp 重跑一次; 新写的不会错 (见 Fixed 第一条) |
-| **旧 cp 在**循环图**上的 fork 重建取错 visit** | 0.5.6 及更早写的 fork cp 没有 `fork_keep_counts`, 重建按顺序索引取 delta ⇒ 在环图上取到的是**首跑段**那条 (实测 `R4[F]` 取成 `R4[none]`)。**试过推断自愈, 不成立** —— 见下方"为什么老 cp 只能重跑" | 受影响的 cp 重跑一次 |
-| **fork 的 cp 重建结果会变** | 带 `fork_keep_counts` 的旧 cp (0.5.6 写的 fork), 升级后 `cp.state` **变成正确值** (此前取到 fork 之前那条 delta) | 无需操作; 若你**依赖过**旧行为(把重建值当"上次真实产出"), 那是 bug 不是契约 |
-| **可调用对象 route_fn 开始落盘** | `class Router: def __call__` 这种写法, 此前 `run` 报 `done` 但 **checkpoint 一个都存不下来** (save 被"失败不杀 run"吞掉), 升级后正常落盘 | 无需操作; 若你已经在别处绕开, 现在可以去掉 |
-| **`async __call__` 的 route_fn 被拒** | 声明期 `TypeError`。此前 `inspect.iscoroutinefunction(实例)` 是 `False` 会漏网, 运行期才报一条**指错方向**的错 | 异步判定做成 judge-stage 写 state, 边只读 |
-| **`diff_runs` 多一个键** | 每个 stage 条目新增 `visits: [a, b]` (两 run 各跑了多少轮)。**顶层**另加 `dag_names: [a, b]` (两个 run 各自的 dag 名)。其余键语义不变 | 纯新增; 按 key 取值的代码不受影响。若你的消费者按"顶层键个数"做断言, 需相应放宽 |
-| **fork 重跑**失败**时的 `export-input`** | 该 checkpoint 下导出**本次 run 还没跑完**的 stage 时, 输出**多出** fork 注入的 key。修复前那些 key 静默消失 (rc=0) | 无需操作; 若你**依赖过**"导出里没有 override"这个行为 (靠缺省值二次加工), 那是 bug 不是契约 |
-
-其余条目 (CLI 友好错误 / 守卫补齐 / 测试加固) 不改变已部署行为。
-
-**为什么老 cp 只能重跑 (不是"懒得兼容", 是信息没了)**: 试过从旧 cp 反推
-`fork_keep_counts` —— 候选公式 `kc[n] = done_stages 里 n 的出现次数` —— 实测 **0/6
-形状与真值相符**。根因: `done_stages` 记的是 `keep + 重跑段` 的**全量**, 与
-`stage_deltas_visits` 逐条 1:1 对齐, 从这两者**无法区分**哪几条是截断前的历史、
-哪几条是重跑产物。缺的那个信息 (截断点位置) 在旧格式里根本没落盘。所以"读旧 cp
-时保留旧语义"和"推断出正确的"之间**不存在取舍** —— 只有错和更错的区别, 而现状
-(错) 已由上表两行明确告知"重跑一次"。别再试一遍推断。
-
-**关于指纹**: 本轮只有 `dag 名` 入指纹这一处变化。上表那行之外, 我们把指纹实现
-改前改后拿出来, 拿仓里 `tests/` + `examples/` 的 **886 个真实函数**逐个比对了
-`stage_input_hash` 的取值 —— **完全一致**, 唯一不同的两类 (可调用对象 / 内置函数)
-是改写前根本不支持的形态。故除 `dag 名` 外, 已有 checkpoint 的指纹不变。
-
-### Added
-
-- **`CallMeta` 补进顶层公开 API** (此前只有 `pavoz.runtime.__all__` 声明了它,
-  顶层没导出)。caller 是**核心扩展点** (Runtime 的注入参数 / `Ctx.caller` 字段 /
-  `TestPipe(caller=...)`), 而 `CallMeta` 是它的签名类型 —— 用户写自定义 caller 时
-  无法标注 `Callable[[str, str, dict, CallMeta], Awaitable[dict]]`, 只能走内部路径
-  `from pavoz.runtime import ...`。同族的 `CallResult` / `Ctx` 都导出了, 只有它没有。
-  更实际的一层: **`CallMeta` 其实早就写在 `docs/cn/api.md` 和 `docs/en/api.md` 里** ——
-  用户读到文档说能用, 却 `import` 不到。
-
-- **公开面一致性门禁** (`test_api_docs_coverage.py` 新增两条)。原有那条只查"已在
-  `pavoz.__all__` 里的名字有没有写进文档", 对**"某个公开名压根没被导出"完全无感** ——
-  那种名字不在 `__all__` 里, 循环压根碰不到它, 门禁一路绿灯 (CallMeta 就是这样漏了)。
-  新判据: 子模块 `__all__` 声明的每个名字, 必须"顶层可 import"**或**"文档里能找到"。
-  这条门禁上线当场又逮到 3 个同类: `NodeFn` / `merge_state` / `new_id` —— 三个都是
-  内部工具被写进了子模块 `__all__`, 既没进顶层也没进文档。已从各自的 `__all__` 移除
-  (而不是导出到顶层: 它们确实不是公开面)。
-  判据特意**不是**"必须在顶层" —— `key_sha256` 就是合法的模块级公开面
-  (`docs/storage.md` 明确记了它的用法), 只查顶层会误报。所以门禁扫**整个 `docs/`**,
-  而不只是 `api.md` 两份。
-
-- **`pavoz trace` 输出多两个字段**: `is_latest` 与 `total_runs`。`trace` 只显示
-  latest 那一个 run, 而输出里原先**没有任何迹象**表明这是个多 run 的 task ——
-  跑过 5 次和只跑过 1 次的输出长得一模一样, 用户据此以为"这就是全部"。尤其在
-  `diff_runs` 需要两个 run_id、而 CLI 层没有命令能列出它们的时候 (`prune
-  --dry-run` 能, 但那是另一回事)。纯增字段, 原有键一个不改 (有用例钉住)。
-  存储后端枚举不了 run 时 `total_runs` 退成 `null` 而不是让整条命令报错 ——
-  `trace` 的本职是打印 latest checkpoint, 因一个附加字段失败是本末倒置。
-
-- **文档写明 `max_visits` 熔断后的出路**: `resume` 无效 (计数**跨 resume 累计**,
-  预算耗尽后一个 stage 都不跑就再 `MaxVisitsExceeded`), 调大 `max_visits` 会被
-  `workflow_hash` 拦住 (`resume` / `fork_run` 双双 `CheckpointMismatchError`) ——
-  出路是**修好退出条件 + `resume=False`** (新 run_id, 不读旧 cp)。附 6 个用例把
-  这张表钉住, 免得它只是纸上说明。
-
-  顺带记一笔排查过程, 因为我**差点改错方向**: 我试到第三条路 (调大 `max_visits`
-  被拒) 就下了"死锁"的结论, 并准备把 `max_visits` 移出 `workflow_hash` 来"修复"
-  —— 那会让**全体旧 checkpoint 再次失效** (继 dag 名那次之后), 解决的是一个根本
-  不存在的问题。教训: **穷举出路再下"死锁"的判断**, 尤其是那种"看起来无解"的
-  结论。已把四条路各自的可观察行为写成用例。
-
-- **`diff_runs` 多一个 `dag_names` 字段** —— 让"纯改名"这个**最常见的假警报**
-  能被单独排除。dag 名自 d21aab8 起是 `workflow_hash` 的一部分, 所以改名就会让
-  `workflow_hash_changed` 变 `true`; 而改名恰恰是最该被判成"这不是真差异"的那种
-  (它不改变任何 stage 的行为)。修复前的实测: 两个 run 唯一差别是 dag 名时,
-  `stages` 里每一项都显示"无差异", 而旧的单个 `dag_name` 字段**只报 a 的名字**,
-  b 叫什么完全不可见 —— 消费者只能得出"结构变了但行为没变"这个错误结论, 而那个
-  结论会直接导致一次无谓的全量重跑。`dag_names` 与 `stages[*].status` / `visits`
-  的 `[a, b]` 约定一致。**是加不是换**: `dag_name` 单值字段保留 (diff_runs 在
-  0.5.4 已发布, 改成 list 会打断按字符串读的现有代码)。
-  顺带在文档里把另一条边界写明: `workflow_hash_changed: true` **不说明差在哪**
-  (指纹是整串, 拆不出"哪个 stage 的哪个属性"), 这是有意的 —— 该字段的作用是叫
-  消费者"别拿这两份比", 而不是替它解释; 唯一的例外 (改名) 已由 `dag_names` 兜住。
-
-- **明确"链式 fork 不继承祖先 `overrides`"这条契约** (中英文档 + 测试 + 代码注释)。
-  这块此前是**空白**: `fork_run` 只带本次的 `overrides`、不合并 `cp.fork_overrides`,
-  但没有任何一处写明这是有意的。空白地带的下场是被当 bug "顺手修好", 而直觉的
-  修法 (合并祖先) 会让**结果依赖历史链**: 同一份 `(dag, from_stage, overrides)`,
-  fork 之前的历史不同, 结果就不同 —— 因为 keep 段的 stage 不重跑, 祖先注入值
-  没人覆盖得回来。实测: fork#1 from s_a 带 `a=A9` (s_a 重跑覆盖回 `'A'`), fork#2
-  from s_c 合并祖先后 `a` 变成 `'A9'` —— 一个本次 run 里从未发生过的注入盖掉了
-  真实产出。**行为零变化**, 只是把现状写成契约并钉住。踩坑记一笔: 我最初以为合并
-  会破坏 `cp.state == 活跑` 的一致性不变式, 手工造 cp 对比确实"分叉"了 —— 那是假的,
-  手工造的 cp 绕过了 runtime 侧, 真改代码后两侧同源、依然一致 (变异实测)。被破坏
-  的是可复现性, 不是一致性。
-
-- **未知异常的 `error_category` 透传** (ai@home id=2925 提出): `_run_stage` 的泛型
-  `except Exception` 分支此前把 `error_category` 硬编码为 `None`, 于是 ——
-  (a) 自定义异常即使带 `.category` 也拿不到分流信息, 消费方只能退回"错误消息里有
-  没有触发词"这种字符串匹配判断, 触发词表一改行为就静默漂移;
-  (b) `UnmappedRouteError` / `MaxVisitsExceeded` / `OrphanStagesError` 在
-  `__init__` 已接受 `category` (它们继承 `PavozError`), 走泛型分支时同样丢失。
-  现改为 `getattr(e, "category", None)`, 与已知类分支一致。
-  **行为边界**: 没有任何调用方给上述三个异常传过 category, 故对现有调用点
-  逐字节不变; 非 `StageError`/`FatalError`/`RetryableError`/`TimeoutError` 的异常
-  仍按 **FatalError 语义**处理 (fail、不重试), 携带 category 不改变这一点。
+0.5.7 发布之后累积的条目。**已发布的版本段不再修改** —— 这条纪律由
+`tools/check_changelog.py` 判据钉住 (tag 之后任何改动若落在已发布段内即报错)。
 
 ### Fixed
 
@@ -340,7 +221,187 @@ _(空 — 见 [0.5.7] 及更早)_
 
   判别力: 把记录挪回调用之后 → 1 红。
 
-  同轮另一条 (`docs/replay-params.md` 类型推断表) 在下方。
+  同轮另一条 (`docs/replay-params.md` 类型推断表漏掉会静默改写用户字符串的写法)
+  归在 0.5.7 段 —— 它在 v0.5.7 之前就写好了, 不该被这次归档挪动。
+
+
+- ★ **`to_mermaid` / `to_graph_json` 把 `dag.stages` 放在循环里 → 导出是平方项**。
+  `DAG.stages` 是每次访问都 `dict(self._stages)` 建副本的 property (有意如此: 调用方
+  不该改到内部状态), 而两个导出函数都在**每 stage 一次**的位置上取它:
+
+      to_mermaid     `for name in dag.stages:` 里又是 `dag.stages[name].depends_on`
+      to_graph_json  `for name in dag.topo_order(): stage = dag.stages[name]`
+                     外加 edges 推导里的 `dag.stages` / `dag.stages[name].depends_on`
+
+  导出 N 个 stage 的 DAG 的 property 访问次数 (修前 → 修后):
+
+      N=50    102 → 2      101 → 1
+      N=800  1602 → 2     1601 → 1
+      N=4000 8002 → 2     8001 → 1
+
+  墙钟收益实测 (旧模块 vs 新模块, 两者输出**逐字节相同**, 取 5 次最小值):
+
+      N=800    22.6ms → 20.3ms (1.12x)     json 44.0ms → 39.5ms (1.11x)
+      N=2000  150.4ms → 127.4ms (1.18x)    json 299.4ms → 254.5ms (1.18x)
+      N=4000  655.1ms → 562.1ms (1.17x)    json 1320.3ms → 1094.0ms (1.21x)
+
+  **别把它说成数量级改善**: 导出的主成本是拼字符串, 副本拷贝只占其中约 10-20%。
+  拿掉的是平方项 (占比随规模继续涨), 这个才是判据钉住的东西 —— 所以判据用
+  **访问次数**而不是耗时: 后者在 CI 上不可靠 (机器/负载), 前者是确定性事实,
+  直接回答"有没有人在循环里取它"。与 runtime.py 的同一处修法一致 (`dag.validate()`
+  已冻结 dag, 导出期间结构不变; 拷贝是**浅**的, Stage 对象共享), 判据里另有一条把
+  "内容没变"钉住。
+
+### Internal
+
+- ★ **本会话追加的 214 行 / 10 条 CHANGELOG 条目全落进了**已发布**的 0.5.7 段**,
+  而 `[Unreleased]` 一直写着"(空)" —— 归档时的插入锚点写的是"文件里第一个
+  `### Fixed`", 而那个小节**就在 0.5.7 段内**。后果: 读 0.5.7 发布说明的人会以为
+  本轮这些修复随 0.5.7 一起发布了, 而它们其实全在 tag 之后。
+
+  这类错误 git 层面完全合法 (就是一次普通文本编辑), 现有 5 个门禁没有一条看得见。
+  已做两件事:
+
+  1. **归档**: 214 行整块移进 `[Unreleased]`, 并验证 **0.5.7 段与 `git show
+     v0.5.7:CHANGELOG.md` 逐字节一致** (44058 字符 = 44058 字符)。有一条交叉
+     引用"同轮另一条在下方"随之跨段, 已改成指名段落 —— 被引用的那条在 tag 之前就
+     写好了, 属 0.5.7 真实内容, 不该被这次归档挪动。
+  2. **门禁**: 新增 `tools/check_changelog.py` (CI + 本地 loop-check 镜像), 三档判定
+     —— 与自己的 tag 一致 → 过; 与自己 tag 不一致但与**最新 tag** 一致 → 历史遗留,
+     只提示不判失败; 连最新 tag 都对不上 → **失败**。分三档是必须的: 本仓实测有 3 段
+     早就与自己的 tag 对不上 ([0.5.3] / [0.1.3] 段标题发布后被改过, [0.3.0-rc1] 的段
+     发布后被删过 9 行), 原样当门禁会**永远红**, 而永远红的门禁迟早被关掉。
+     CI 侧同时加了 `fetch-depth: 0` —— `actions/checkout` 默认 depth=1 **不拉 tag**,
+     而本判据靠 `git show v<x.y.z>:CHANGELOG.md`; 拿不到 tag 时它**显式判失败**而不是
+     静默通过 (恒绿的门禁比没有门禁更坏)。
+
+  判别力 (两个方向都验了): 往已发布段里塞条目 / 篡改已发布段的现有行 → **rc=1**;
+  新加一个未打 tag 的 `[0.5.8]` 段 / 改 `[Unreleased]` → **rc=0** (不误杀)。
+
+  附带一条自我修正: 我第一版反向验证是**插一个新段落** `[0.5.7.0]`, 那不是"篡改已
+  发布段", 工具判绿是对的、我的验证是错的 —— 判据没坏, 验证脚本坏了。
+
+## [0.5.7] — 2026-10-17
+
+### ⚠️ 升级注意 (0.5.6 → 0.5.7)
+
+下面几条会改变**已部署系统的可观察行为**, 逐条写明"升级后你会看到什么", 免得从
+细节条目里自己拼。
+
+| 变化 | 你会看到什么 | 怎么办 |
+|------|-------------|--------|
+| **并发 run 共用一个 `task_id`** | ⚠️ **本条只在配置了 `cancel_registry` 时成立** —— `Runtime()` 默认 `cancel_registry=None`, 而占用登记就发生在那条路径上。不带 registry 的 Runtime 连 `cancel()` 都不可用, 两个 run 仍可共用 task_id 并发跑完且**不报错** (`latest` 指针变成"最后写完的那个")。配了同一个 registry 时: 第二个 `run()` 抛 `TaskIdInUse` (需 `from pavoz import TaskIdInUse`)。此前是**静默撞车**: 硬杀不生效却报告成功、`killable=False` 被绕过、目标 run 被误伤 | 给并发 run 各自独立的 `task_id` (最省事); 或让相关 Runtime **共用同一个** `CancelRegistry` 实例 —— 两个各传各的等于没传 |
+| **`asyncio.wait_for(rt.run(...), t)` 现在会抛 `TimeoutError`** | 此前即使 run 被外部超时取消, 也可能返回一个 `RunResult(status="cancelled")` 而**不抛异常** —— 你的超时保护静默失效 | 若你**依赖**"不抛异常、返回 cancelled RunResult"这个行为, 改判返回值; 正常依赖超时的代码无需改 |
+| **取消日志措辞变了** | graceful / hard 两条日志都多了一句 `先 registry.reset(task_id)`, 旧的"resume 可续跑"被去掉 | 仅日志文本, 无行为影响 |
+| **旧 checkpoint 不能续跑** | `CheckpointMismatchError`, 且 **resume / fork_run / replay 三条入口都会报** (都走 `workflow_hash` 校验)。`workflow_hash` 自本版起含 **dag 名**, 已在盘的旧 cp 指纹与新算法不同 | 该 task 重跑一次生成新 cp; 若只是**改了 dag 名**, 把名字改回去或换 task_id |
+| **`state --key <K>` 缺 K 时** | 退出码从 `0` 变 `1`, 并点名缺失的 key + 列可用 key (原来输出 `null`、rc=0, 与"值就是 null"逐字节相同) | 依赖旧语义做 `X=$(pavoz state --key K)` 的脚本改判退出码 |
+| **`EnginePolicy` 构造期校验** | 负值 / 限值类字段的 `0` 现在抛 `ValueError`。此前负 `stage_alive_interval` 会变忙循环 (实测 0.2s 的 stage 喷 58099 条 `stage_alive` 而 run 报 done) | 想"不限 / 关闭"请显式写 `None` |
+| **task_id 为 `.` / `..` / 全点串 现在报 `ValueError`** | 此前是**合法** task_id。`Runtime(debug_dir=D).run(dag, "..")` 会正常跑完 (`status=done`), 而 debug 快照 `00_xx_done.json` 落在 **D 的外面** (D 的父目录); `"."` 则落在 D 根, 与各 task 子目录混在一起 | 换个名字。**只拒整段是 `.` / `..`**, `a..b` / `.hidden` / `v1.0-rc.1` 照旧合法 |
+| **`default_timeout=0` 现在构造期报 `ValueError`** (两侧: `EnginePolicy(...)` 与 `Runtime(...)`) | 此前**静默失效**: run 级 deadline 的调用点是 `now + _to if _to else None` (真值判断), 0 被当成"没设" ⇒ **整个 run 的超时护栏消失**, `status=done` 无任何提示。实测一个跑 0.3s 的 stage 在 `default_timeout=0` 下跑满 0.30s 报 done, 同一个 dag 在 `0.1` 下报 `TimeoutError` | 若你想"不限", 显式写 `default_timeout=None`。**亚秒超时完全合法** (`0.2` / `0.05` 都照跑), 只拒 `0` |
+| **非有限值不能进 state** | `stage` 返回 `NaN`/`±Inf` 或 `--set-file` 里写 `.nan` 现在报 `ValueError`。此前能跑通, 但落盘 JSON 含 `NaN` 字面量, **不是合法 RFC 8259**, 任何严格解析器 (其他语言 / jq / JSONB) 拒收整个文件 | 用 `None` / 字符串表达"无值" |
+| **override 里 list 内的 dict 现在也校验 key** | `{"items": [{"__proto__": 1}]}` 或 `{"items": [{"": 1}]}` 现在报 `ValueError`。此前**完全放行** —— 校验只递归 dict 值, list 被整段跳过, 所以同一个坏 key 挂 dict 上拒、挂 list 里过 | 若你的 list 里**确实**有这些 key, 换个名字 |
+| **override 里嵌套 dict 的点号 key 不再按"路径"判** | `{"cfg": {"a.b.c.d.e.f": 1}}` (6 段) 此前报"深度 6 > 5", **现在放行** —— 嵌套 key 不会被展开, 它就是一个字面 key, 会原样落进 state | 无需操作; 若你**依赖过**那个拒绝 (比如拿它当深度探针), 改成自己数点号 |
+| **旧 cp 的 visit 对齐可能本来就有错位** | 修复前, `stage` 返回 `{}`/`None` 的那次执行只进 `done_stages` 不进 deltas ⇒ 老 cp 里两个列表已经错位, 升级后**照旧错** | 受影响的 cp 重跑一次; 新写的不会错 (见 Fixed 第一条) |
+| **旧 cp 在**循环图**上的 fork 重建取错 visit** | 0.5.6 及更早写的 fork cp 没有 `fork_keep_counts`, 重建按顺序索引取 delta ⇒ 在环图上取到的是**首跑段**那条 (实测 `R4[F]` 取成 `R4[none]`)。**试过推断自愈, 不成立** —— 见下方"为什么老 cp 只能重跑" | 受影响的 cp 重跑一次 |
+| **fork 的 cp 重建结果会变** | 带 `fork_keep_counts` 的旧 cp (0.5.6 写的 fork), 升级后 `cp.state` **变成正确值** (此前取到 fork 之前那条 delta) | 无需操作; 若你**依赖过**旧行为(把重建值当"上次真实产出"), 那是 bug 不是契约 |
+| **可调用对象 route_fn 开始落盘** | `class Router: def __call__` 这种写法, 此前 `run` 报 `done` 但 **checkpoint 一个都存不下来** (save 被"失败不杀 run"吞掉), 升级后正常落盘 | 无需操作; 若你已经在别处绕开, 现在可以去掉 |
+| **`async __call__` 的 route_fn 被拒** | 声明期 `TypeError`。此前 `inspect.iscoroutinefunction(实例)` 是 `False` 会漏网, 运行期才报一条**指错方向**的错 | 异步判定做成 judge-stage 写 state, 边只读 |
+| **`diff_runs` 多一个键** | 每个 stage 条目新增 `visits: [a, b]` (两 run 各跑了多少轮)。**顶层**另加 `dag_names: [a, b]` (两个 run 各自的 dag 名)。其余键语义不变 | 纯新增; 按 key 取值的代码不受影响。若你的消费者按"顶层键个数"做断言, 需相应放宽 |
+| **fork 重跑**失败**时的 `export-input`** | 该 checkpoint 下导出**本次 run 还没跑完**的 stage 时, 输出**多出** fork 注入的 key。修复前那些 key 静默消失 (rc=0) | 无需操作; 若你**依赖过**"导出里没有 override"这个行为 (靠缺省值二次加工), 那是 bug 不是契约 |
+
+其余条目 (CLI 友好错误 / 守卫补齐 / 测试加固) 不改变已部署行为。
+
+**为什么老 cp 只能重跑 (不是"懒得兼容", 是信息没了)**: 试过从旧 cp 反推
+`fork_keep_counts` —— 候选公式 `kc[n] = done_stages 里 n 的出现次数` —— 实测 **0/6
+形状与真值相符**。根因: `done_stages` 记的是 `keep + 重跑段` 的**全量**, 与
+`stage_deltas_visits` 逐条 1:1 对齐, 从这两者**无法区分**哪几条是截断前的历史、
+哪几条是重跑产物。缺的那个信息 (截断点位置) 在旧格式里根本没落盘。所以"读旧 cp
+时保留旧语义"和"推断出正确的"之间**不存在取舍** —— 只有错和更错的区别, 而现状
+(错) 已由上表两行明确告知"重跑一次"。别再试一遍推断。
+
+**关于指纹**: 本轮只有 `dag 名` 入指纹这一处变化。上表那行之外, 我们把指纹实现
+改前改后拿出来, 拿仓里 `tests/` + `examples/` 的 **886 个真实函数**逐个比对了
+`stage_input_hash` 的取值 —— **完全一致**, 唯一不同的两类 (可调用对象 / 内置函数)
+是改写前根本不支持的形态。故除 `dag 名` 外, 已有 checkpoint 的指纹不变。
+
+### Added
+
+- **`CallMeta` 补进顶层公开 API** (此前只有 `pavoz.runtime.__all__` 声明了它,
+  顶层没导出)。caller 是**核心扩展点** (Runtime 的注入参数 / `Ctx.caller` 字段 /
+  `TestPipe(caller=...)`), 而 `CallMeta` 是它的签名类型 —— 用户写自定义 caller 时
+  无法标注 `Callable[[str, str, dict, CallMeta], Awaitable[dict]]`, 只能走内部路径
+  `from pavoz.runtime import ...`。同族的 `CallResult` / `Ctx` 都导出了, 只有它没有。
+  更实际的一层: **`CallMeta` 其实早就写在 `docs/cn/api.md` 和 `docs/en/api.md` 里** ——
+  用户读到文档说能用, 却 `import` 不到。
+
+- **公开面一致性门禁** (`test_api_docs_coverage.py` 新增两条)。原有那条只查"已在
+  `pavoz.__all__` 里的名字有没有写进文档", 对**"某个公开名压根没被导出"完全无感** ——
+  那种名字不在 `__all__` 里, 循环压根碰不到它, 门禁一路绿灯 (CallMeta 就是这样漏了)。
+  新判据: 子模块 `__all__` 声明的每个名字, 必须"顶层可 import"**或**"文档里能找到"。
+  这条门禁上线当场又逮到 3 个同类: `NodeFn` / `merge_state` / `new_id` —— 三个都是
+  内部工具被写进了子模块 `__all__`, 既没进顶层也没进文档。已从各自的 `__all__` 移除
+  (而不是导出到顶层: 它们确实不是公开面)。
+  判据特意**不是**"必须在顶层" —— `key_sha256` 就是合法的模块级公开面
+  (`docs/storage.md` 明确记了它的用法), 只查顶层会误报。所以门禁扫**整个 `docs/`**,
+  而不只是 `api.md` 两份。
+
+- **`pavoz trace` 输出多两个字段**: `is_latest` 与 `total_runs`。`trace` 只显示
+  latest 那一个 run, 而输出里原先**没有任何迹象**表明这是个多 run 的 task ——
+  跑过 5 次和只跑过 1 次的输出长得一模一样, 用户据此以为"这就是全部"。尤其在
+  `diff_runs` 需要两个 run_id、而 CLI 层没有命令能列出它们的时候 (`prune
+  --dry-run` 能, 但那是另一回事)。纯增字段, 原有键一个不改 (有用例钉住)。
+  存储后端枚举不了 run 时 `total_runs` 退成 `null` 而不是让整条命令报错 ——
+  `trace` 的本职是打印 latest checkpoint, 因一个附加字段失败是本末倒置。
+
+- **文档写明 `max_visits` 熔断后的出路**: `resume` 无效 (计数**跨 resume 累计**,
+  预算耗尽后一个 stage 都不跑就再 `MaxVisitsExceeded`), 调大 `max_visits` 会被
+  `workflow_hash` 拦住 (`resume` / `fork_run` 双双 `CheckpointMismatchError`) ——
+  出路是**修好退出条件 + `resume=False`** (新 run_id, 不读旧 cp)。附 6 个用例把
+  这张表钉住, 免得它只是纸上说明。
+
+  顺带记一笔排查过程, 因为我**差点改错方向**: 我试到第三条路 (调大 `max_visits`
+  被拒) 就下了"死锁"的结论, 并准备把 `max_visits` 移出 `workflow_hash` 来"修复"
+  —— 那会让**全体旧 checkpoint 再次失效** (继 dag 名那次之后), 解决的是一个根本
+  不存在的问题。教训: **穷举出路再下"死锁"的判断**, 尤其是那种"看起来无解"的
+  结论。已把四条路各自的可观察行为写成用例。
+
+- **`diff_runs` 多一个 `dag_names` 字段** —— 让"纯改名"这个**最常见的假警报**
+  能被单独排除。dag 名自 d21aab8 起是 `workflow_hash` 的一部分, 所以改名就会让
+  `workflow_hash_changed` 变 `true`; 而改名恰恰是最该被判成"这不是真差异"的那种
+  (它不改变任何 stage 的行为)。修复前的实测: 两个 run 唯一差别是 dag 名时,
+  `stages` 里每一项都显示"无差异", 而旧的单个 `dag_name` 字段**只报 a 的名字**,
+  b 叫什么完全不可见 —— 消费者只能得出"结构变了但行为没变"这个错误结论, 而那个
+  结论会直接导致一次无谓的全量重跑。`dag_names` 与 `stages[*].status` / `visits`
+  的 `[a, b]` 约定一致。**是加不是换**: `dag_name` 单值字段保留 (diff_runs 在
+  0.5.4 已发布, 改成 list 会打断按字符串读的现有代码)。
+  顺带在文档里把另一条边界写明: `workflow_hash_changed: true` **不说明差在哪**
+  (指纹是整串, 拆不出"哪个 stage 的哪个属性"), 这是有意的 —— 该字段的作用是叫
+  消费者"别拿这两份比", 而不是替它解释; 唯一的例外 (改名) 已由 `dag_names` 兜住。
+
+- **明确"链式 fork 不继承祖先 `overrides`"这条契约** (中英文档 + 测试 + 代码注释)。
+  这块此前是**空白**: `fork_run` 只带本次的 `overrides`、不合并 `cp.fork_overrides`,
+  但没有任何一处写明这是有意的。空白地带的下场是被当 bug "顺手修好", 而直觉的
+  修法 (合并祖先) 会让**结果依赖历史链**: 同一份 `(dag, from_stage, overrides)`,
+  fork 之前的历史不同, 结果就不同 —— 因为 keep 段的 stage 不重跑, 祖先注入值
+  没人覆盖得回来。实测: fork#1 from s_a 带 `a=A9` (s_a 重跑覆盖回 `'A'`), fork#2
+  from s_c 合并祖先后 `a` 变成 `'A9'` —— 一个本次 run 里从未发生过的注入盖掉了
+  真实产出。**行为零变化**, 只是把现状写成契约并钉住。踩坑记一笔: 我最初以为合并
+  会破坏 `cp.state == 活跑` 的一致性不变式, 手工造 cp 对比确实"分叉"了 —— 那是假的,
+  手工造的 cp 绕过了 runtime 侧, 真改代码后两侧同源、依然一致 (变异实测)。被破坏
+  的是可复现性, 不是一致性。
+
+- **未知异常的 `error_category` 透传** (ai@home id=2925 提出): `_run_stage` 的泛型
+  `except Exception` 分支此前把 `error_category` 硬编码为 `None`, 于是 ——
+  (a) 自定义异常即使带 `.category` 也拿不到分流信息, 消费方只能退回"错误消息里有
+  没有触发词"这种字符串匹配判断, 触发词表一改行为就静默漂移;
+  (b) `UnmappedRouteError` / `MaxVisitsExceeded` / `OrphanStagesError` 在
+  `__init__` 已接受 `category` (它们继承 `PavozError`), 走泛型分支时同样丢失。
+  现改为 `getattr(e, "category", None)`, 与已知类分支一致。
+  **行为边界**: 没有任何调用方给上述三个异常传过 category, 故对现有调用点
+  逐字节不变; 非 `StageError`/`FatalError`/`RetryableError`/`TimeoutError` 的异常
+  仍按 **FatalError 语义**处理 (fail、不重试), 携带 category 不改变这一点。
+
+### Fixed
 
 - **`docs/replay-params.md` 的类型推断表漏掉了所有会静默改写用户字符串的写法, 而且
   "无逃生门"这句是错的**。那张表原本只列了安全的一侧 (`42` / `3.14` / `true` /

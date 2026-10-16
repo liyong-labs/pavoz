@@ -129,8 +129,18 @@ def to_mermaid(dag: DAG, *, direction: str = "LR") -> str:
     lines = [f"graph {_mmd_text(direction)}"]
     for name in dag.topo_order():
         lines.append(f'    {ids[name]}["{_mmd_text(name, quoted=True)}"]')
-    for name in dag.stages:
-        for dep in dag.stages[name].depends_on:
+    # `dag.stages` 是**每次访问都建 dict 副本**的 property (有意如此: 调用方不该改到
+    # 内部状态), 放进循环就是 O(N) 次 O(N) 的拷贝 = 平方项。导出 N 个 stage 的 DAG
+    # 原本访问 2N+2 次, 提到循环外是 2 次 (`_id_map` 那一次 + 这里这一次)。
+    # 墙钟收益实测 (旧模块 vs 新模块, 两者输出逐字节相同; 取 5 次最小值):
+    #   N=800 → 22.6ms/20.3ms (1.12x), N=2000 → 150/127ms (1.18x), N=4000 → 655/562ms (1.17x)
+    # **别把它说成数量级的改善**: 导出的主成本是拼字符串, 拷贝只占其中约 10-20%。
+    # 拿掉的是平方项 (占比随规模继续涨), 这个才是判据钉住的东西。
+    # 与 runtime.py 的同一处修法一致 —— `dag.validate()` 已冻结 dag, 导出期间结构
+    # 不变, 提出来安全; 拷贝是**浅**的, Stage 对象共享, 故不影响读到的内容。
+    stages = dag.stages
+    for name in stages:
+        for dep in stages[name].depends_on:
             lines.append(f"    {ids[dep]} --> {ids[name]}")
     for fname, edge in dag.conditional_edges.items():
         for key, tgt in sorted(edge.mapping.items()):
@@ -144,9 +154,11 @@ def to_graph_json(dag: DAG) -> dict:
     R1 (0.5.5): edges 增加 kind ("static" | "conditional"); 条件边另带 key
     (分支标签) 与 max_visits — admin UI 可见逻辑分叉, 叠加 route 事件显示实际走向.
     """
+    # 同 to_mermaid: 提到循环外 (这里原本是 nodes 循环 V 次 + edges 推导 V+1 次)
+    stages = dag.stages
     nodes = []
     for name in dag.topo_order():
-        stage = dag.stages[name]
+        stage = stages[name]
         nodes.append({
             "id": name,
             "name": name,
@@ -155,8 +167,8 @@ def to_graph_json(dag: DAG) -> dict:
             "timeout": stage.timeout,
         })
     edges: list[dict[str, Any]] = [{"from": dep, "to": name, "kind": "static"}
-                                   for name in dag.stages
-                                   for dep in dag.stages[name].depends_on]
+                                   for name in stages
+                                   for dep in stages[name].depends_on]
     for fname, edge in dag.conditional_edges.items():
         for key, tgt in sorted(edge.mapping.items()):
             edges.append({"from": fname, "to": tgt, "kind": "conditional",
