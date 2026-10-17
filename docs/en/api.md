@@ -552,6 +552,17 @@ negative value raises `ValueError`, and so does `0` for `max_steps` /
 `max_concurrent_runs` — every call site tests `if policy.x`, so `0` is a falsy value
 read as "not set": "limit of 0" reads like "no concurrency allowed" while actually
 meaning *unlimited*, and `max_steps=0` fuses the very first stage. Pass `None`
+- Reaching `max_concurrent_runs` **queues**, it does not reject. Measured (cap = 1,
+  two concurrent runs, one 0.4 s stage each): the second waits for the first to finish,
+  ~0.8 s overall, both `done`.
+- ⚠️ **The queue itself has no timeout.** A hung run (only reachable with the run-level
+  deadline and `default_timeout` both disabled) blocks every later run **forever** —
+  measured: first run sleeping 30 s ⇒ the second still hadn't started after 2 s. There is
+  no second safety net inside the library: what bounds the wait is the run's own
+  deadline / `default_timeout`. To bound **the wait itself**, wrap the call:
+  `await asyncio.wait_for(rt.run(dag, task_id), timeout=X)` — measured to raise
+  `TimeoutError` rather than being swallowed into a fake `RunResult` (registry hard-kill
+  and external cancellation are tracked separately).
 explicitly to mean "unlimited / off".
 
 ### `stage_alive_interval` events (unreleased, see CHANGELOG [Unreleased])

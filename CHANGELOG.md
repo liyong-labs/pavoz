@@ -395,6 +395,23 @@
   `return` 也是这个结果** —— run 照报 `done`、不写任何 state, 下游读不到产出时先去查
   上游是不是漏了 `return`。`docs/{cn,en}/api.md` 的 State 段已补。
 
+- **`max_concurrent_runs` 满了是排队还是拒绝 —— 文档补齐 (附"排队没有超时"这条边界)**。
+  实测 (上限=1, 两个并发 run, 各一个 0.4s 的 stage): 第二个**等**第一个跑完才开跑,
+  整体 ~0.8s, 两个都 `done` —— 是排队, 不是拒绝。
+
+  更要紧的是配套边界: **排队本身没有超时**。一个卡死的 run (需要 run 级 deadline 与
+  `default_timeout` 都关掉才可能发生) 会把后面的 run **永久**堵住 —— 实测第一个 run
+  睡 30s 时, 第二个等 2s 仍未开始。决定"能等多久"的是 run 自身的 deadline /
+  `default_timeout`, 库内没有第二个兜底。想给**等待本身**设上界, 只能在调用侧包一层:
+  `await asyncio.wait_for(rt.run(dag, task_id), timeout=X)` —— 实测它抛
+  `TimeoutError`, 不会被吞成假的 `RunResult` (registry 硬杀与外部取消分开记,
+  见 `cancel.py` 的 `_killing`)。
+
+  判据 `tests/test_max_concurrent_runs_queue.py` 两条, 用**事件顺序**而不是耗时
+  (耗时断言在 CI 上不可靠): 上限=1 时两个 run 严格串行 (B 的 start 必须在 A 的 end
+  之后); 卡死时 B **不该**开跑。第二条钉的是"没有"—— 将来若决定加排队超时, 它会红,
+  那时该同步改文档。判别力: 把信号量上限改成 9999 → 1 红。
+
 ### Internal
 
 - ★ **本会话追加的 214 行 / 10 条 CHANGELOG 条目全落进了**已发布**的 0.5.7 段**,
