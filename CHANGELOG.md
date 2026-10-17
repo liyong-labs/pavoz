@@ -231,6 +231,50 @@ tag 之后任何改动若落在已发布段内即报错)_
   `rglob("*.md")` 看文件系统 (未跟踪文件照样看得到), `check_changelog` 只用 git 读
   **历史 tag** 版本、当前 CHANGELOG 走磁盘。
 
+- ★ **storage spec 类名打错时, 报错把 import 进来的 `hashlib` / `os` / `json` 当成候选类报出来** ——
+  而这条消息唯一的作用就是**帮人挑一个正确的类名**。实测:
+
+      模块导出: ['ABC', 'CorruptRecordError', 'FileStorage', 'StorageBackend',
+                 'abstractmethod', 'annotations', 'hashlib', 'json',
+                 'key_sha256', 'os']...
+
+  列的 10 条里 **6 条是噪声**。根因是消息用的是
+  `[n for n in dir(module) if not n.startswith("_")]` —— 模块的**全部**非下划线属性,
+  包括 import 进来的 stdlib 模块与 `ABC` / `abstractmethod` / `annotations`。
+
+  改: 有 `__all__` 就用它 (那是模块作者对"公开面"的显式声明); 没有 `__all__` 的第三方
+  模块退回 `dir()` 但**滤掉模块对象** —— 噪声的主要来源。实测对 stdlib 的 `json` 也干净:
+  `['dump', 'dumps', 'load', 'loads', 'JSONDecoder', 'JSONDecodeError', 'JSONEncoder']`。
+
+- **`key_sha256` 是死代码, 而且会误导人 —— 已删**。它的 docstring 写着"内容寻址 key:
+  把若干片段拼起来 sha256 前 16 hex", 但**本库根本不用那套**: `FileStorage` 的 key 是
+  `<root>/<key>.json` 的可读层级路径。实测全仓**零调用点**、不属于 `StorageBackend`
+  协议、不从包 `__init__` 导出。它却在 `storage.__all__` 里 (看起来像公开 API),
+  并且出现在 `docs/storage.md` 的一条错误快照中。一条会邀请用户采用"本库并不使用"的
+  方案的公开函数, 按 YAGNI 删掉 (顺带删掉因此变成未使用的 `hashlib` 导入)。
+
+- ★ **`docs/storage.md` 里那 5 条错误输出快照已经烂了 2 条, 而没有任何东西守着它们**。
+  新增 `tests/test_storage_error_docs.py` 时一跑就抓到第二处:
+
+      #4 kwargs 错 (文档)
+        FileStorage.__init__() missing 1 required positional argument: 'root_dir'.
+      #4 kwargs 错 (实跑)
+        FileStorage.__init__() got an unexpected keyword argument 'whatever'.
+
+  (传的是 `whatever=1`, 拿到的是"多传了关键字参数"而不是"少传了位置参数"。手工逐条
+  对过时我漏看了这个差异, 是判据抓到的 —— **手工核对会漏, 机器不会**。)
+  另一处 (#3 类名错) 见上条, 也已随消息修正而变真。
+
+  判据四条, 变异逐个验过 **3/3 转红**: 消息退回 `dir()` 全量 → 2 红; 把 `key_sha256`
+  悄悄加回来 → 2 红; 悄悄改掉 kwargs 提示的措辞 → 1 红。判据钉的是**性质** ("报的是
+  声明的公开面", "快照与实跑一致") 而不是当前那几个具体名字 —— 否则下次加一个导出就得
+  改测试, 而该改的是文档。
+
+  判据自己翻过两次车, 都被记在注释里: ① 扫全文解析, 结果 `docs/storage.md` 上方另一个
+  代码块的 `# 1. # 2. # 3.` 示例注释被当成了错误快照 (`setdefault` 让前面的赢了), 于是
+  "5 条快照"一条都没真正对上过; ② 越过代码围栏继续收集, 把后面半页不相干文字也当成
+  快照内容。现在先按标题定位到那**一个**代码块再解析。
+
 - ★ **仓库里 4 个文件的正文被写坏了 (U+FFFD 替换字符), 而全套门禁是绿的**。
   `docs/cn/api.md` / `tools/check_changelog.py` / `tests/test_corrupt_record.py` /
   `tests/test_max_concurrent_runs_queue.py` 各有一处, 落盘的就是 `ef bf bd` 三个字节:

@@ -64,11 +64,11 @@ PavozStorageError: storage 'foo.bar:Baz' 模块 'foo.bar' 不可用: No module n
 
 # 3. class 名错
 PavozStorageError: storage 'pavoz.storage:WrongClass' 类 'WrongClass' 不在模块 'pavoz.storage'.
-  模块导出: ['FileStorage', 'StorageBackend', 'key_sha256']
+  模块导出: ['CorruptRecordError', 'FileStorage', 'StorageBackend']
 
 # 4. kwargs 错
 PavozStorageError: storage 'pavoz.storage.FileStorage' 实例化失败:
-  FileStorage.__init__() missing 1 required positional argument: 'root_dir'.
+  FileStorage.__init__() got an unexpected keyword argument 'whatever'.
   检查 kwargs=['whatever'] 是否匹配 FileStorage.__init__.
 
 # 5. 类型错 (实例不是 StorageBackend)

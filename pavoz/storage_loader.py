@@ -8,6 +8,7 @@ boto3 / etc.).
 from __future__ import annotations
 
 import importlib
+import inspect
 from typing import Any
 
 from .storage import StorageBackend
@@ -56,7 +57,25 @@ def load_storage(spec: str, **kwargs: Any) -> StorageBackend:
     try:
         cls = getattr(module, class_name)
     except AttributeError as e:
-        available = [n for n in dir(module) if not n.startswith("_")]
+        # 报**模块自己声明的公开面**, 而不是 dir() 的全量属性。2026-10-17 实测: 原先
+        # 用 `[n for n in dir(module) if not n.startswith("_")]`, 于是用户把 storage
+        # spec 的类名打错时看到的是
+        #     模块导出: ['ABC', 'CorruptRecordError', 'FileStorage', 'StorageBackend',
+        #                'abstractmethod', 'annotations', 'hashlib', 'json',
+        #                'key_sha256', 'os']...
+        # —— 它把 import 进来的 hashlib / os / json / ABC 当成候选类报出去。**这条消息
+        # 唯一的作用是帮人选一个正确的类名**, 而它列的 10 条里 6 条是噪声。
+        # 模块有 __all__ 时以它为准 (那是作者的显式声明, 含本仓自己); 没有 __all__ 的
+        # 第三方模块退回到 dir() 但**滤掉模块对象** —— 那是最主要的噪声来源。
+        declared = getattr(module, "__all__", None)
+        if isinstance(declared, (list, tuple)) and declared:
+            available = [str(n) for n in declared]
+        else:
+            available = [
+                n for n in dir(module)
+                if not n.startswith("_")
+                and not inspect.ismodule(getattr(module, n, None))
+            ]
         raise PavozStorageError(
             f"storage {spec!r} 类 {class_name!r} 不在模块 {module_path!r}. "
             f"模块导出: {available[:10]}{'...' if len(available) > 10 else ''}"

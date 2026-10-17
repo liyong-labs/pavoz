@@ -8,13 +8,12 @@ core 零依赖 (不 import psycopg/redis/minio). v1 默认 file backend (本地�
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import tempfile
 from abc import ABC, abstractmethod
 
-__all__ = ["CorruptRecordError", "FileStorage", "StorageBackend", "key_sha256"]
+__all__ = ["CorruptRecordError", "FileStorage", "StorageBackend"]
 
 
 class CorruptRecordError(Exception):
@@ -30,13 +29,6 @@ class CorruptRecordError(Exception):
     """
 
 
-def key_sha256(parts: list[str]) -> str:
-    """内容寻址 key: 把若干片段拼起来 sha256 前 16 hex.
-
-    用法: key_sha256(["run", task_id, "checkpoint"]) → 稳定唯一 key.
-    """
-    raw = "|".join(parts)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
 class StorageBackend(ABC):
