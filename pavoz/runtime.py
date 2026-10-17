@@ -63,6 +63,17 @@ from .types import (
 
 logger = logging.getLogger("pavoz")
 
+
+def _fmt_secs(t: float) -> str:
+    """秒数的显示格式: 不足 1 秒保留 1 位小数, 否则取整。
+
+    存在的理由是超时消息: `f"{0.3:.0f}"` 是 `"0"`, 于是 `timeout=0.3` 的 stage 超时
+    会被报成 "超时 (0s)" —— 而 sub-second 预算恰恰是最常见的一档 (测试 / 交互式调参
+    / 快速失败)。够 1 秒就取整 (`5` → `"5"`, `300` → `"300"`), 免得长 run 的日志里
+    拖一堆 `.0`。
+    """
+    return f"{t:.1f}" if t < 1 else f"{t:.0f}"
+
 _DEFAULT_STAGE_ALIVE_INTERVAL = 30.0  # 无 EnginePolicy 时的心跳间隔 (秒)
 
 __all__ = ["CallMeta", "CallResult", "Ctx", "Runtime"]
@@ -1381,7 +1392,12 @@ class Runtime:
         try:
             return await asyncio.wait_for(fn(ctx), timeout=timeout)
         except TimeoutError:
-            raise TimeoutError(f"stage '{name}' 超时 ({timeout:.0f}s)") from None
+            # ⚠️ 精度: 这里曾用 `{timeout:.0f}` —— 于是 `timeout=0.3` 的超时被报成
+            # "超时 (0s)"。实测 (stage 睡 1.0s, timeout=0.3): 0.30s 就失败, 消息却是
+            # "(0s)"。用户读到"0s"会去找"是不是超时配成了 0"这种根本不存在的问题,
+            # 而真实原因是**他的预算只有 0.3 秒、不够这个 stage 跑**。凡是 sub-second
+            # 的预算, 消息里不写小数就等于在最基本的场景里说错话。
+            raise TimeoutError(f"stage '{name}' 超时 ({_fmt_secs(timeout)}s)") from None
 
     # ── checkpoint ──────────────────────────────────────
     def _dump_debug(self, task_id: str, run_id: str, stage: str,

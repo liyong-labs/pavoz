@@ -290,6 +290,11 @@ ctx.on_event: Callable[[str, dict], None] | None                   # this run's 
 
 ## State
 
+- **Returning `None` is the same as returning `{}`** (`_run_stage` normalises it to
+  `{}`): a purely side-effecting stage (webhook / DB write / metric) need not return
+  anything. Mind the converse — a **forgotten `return` has the same result**: the run
+  still reports `done` and writes no state, so when a downstream stage can't see some
+  upstream stage's output, check that the upstream one didn't forget its `return`
 - Allowed types: `str`/`int`/`float`/`bool`/`None`/`list`/`dict` (json-serializable).
   Anything else (`set`/`datetime`/`Path`/`bytes`/...) → `TypeError`
 - A `float` must also be **finite**: `NaN` / `±Inf` pass the type check but

@@ -252,6 +252,10 @@ ctx.on_event: Callable[[str, dict], None] | None                   # 本 run 的
 
 ## State
 
+- **返回 `None` 与返回 `{}` 同义** (`_run_stage` 归一成 `{}`): 纯副作用 stage (发
+  webhook / 写库 / 打点) 可以什么都不 return。注意反面 —— **忘了 `return` 也是这个
+  结果**, run 照报 `done`、不写任何 state, 所以下游读不到某个 stage 的产出时, 先去
+  看它是不是漏了 `return`
 - 类型白名单: `str/int/float/bool/None/list/dict` (json-serializable),
   其他 (`set/datetime/Path/bytes/...`) → `TypeError`
 - **`float` 还必须是有限值**: `NaN` / `±Inf` 类型对, 但落盘会写成字面量
