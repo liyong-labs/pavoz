@@ -595,7 +595,20 @@ python -m pavoz state --task-id X [--key K]
 python -m pavoz replay <dag.py> --task-id X --stage Y [--patch P.py]   # v0.5.1
 ```
 
-- `run`: 跑 DAG 文件 (模块须暴露 `dag` 变量); `PAVOZ_STORAGE` 环境变量
+- `run`: 跑 DAG 文件。**挑选规则** —— 模块作用域里**任意** `DAG` 实例都算数 (变量名
+  不要求叫 `dag`; `class MyDAG(DAG)` 的子类实例同样被认, 别的库里恰好也叫 `DAG` 的
+  同名实例则**不会**被误收)。文件里有多个时用 `DEFAULT_DAG = "<DAG 名>"` 指定:
+
+      ```python
+      from pavoz import DAG
+      alpha = DAG("alpha");  beta = DAG("beta")
+      DEFAULT_DAG = "beta"          # ← 跑 beta
+      ```
+
+  那个名字必须与 `DAG(...)` 里的名字**完全一致** (不做前缀/模糊匹配), 且**匹配不上直接
+  报错并列出实际有哪些** —— 不会静默取第一个。声明了却被忽略 = 跑起另一个 pipeline 而
+  全程无提示, 那比报错糟得多 (用户会照着 alpha 的结果去调 beta)。没声明且有多个 →
+  取第一个, 并在 stderr 上提示一句。`PAVOZ_STORAGE` 环境变量
   指向 FileStorage 目录 — 每次 run 都落 per-stage checkpoint (单跑也算,
   v0.5.1 R5 fix), `--resume`/replay/trace/state 对 CLI 产物可用
 - `trace/state`: 读 FileStorage 里的 checkpoint。`state --key K` 在 **K 不存在时

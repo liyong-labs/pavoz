@@ -703,7 +703,23 @@ python -m pavoz state --task-id X [--key K]
 python -m pavoz replay <dag.py> --task-id X --stage Y [--patch P.py]   # v0.5.1
 ```
 
-- `run`: runs a DAG file (the module must expose a `dag` variable);
+- `run`: runs a DAG file. **Selection** — *any* `DAG` instance in module scope counts
+  (the variable need not be called `dag`; instances of `class MyDAG(DAG)` subclasses are
+  recognized too, while a same-named `DAG` from some other library is *not* picked up).
+  With more than one DAG in the file, name the one to run with `DEFAULT_DAG = "<name>"`:
+
+      ```python
+      from pavoz import DAG
+      alpha = DAG("alpha");  beta = DAG("beta")
+      DEFAULT_DAG = "beta"          # ← runs beta
+      ```
+
+  The name must match `DAG(...)`'s name **exactly** (no prefix or fuzzy matching), and a
+  mismatch is a **hard error that lists the names actually present** — it never silently
+  falls back to the first one. Ignoring an explicit declaration means running a different
+  pipeline with no signal at all, which is worse than failing (you would debug beta
+  against alpha's results). With several DAGs and no `DEFAULT_DAG`, the first is used and
+  a note is printed to stderr. `PAVOZ_STORAGE` environment variable
   `PAVOZ_STORAGE` env var points at the `FileStorage` directory — every
   run persists per-stage checkpoints there (single runs included, v0.5.1 R5
   fix), so `--resume` / replay / trace / state work on CLI runs

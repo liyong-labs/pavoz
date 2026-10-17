@@ -166,6 +166,43 @@ tag 之后任何改动若落在已发布段内即报错)_
   且每次都是预期的那几条 (变异 4 只有反面判据能抓住)。另附"两条判据跑出同一个
   error_class"的退化自检, 与元组覆盖的自检。
 
+- ★ **`DEFAULT_DAG` 写错一个字, pavoz 静默跑起另一个 pipeline** —— 而且全程无提示。
+  一个 dag 文件里两个 DAG, 顶上写 `DEFAULT_DAG = "beta_typo"` (打错字), 实测:
+
+      $ pavos run dag.py --task-id a1
+      # rc=0, stderr 一个字都没有, JSON 里:
+      "dag": "alpha",                 ← 声明的是 beta_typo, 跑的是 alpha
+      "state": {"ran": "ALPHA"}
+
+  原实现是"挑名字匹配的; 没有则第一个", 于是匹配不上就掉到 `return dags[0]`。用户
+  **明确指定了**却被忽略, 比根本没写更糟 —— 他以为跑的是自己声明的那个, 于是照着
+  alpha 的结果去调 beta。同一处还有另外两个缺陷 (都零测试):
+
+  - **`class MyDAG(DAG)` 的子类实例不被认**。挑选靠的是 `type(v).__name__ == "DAG"`
+    (按**类名字符串**, 不是 isinstance), 子类的类名是 `MyDAG`, 于是报
+    `/path/dag_sub.py 里没有 DAG 实例` (rc=1) —— 文件里明明有一个 DAG, 而报错把人
+    指向错误的方向 (让人去检查"是不是忘了实例化")。
+  - **别的库的同名 `DAG` 实例会被收进候选**。同一行判据的另一面: 只要有库把 `DAG`
+    这个名字暴露出来并在模块级实例化, 它就混进来, 选中后用户看到的是
+    `AttributeError: 'DAG' object has no attribute 'validate'` —— 一条完全看不出
+    "你的 dag 文件里有重名东西"的裸栈。
+
+  三个同源: 挑选逻辑既**认错对象** (按名字而非 isinstance), 又**在认不出时替用户猜**
+  (静默取第一个)。修法: 按 `isinstance` 收集并按 `id` 去重 (同一实例绑两个名字不算
+  "多个 DAG", 否则会绕过 DEFAULT_DAG); `DEFAULT_DAG` 匹配不上**报错并列出实际有哪些
+  名字**; 多个 DAG 且没声明 → 取第一个并**在 stderr 上提示一句** (静默挑选是同一类错)。
+
+  `DEFAULT_DAG` 此前在**全仓 markdown 里一次都没出现过** —— 一条没文档、没测试、却在
+  打错字时静默跑错流水线的路径。现已补进 `docs/{cn,en}/api.md` 的 CLI 段 (示例已实跑
+  验证)。顺带修掉同一处一句不准确的话: "模块须暴露 `dag` 变量" —— 实现收集的是模块
+  作用域里任意 `DAG` 实例, 变量名不要求叫 `dag`。
+
+  判据 `tests/test_cli_dag_selection.py` 十条。四个变异逐个验过, **4/4 转红**, 且每次
+  都是预期的那几条: 收集改回按类名 → 3 红 (子类/外来同名/别名); `DEFAULT_DAG` 退回
+  静默取第一个 → 2 红 (两条 typo 判据); 去掉 stderr 提示 → 1 红; 去掉 id 去重 → 1 红。
+  含"真 CLI 层面 rc=1 且 stdout 里不许出现任何 `ran`"这一条 —— 静默跑错比报错糟得多,
+  光断言报错不够, 还得钉住"**什么都没跑**"。
+
 - ★ **仓库里 4 个文件的正文被写坏了 (U+FFFD 替换字符), 而全套门禁是绿的**。
   `docs/cn/api.md` / `tools/check_changelog.py` / `tests/test_corrupt_record.py` /
   `tests/test_max_concurrent_runs_queue.py` 各有一处, 落盘的就是 `ef bf bd` 三个字节:

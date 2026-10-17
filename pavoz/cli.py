@@ -24,6 +24,7 @@ import sys
 from pathlib import Path
 
 from .checkpoint import CheckpointMismatchError, CheckpointStore
+from .dag import DAG
 from .runtime import Runtime
 from .storage import CorruptRecordError, FileStorage
 
@@ -35,7 +36,20 @@ DEFAULT_STORAGE = os.environ.get("PAVOZ_STORAGE", os.path.expanduser("~/.pavoz/d
 
 
 def _load_dag(path: str):
-    """import 一个 dag 文件, 返回其中唯一的 DAG 实例."""
+    """import 一个 dag 文件, 返回其中要跑的那个 DAG 实例.
+
+    挑选规则 (2026-10-17 修过三个缺陷, 每条都有判据钉住 —— 见
+    tests/test_cli_dag_selection.py):
+
+      · **按 isinstance 认, 不按类名字符串**。原实现写的是
+        `type(v).__name__ == "DAG"`, 于是 ① `class MyDAG(DAG)` 的子类实例**不被认**
+        (报"里没有 DAG 实例" —— 而它明明有, 报错还把人指向错误的方向);
+        ② 作用域里恰好有别的库的同名 `DAG` 实例时会被**收进来**, 选中后用户看到的是
+        `AttributeError: 'DAG' object has no attribute 'validate'` —— 一条完全看不出
+        "你的 dag 文件里有重名东西"的裸栈。
+      · `DEFAULT_DAG = "<DAG 名>"` 指定跑哪个; **写错就报错, 不猜**。
+      · 多个 DAG 且没声明 DEFAULT_DAG → 取第一个, 并在 stderr 上说一声。
+    """
     p = Path(path).resolve()
     if not p.exists():
         raise SystemExit(f"dag 文件不存在: {p}")
@@ -44,15 +58,35 @@ def _load_dag(path: str):
     mod = importlib.util.module_from_spec(spec)
     sys.modules["_pavoz_dag"] = mod
     spec.loader.exec_module(mod)
-    dags = [v for v in vars(mod).values() if type(v).__name__ == "DAG"]
+    # 按 **isinstance** 认, 不按类名字符串 —— 且按 id 去重 (同一个实例被绑到两个名字
+    # 不算"多个 DAG", 否则会误报提示, 甚至让 DEFAULT_DAG 的匹配被绕过)。
+    dags: list[DAG] = []
+    seen: set[int] = set()
+    for v in vars(mod).values():
+        if isinstance(v, DAG) and id(v) not in seen:
+            seen.add(id(v))
+            dags.append(v)
     if not dags:
         raise SystemExit(f"{p} 里没有 DAG 实例")
     if len(dags) > 1:
-        # 挑名字匹配的; 没有则第一个 (文档建议每文件 1 个 DAG)
-        want = getattr(sys.modules["_pavoz_dag"], "DEFAULT_DAG", None)
-        for d in dags:
-            if d.name == want:
-                return d
+        want = getattr(mod, "DEFAULT_DAG", None)
+        if want is not None:
+            for d in dags:
+                if d.name == want:
+                    return d
+            # 声明了却匹配不上 → **报错, 不猜** (2026-10-17 修)。
+            # 原实现匹配不上就掉到 `return dags[0]`, 于是打错一个字会静默跑起另一个
+            # pipeline 且全程无提示 —— 实测: 声明 DEFAULT_DAG="beta_typo", 实际跑的
+            # 是 alpha, state 里 ran=ALPHA, rc=0, stderr 一个字都没有。用户**明确**
+            # 指定了却被忽略, 比根本没写更糟: 他以为跑的是自己声明的那个。
+            raise SystemExit(
+                f"{p} 里声明了 DEFAULT_DAG = {want!r}, 但该文件里没有名为 "
+                f"{want!r} 的 DAG。实际有的: {[d.name for d in dags]} —— "
+                f"名字要完全一致 (不做前缀/模糊匹配)。"
+            )
+        print(f"提示: {p.name} 里有多个 DAG {[d.name for d in dags]}, 但没声明 "
+              f"DEFAULT_DAG —— 取第一个 {dags[0].name!r}。要指定就在该文件里写 "
+              f"DEFAULT_DAG = '<DAG 名>'。", file=sys.stderr)
     return dags[0]
 
 
