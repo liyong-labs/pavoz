@@ -25,7 +25,7 @@ from pathlib import Path
 
 from .checkpoint import CheckpointMismatchError, CheckpointStore
 from .runtime import Runtime
-from .storage import FileStorage
+from .storage import CorruptRecordError, FileStorage
 
 # ⚠️ 这行 expanduser 只覆盖**默认值**那一支: env 命中时 os.environ.get 原样返回,
 # 于是 `PAVOZ_STORAGE=~/x` 里的 `~` 没人展开 —— 实测会在 cwd 里造出字面量 `~`
@@ -435,7 +435,18 @@ def main(argv: list[str] | None = None) -> int:
     p_prune.set_defaults(fn=_cmd_prune)
 
     args = parser.parse_args(argv)
-    return asyncio.run(args.fn(args))
+    try:
+        return asyncio.run(args.fn(args))
+    except CorruptRecordError as e:
+        # 顶层只兜**这一种**: 它是预期内、且用户有办法处置的错误 (文件坏了, 消息里
+        # 带着路径与处置建议)。实测 (修复前): 崩溃留下的半截 checkpoint 上跑
+        # `pavos trace`, 用户看到的是一整段指向 json/decoder.py 的 traceback ——
+        # 既没说哪个文件坏了, 也没说能怎么办, 而那恰恰是"崩溃后回来查"的时刻。
+        #
+        # **不写 catch-all**: 真 bug 的 traceback 是有用的 (栈里有文件和行号), 把
+        # 它吞成一句 "内部错误" 只会让人少一条线索。要收敛的只是这一类已知形状。
+        print(str(e), file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

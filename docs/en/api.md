@@ -386,6 +386,24 @@ class StorageBackend:
 
 Built-in: `FileStorage(dir)` — local filesystem implementation (tests / single-host).
 
+`FileStorage` writes records **atomically** (temp file in the same directory +
+`os.replace`): if the process dies or the machine loses power mid-write, what
+remains on disk is the previous **complete** record, not a half-written file.
+
+### `CorruptRecordError`
+
+Raised when a record on disk is **not valid JSON** (most commonly a half-written
+file left by a crash / power loss). The message carries the file path, the
+underlying error and what to do about it; the CLI catches it and exits 1 — so
+`trace` / `state` / `export-input` / `replay` / `fork-run` / `run --resume` all
+print **one readable sentence** instead of a traceback pointing into
+`json/decoder.py`.
+
+**It never degrades to `None`.** `get` returning `None` means "no such record";
+treating corruption as absence would make `run --resume` start over — the user
+sees `done` while the task's accumulated progress is **silently dropped** (the
+old data is still on disk, merely unreadable).
+
 ## Storage loader
 
 pavoz core ships **only** the `StorageBackend` Protocol + `FileStorage`. Drivers

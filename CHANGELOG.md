@@ -323,6 +323,36 @@
   KeyboardInterrupt"。判别力 (三次变异各验一次): 退回 `open(path,"w")` → 2 红;
   临时文件带 `.json` 后缀 → 1 红; 失败不清理临时文件 → 1 红。
 
+- ★ **checkpoint 损坏时, CLI 打的是指向 `json/decoder.py` 的裸 traceback**。
+  `FileStorage.get` 原来是裸 `json.load`, 而 `cli.main()` **没有任何顶层兜底**。
+  于是崩溃留下的半截 checkpoint (正是上一条那个 bug 的产物) 上, 六条读 checkpoint
+  的命令全部中招:
+
+      $ pavos trace --task-id X
+        ...
+          File "/usr/lib/python3.12/json/decoder.py", line 353, in raw_decode
+      json.decoder.JSONDecodeError: Unterminated string starting at: line 1 column 898
+
+  既没说**哪个文件**坏了, 也没说**能怎么办** —— 而"崩溃后回来查"恰恰是用户会跑这些
+  命令的时刻。修: 新增 `CorruptRecordError` (带路径 + 原始错误 + 常见原因 + 处置
+  建议), CLI 顶层兜住并 rc=1。`trace` / `state` / `export-input` / `replay` /
+  `fork-run` / `run --resume` 现在都给一句能看懂的话。
+
+  **刻意不写 catch-all**: 真 bug 的 traceback 里有文件和行号, 吞成一句"内部错误"
+  只会让人少一条线索。要收敛的只是这一类已知形状。
+
+  **最要紧的是它不退化成 `None`**: `get` 返回 `None` 的含义是"没有这条记录";
+  若把损坏也当成没有, `run --resume` 会从头开始 —— 用户看到 `done`, 而这个 task
+  已有的进度被**静默丢掉** (磁盘上的旧数据明明还在, 只是读不出来)。这条单独钉了
+  判据。
+
+  判据 `tests/test_corrupt_record.py` 九条 (含四条 CLI 子进程用例, 断言 rc=1 且输出
+  里**没有** `Traceback`)。判别力 (三次变异): 退回裸 `json.load` → 8 红; 损坏时
+  `return None` → 8 红; 去掉 CLI 兜底 → 4 红。
+
+  顺带: 新增公开名字被既有的 `test_api_docs_coverage` 门禁逮住并要求同步
+  `docs/{cn,en}/api.md` —— 门禁在正常工作, 这里记一笔。
+
 ### Internal
 
 - ★ **本会话追加的 214 行 / 10 条 CHANGELOG 条目全落进了**已发布**的 0.5.7 段**,

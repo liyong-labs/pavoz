@@ -45,7 +45,7 @@ from .state import (
     parse_set_args,
     parse_set_file,
 )
-from .storage import FileStorage, StorageBackend
+from .storage import CorruptRecordError, FileStorage, StorageBackend
 from .storage_loader import PavozStorageError, load_storage
 from .testing import TestPipe
 from .types import (
@@ -63,6 +63,7 @@ from .viz import to_graph_json, to_mermaid
 __version__ = "0.5.7"
 
 __all__ = [
+    "CorruptRecordError",
     "DAG",
     "CallMeta",
     "CallResult",

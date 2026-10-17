@@ -14,7 +14,20 @@ import os
 import tempfile
 from abc import ABC, abstractmethod
 
-__all__ = ["FileStorage", "StorageBackend", "key_sha256"]
+__all__ = ["CorruptRecordError", "FileStorage", "StorageBackend", "key_sha256"]
+
+
+class CorruptRecordError(Exception):
+    """磁盘上的记录不是合法 JSON —— 文件被截断/写坏, 读不出内容。
+
+    **为什么不返回 None**: `get` 返回 None 的含义是"这条记录不存在"。若把损坏
+    也当成 None, `resume` 会认为"没有 checkpoint, 从头开始" —— 于是**静默丢掉**
+    这个 task 已有的全部进度, 而用户以为只是重跑了一遍。损坏必须**响**。
+
+    消息自带路径与处置建议, 因为最常见的现场就是"崩溃后回来查" —— 那正是用户
+    会跑 `pavos trace` / `resume` 的时刻 (实测: 未处理时这里打的是指向
+    `json/decoder.py` 的裸 traceback, 对用户零信息量)。
+    """
 
 
 def key_sha256(parts: list[str]) -> str:
@@ -137,8 +150,22 @@ class FileStorage(StorageBackend):
         path = self._path(key)
         if not os.path.exists(path):
             return None
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except json.JSONDecodeError as e:
+            # ⚠️ 这一层以前是裸 json.load: 损坏直接冒成 JSONDecodeError, 而 CLI 的
+            # main() 没有顶层兜底 —— 用户看到的是一整段指向 stdlib 的 traceback
+            # (实测: `pavos trace` 在崩溃留下的半截 checkpoint 上就这个下场),
+            # 既没说哪个文件坏了, 也没说能怎么办。换成带路径与处置建议的错误。
+            raise CorruptRecordError(
+                f"记录损坏, 不是合法 JSON: {path}\n"
+                f"  原始错误: {type(e).__name__}: {e}\n"
+                f"  常见原因: 崩溃/断电时正写到一半 (半截文件)。该 run **无法恢复**。\n"
+                f"  处置: 删掉这个文件再重跑 —— 或用 `prune --task-id <id> "
+                f"--dry-run` 先看会删什么。注意: 本错误**不会**被当成'没有 "
+                f"checkpoint', 否则 resume 会静默从头开始、丢掉已有进度。"
+            ) from e
 
     def list_keys(self, prefix: str) -> list[str]:
         prefix_path = self._path(prefix)[:-len(".json")]

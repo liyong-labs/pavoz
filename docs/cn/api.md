@@ -331,6 +331,20 @@ class StorageBackend:
 
 内置: `FileStorage(dir)` — 本地文件系统实现 (测试/单机)。
 
+`FileStorage` 写记录是**原子**的 (同目录临时文件 + `os.replace`): 崩溃或断电时
+写到一半, 磁盘上留下的仍是上一份**完整**记录, 而不是半截文件。
+
+### `CorruptRecordError`
+
+读到的记录**不是合法 JSON** 时抛出 (最常见: 崩溃/断电留下的半截文件)。消息里
+带文件路径、原始错误与处置建议; CLI 顶层兜住它并 rc=1 —— 所以 `trace` / `state` /
+`export-input` / `replay` / `fork-run` / `run --resume` 在这种情况下都给出**一句能看
+懂的话**, 而不是一段指向 `json/decoder.py` 的 traceback。
+
+**它不会退化成 `None`**。`get` 返回 `None` 的含义是"没有这条记录"; 若把损坏也当成
+没有, `run --resume` 会从头开始 —— 用户看到 "done", 而这个 task 已有的进度被**静默
+丢掉** (磁盘上的旧数据明明还在, 只是读不出来)。
+
 ## Storage loader
 
 pavoz core **只**带 `StorageBackend` Protocol + `FileStorage`。driver
