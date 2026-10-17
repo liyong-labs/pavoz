@@ -58,7 +58,11 @@ pavoz = "pavoz.cli:main"
 [tool.hatch.build.targets.sdist]
 exclude = [
     "/research",
-    "/dags",
+    # 只排**消费方那个**文件, 不是整个 dags/ —— `dags/demo.py` 是通用 mock demo,
+    # 而 README.cn 首页与 CLI --help 的 epilog 都拿它当示例命令。2026-10-17 实测:
+    # 上一版排除 "/dags" 时把 demo.py 一起排掉了, 于是那两条命令对从 sdist 装的
+    # 人都变成 "dag 文件不存在"。见 tests/test_sdist_keeps_referenced_examples.py。
+    "/dags/research_dag.py",
 ]
 
 [tool.hatch.build.targets.wheel]

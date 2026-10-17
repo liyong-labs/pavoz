@@ -75,7 +75,16 @@ ALLOWLIST: tuple[tuple[str, str], ...] = (
 #
 # 上面的 ALLOWLIST 解决"仓里能不能留", 这条解决"**发出去**能不能带"。两者都要:
 # 只做前者, 那笔债还躺在 PyPI 上; 只做后者, 仓里继续误导读代码的人。
-MUST_NOT_SHIP: tuple[str, ...] = ("research", "dags")
+# ⚠️ `dags` 是**文件级**, 不是目录级 —— 而这不是偏好, 是被现实逼出来的 (2026-10-17):
+#   dags/research_dag.py  消费方的 DAG → 必须排除
+#   dags/demo.py          通用 mock demo → **必须发出去**, README.cn 首页与 CLI --help
+#                         的示例命令都指向它
+# 上一版写成目录级 "/dags", 于是从 sdist 装的人照抄首页命令得到 "dag 文件不存在", 而仓里
+# 跑的人一切正常 (排除只作用于构建), 本地测试与 CI 一条都没红。见
+# tests/test_sdist_keeps_referenced_examples.py。
+# 两条判据在这里必须一致, 否则互相打脸 —— 上一版就是 `dags` 该不该排除的两种说法并存,
+# 被本门禁抓出来才定案。
+MUST_NOT_SHIP: tuple[str, ...] = ("research", "dags/research_dag.py")
 
 TEXT_SUFFIXES = frozenset({
     ".py", ".md", ".sh", ".bash", ".toml", ".yml", ".yaml",

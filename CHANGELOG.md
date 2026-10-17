@@ -399,6 +399,37 @@ tag 之后任何改动若落在已发布段内即报错)_
   "已排除 ✅" —— 而那次构建根本没产出文件 (venv 里没装 hatchling)。**"数量为 0" 要先
   确认分母存在**, 否则那不是证据。
 
+- ★ **上一条那个 sdist 排除, 自己引入了一个只对真实用户生效的回归** ——
+  `exclude = ["/research", "/dags"]` 把 `dags/demo.py` 一起排掉了, 而那正是两处
+  **面向用户的示例命令**指向的路径:
+
+      README.cn.md:142   python -m pavoz run dags/demo.py --task-id demo-1 ...
+      pavoz/cli.py:4     (--help 的 epilog)  python -m pavos run dags/demo.py ...
+
+  从 sdist 安装的人照抄首页命令 → `dag 文件不存在`。而**仓里跑**的人一切正常 (排除只作用
+  于构建), 所以本地测试、CI、文档检查**一条都没红** —— 这是典型的"只有真实用户碰得到"
+  的回归, 而本会话修的正是这一类。
+
+  已把排除收窄到消费方那一个文件 (`/dags/research_dag.py`), `dags/demo.py` 留下。
+  **真打过验证**: 新 sdist 里 `research/` 0 条、`dags/research_dag.py` 0 条、
+  `dags/demo.py` 1 条。顺带把 `dags/__init__.py` 的 `"""ai-research DAG 集合."""` 改成
+  中性描述 —— 它是唯一还会漏出去的消费方名。
+
+  新增 `tests/test_sdist_keeps_referenced_examples.py` 四条, 把这个**类别**变成判据:
+  凡是 README / docs / CLI help 里指向的、且**仓内确实存在**的路径, 必须活得进 sdist。
+  判据的形状刻意克制, 因为两种假阳性都很自然:
+    · 只断言"文件存在" → quickstart 故意让用户自建 `dags/my_pipeline.py`, 那条路径仓里
+      **不存在**, 会被误判。真正的不变式是"**只要它在仓里, 就必须发得出去**"。
+    · 只断言"没被排除" → 新出现的文档路径不受约束。两条都要。
+  自检: 扫不到任何"仓内存在且未被排除"的被引路径时判失败 (正则失配 / 文档改名都会让
+  它空转)。另有三条钉住前提: 消费方目录仍在 exclude 里、且 `dags` 整体**不再**被排除。
+
+  判别力 (4 个变异, 全部符合预期): 把整个 `dags/` 重新排除 (复刻本条那个回归) → 2 红;
+  从 exclude 删掉 `research` → 1 红; `_is_excluded` 恒返回 False → **第一轮没被抓住**,
+  因为"没有任何东西被排除"正是主判据要断言的反面 —— 辅助函数坏了, 用它的两条判据一起
+  坏。已补一条直接钉 `_is_excluded` 本身 (目录级排除覆盖其下文件 / 文件级排除不连坐
+  同目录兄弟 / 包本体永不被排除 / 空列表不排除任何东西)。
+
 - ★ **仓库里 4 个文件的正文被写坏了 (U+FFFD 替换字符), 而全套门禁是绿的**。
   `docs/cn/api.md` / `tools/check_changelog.py` / `tests/test_corrupt_record.py` /
   `tests/test_max_concurrent_runs_queue.py` 各有一处, 落盘的就是 `ef bf bd` 三个字节:
