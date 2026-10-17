@@ -82,7 +82,7 @@ Step Functions (决策放 Task, Choice 纯求值) 四家收敛的同一分层。
 | workflow_hash | route_fn 源码 + mapping + max_visits 全计入 — 改路由 = 结构变, 拒续 |
 | resume | 从最后完成 stage 的路由重判定 (sync 纯函数 → 同路由续跑); visit 续号 |
 | fork/replay | 支持 (R2): `fork_run` 截断到 `from_stage` **首次完成处** + overrides 深合并, 路由续跑; visit 尾对齐不串轮; `from_stage` 从未执行过 → 明确拒绝; `run_stage` 单 stage 重放不落 cp |
-| 观测 | `route` 事件 `{from, key, to}`; stage 事件带 `visit`; stage_timings 累计 |
+| 观测 | `route` 事件 `{from, key, to, declared}` (`declared` 是 R2 加的: 本轮未选分支也列出, mis-wiring 可见); stage 事件带 `visit`; stage_timings 累计 |
 | viz | mermaid 虚线带 key 标签; graph_json edges 带 kind/key/max_visits |
 
 ## 和 fork_run 的关系 (R2 起支持)

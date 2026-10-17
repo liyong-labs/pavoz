@@ -72,7 +72,14 @@ Lifecycle events:
 | `run_start` / `run_end` | Run boundaries | `task_id` / `run_id` / `status` |
 | `stage_start` / `stage_end` | Every attempt | `task_id` / `run_id` / `stage` / `attempt` / `status` / `duration` |
 | `stage_retry` | After a `RetryableError` schedules a retry | Same as above + `error` |
+| `route` | After a conditional edge is evaluated (R1, 0.5.5) | `from` / `key` / `to` / `declared` (branches not taken this round; readable since R2) |
 | `stage_progress` | Stage calls `ctx.set_progress(fraction, note)` | `fraction` / `note` (best-effort transient signal, **never checkpointed**) |
+
+⚠️ The field lists are **illustrative**, not a per-field contract: `stage_start` carries
+only `task_id`/`run_id`/`stage`/`attempt`/`visit` (no `status`/`duration`); those arrive
+with `stage_end`. Conditional edges (R1) let a stage be visited more than once, so stage
+events all carry **`visit`** (which visit), and `declared` was added in R2. To see the
+exact events a run produced, hook `Runtime(on_event=...)` and print them.
 
 **Decorator gotcha**: always wrap stage functions with `functools.wraps` — the stage name comes from `fn.__name__`, and dropping it makes every decorated stage collide on the same name.
 

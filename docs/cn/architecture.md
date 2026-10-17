@@ -75,7 +75,14 @@ sub_dag/retry_budget/escalation/watchdog 原语。
 | `run_start` / `run_end` | run 边界 | `task_id` / `run_id` / `status` |
 | `stage_start` / `stage_end` | 每次 attempt | `task_id` / `run_id` / `stage` / `attempt` / `status` / `duration` |
 | `stage_retry` | `RetryableError` 触发重试后 | 同上 + `error` |
+| `route` | 条件边求值后 (R1, 0.5.5) | `from` / `key` / `to` / `declared` (本轮未选分支, R2 起可读) |
 | `stage_progress` | stage 内调 `ctx.set_progress(fraction, note)` | `fraction` / `note` (best-effort 瞬态信号, **不落 checkpoint**) |
+
+⚠️ 字段表是**示意**的, 不是逐字段契约: `stage_start` 只带 `task_id`/`run_id`/`stage`/
+`attempt`/`visit` (没有 `status`/`duration`), `stage_end` 才带 `status`/`duration`。
+条件边 (R1) 让每个 stage 可被访问多次, 所以 stage 事件都带 **`visit`** (第几次访问),
+而 `declared` 是 R2 补的 —— 想精确知道某个 run 里出现了哪些事件, 直接接
+`Runtime(on_event=...)` 打一遍。
 
 **装饰器注意事项**: 包 stage 函数时必须用 `functools.wraps` —— stage 名取自 `fn.__name__`, 丢了它所有被装饰的 stage 会重名。
 

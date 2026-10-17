@@ -430,6 +430,42 @@ tag 之后任何改动若落在已发布段内即报错)_
   坏。已补一条直接钉 `_is_excluded` 本身 (目录级排除覆盖其下文件 / 文件级排除不连坐
   同目录兄弟 / 包本体永不被排除 / 空列表不排除任何东西)。
 
+- ★ **architecture 的"生命周期事件表"是不完整的, 而它是 `llms.txt` 指名的权威参考** ——
+  三处同源: 表是**手写**的, 没有任何判据拿它跟代码对过。
+
+  - **`route` 事件完全不在表里**。它是条件边 (R1, 0.5.5) 的路由事件, 代码每次求值都
+    emit, payload `{task_id, run_id, from, key, to, declared}`。它只在
+    `docs/{cn,en}/conditional-edges.md` 的一个表格单元格里被顺带提到 —— 于是"照
+    architecture 实现一个事件消费者"的人会**整个漏掉它**。中英两份都已补, 并标了
+    `declared` 是 R2 才有的 (未选分支也列出, mis-wiring 可见)。
+  - **stage 事件的字段表漏了 `visit`**。写的是
+    `task_id/run_id/stage/attempt/status/duration`, 而 R1 之后一个 stage 可被访问多次,
+    `stage_start`/`stage_end`/`stage_retry` 都带 `visit` —— 照那张表写代码的人拿不到访问
+    次数, 而它在回路里是**判断是否转圈**的关键。
+  - 那张表把 `status`/`duration` 归给 `stage_start`, 而代码里 `stage_start` **不带**
+    这两个 (它们随 `stage_end` 才来)。已在两份文档里注明: 字段表是**示意**的, 想精确知道
+    某个 run 出现了哪些事件, 直接接 `Runtime(on_event=...)` 打一遍。
+
+  `docs/{cn,en}/conditional-edges.md` 的 route 事件字段也一并补上 `declared`。
+
+  新增 `tests/test_arch_event_table_complete.py` 三条, **从代码派生**事件集, 双向比:
+  正向 (code ⊆ doc) 漏一个 `route` 就红, 反向 (doc ⊆ code) 许愿一个不 emit 的事件也红。
+
+  判据自己翻过两次车, 都写进注释:
+    ① **只认 `self._emit("x", ...)`** —— 而 `stage_progress` 是 `Ctx.set_progress` 里
+       **直接调 `self.on_event("stage_progress", ...)`** 发的, 不经 runtime 的 `_emit`。
+       于是"代码没 emit 它" 而文档里明明有 —— **判据对一条正确条目报红**。已同时认两种
+       入口, 并加自检钉住这一点。
+    ② **取行范围扫全文** —— 同一份文档下面还有一张"异常契约"表, 首格是
+       `StageError` / `RetryableError` / `FatalError`, 于是判据对着那三条**异常名**报
+       "列了代码不 emit 的事件"。纯假红, 而且是那种会让人把门禁关掉的假红。已限定在
+       事件表那一节内。
+    另外首格必须取**全部**反引号标识符: 表里有合并行 (`run_start` / `run_end` 同一格),
+       只取第一个会把 `run_end`/`stage_end` 判成"表里没有"。
+
+  判别力 (4 个变异 + 对照, 全部符合预期): 删掉 cn 的 route 行 → 红; en 表里加一个不
+  emit 的事件 → 红; 提取漏掉 `on_event` 路径 → 红; 取行范围放回全文 → 红。
+
 - ★ **`CONTRIBUTING.md` 声称"与 CI 同款命令", 实际只列了 8 条里的 2 条** —— 而那 2 条
   本身也不对:
 

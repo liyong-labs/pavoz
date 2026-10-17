@@ -90,7 +90,7 @@ Convention: name judge stages `s_route_judge` / `s_decide_judge`; have them writ
 | `workflow_hash` | `route_fn` source + mapping + `max_visits` all count — changing routing is a structural change, so stale resumes are refused |
 | `resume` | Re-evaluates the route of the last completed stage (a sync pure fn makes this deterministic); visit numbers continue |
 | fork / replay | Supported (R2) — see below |
-| Observability | A `route` event `{from, key, to}`; stage events carry `visit`; `stage_timings` accumulates |
+| Observability | A `route` event `{from, key, to, declared}` (`declared` arrived in R2: branches not taken this round are listed too, so mis-wiring is visible); stage events carry `visit`; `stage_timings` accumulates |
 | viz | mermaid draws dashed edges labelled with the key; `graph_json` edges carry `kind` / `key` / `max_visits` |
 
 ## Interaction with fork_run (supported since R2)
