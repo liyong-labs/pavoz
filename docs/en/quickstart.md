@@ -56,7 +56,12 @@ With initial state + checkpoint (resume):
 PAVOZ_STORAGE=/data/sf \
 python -m pavoz run dags/my_pipeline.py \
   --task-id task-1 --input '{"query": "north-china-tech"}'
-# If interrupted, rerun with --resume to skip completed stages:
+
+# ⚠️ The next command is **not** a continuation of the one above — `--resume` is
+#    for after an **interruption**. Resuming a task that already completed hits
+#    the done guard: "already completed; rerun with resume=False (new run_id)".
+#    (Copying the two lines above back-to-back always fails, and the error talks
+#    about how to rerun, not about why --resume doesn't belong there.)
 PAVOZ_STORAGE=/data/sf \
 python -m pavoz run dags/my_pipeline.py --task-id task-1 --resume
 ```

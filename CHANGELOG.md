@@ -34,6 +34,34 @@ tag 之后任何改动若落在已发布段内即报错)_
   argv[0] 那条我第一版按行匹配, 而真实写法里 `"pavos"` 在**下一行**, 于是它对真裸调用
   完全失明 —— 是变异验证里"端到端红了而静态没红"把它逼出来的。
 
+- ★ **quickstart 里那两条命令照抄顺序跑, 第二条必然失败** —— 而报错讲的是
+  "怎么重跑", 不是"你为什么不该在这儿 `--resume`"。
+  `docs/{cn,en}/quickstart.md` 那个 bash 块把两行并列摆着:
+
+      PAVOZ_STORAGE=... python -m pavos run dags/my_pipeline.py \
+        --task-id task-1 --input '{"query": "..."}'
+      PAVOZ_STORAGE=... python -m pavos run dags/my_pipeline.py --task-id task-1 --resume
+      → run 失败: task_id=task-1 ... 已全部完成. 重跑请用 resume=False (起新 run_id).
+
+  同一份文档的 **Python** 块早就写明了这个陷阱 ("run 已全部完成 → RuntimeError"),
+  只有 shell 块漏了 —— 于是照抄的人先看到一条不相关的报错。两份 quickstart 的 shell 块
+  已补上同样的说明 (并明确"这两条**不是**接着跑的")。
+
+  顺带确认 `--resume` 的本意是好的: 实测在 stage 里 `os._exit(9)` 硬杀 (真崩溃), 再
+  `--resume` 能正确续跑完成 (a=1, b=2) —— 即 done guard 只在"run 已完成"时触发。
+
+  新增 `tests/test_quickstart_runnable.py` 四条 (中英各两条), 与
+  `test_examples_runnable_e2e.py` 同一类: **文档是给人抄的, 腐烂时没有任何门禁会响**。
+  ① 真跑可跑前缀 (无参数 run + 带 `--task-id/--input` 的 run); ② **验证文档的说法本身
+  成立** —— 连着跑第二条确实失败, 且错误里确实出现 `resume=False` (文档说的坑必须是真的,
+  否则它就是另一条误导)。命令里的 `python` / 包名 / `/data/sf` 换成测试环境的值; 被验的
+  是 flag 名、模块用法与参数组合。
+
+  判别力 (三次变异): 拆掉 ⚠️ 说明行 → 红; `--task-id` 改成 `--taskid` → 红; `--input`
+  的值改成非法 JSON → 红。
+  ⚠️ 第一版把 flag 改成 `--task` 时判据**没红**, 而原因是 argparse 允许**唯一前缀缩写**
+  —— `--task` 被当成了 `--task-id`, 行为根本没变。"改坏 flag"必须改成非前缀形式。
+
 ### Fixed
 
 - ★ **被 `skip_unchanged` 跳过的 stage 从结果上与真跑过的完全无法区分** ——

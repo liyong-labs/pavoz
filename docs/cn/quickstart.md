@@ -54,7 +54,11 @@ python -m pavoz run dags/my_pipeline.py
 PAVOZ_STORAGE=/data/sf \
 python -m pavoz run dags/my_pipeline.py \
   --task-id task-1 --input '{"query": "北方华创"}'
-# 中途断了再跑 (--resume): 已完成 stage 跳过
+
+# ⚠️ 下面这条**不是**接着上一条跑的 —— `--resume` 是上一次**中断**之后才用的。
+#    同一个 task 已经跑完时再 `--resume`, 会撞 done guard 报错:
+#      已全部完成. 重跑请用 resume=False (起新 run_id)
+#    (那两行连续照抄必然报错, 而报的是"怎么重跑", 不是"你为什么不该在这儿 --resume")
 PAVOZ_STORAGE=/data/sf \
 python -m pavoz run dags/my_pipeline.py --task-id task-1 --resume
 ```
