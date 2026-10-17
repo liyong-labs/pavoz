@@ -494,7 +494,7 @@ rt = Runtime(policy=policy)     # additive: 不传 policy 行为与旧版完全�
 - ⚠️ **排队本身没有超时**。一个卡死的 run (需要把 run 级 deadline 与
   `default_timeout` 都关掉才可能发生) 会把后面的 run **永久**堵住 —— 实测第一个
   run 睡 30s 时, 第二个等 2s 仍未开始。库内没有第二个兜底: 决定排队能等多久的, 是
-  run 自身的 deadline / `default_timeout`。要���**等待本身**设上界, 在调用侧包一层 ——
+  run 自身的 deadline / `default_timeout`。要给**等待本身**设上界, 在调用侧包一层 ——
   `await asyncio.wait_for(rt.run(dag, task_id), timeout=X)`, 实测它抛
   `TimeoutError`, 不会被吞成假的 `RunResult` (registry 硬杀与外部取消是分开记的)。
 

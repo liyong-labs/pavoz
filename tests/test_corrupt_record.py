@@ -13,7 +13,7 @@
 run --resume 六条路径全部中招)。
 
 现在抛 `CorruptRecordError` (带路径、原始错误、常见原因、处置建议), CLI 顶层兜住并
-rc=1。**刻意不写 catch-all**: 真 bug 的 traceback 里���文件和行号, 吞掉只会少一条线索。
+rc=1。**刻意不写 catch-all**: 真 bug 的 traceback 里的文件和行号, 吞掉只会少一条线索。
 
 判据里最要紧的一条是**反面**: 损坏**不能**被当成"没有 checkpoint"。若 `get` 返回
 None, `run --resume` 会认为"从头开始" —— 于是**静默丢掉**该 task 已有的全部进度, 而

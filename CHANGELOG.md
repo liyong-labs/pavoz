@@ -4,7 +4,7 @@
 
 ## [Unreleased]
 
-_(空 —— 已发布的版本段不再修改, 这条纪律由 `tools/check_changelog.py` 判据钉住:
+_(已发布的版本段不再修改, 这条纪律由 `tools/check_changelog.py` 判据钉住:
 tag 之后任何改动若落在已发布段内即报错)_
 
 - ★ **四个 example 调的是裸 `pavos` 命令 —— "装了但 venv 没激活"就全线跑不起来**。
@@ -121,6 +121,60 @@ tag 之后任何改动若落在已发布段内即报错)_
   --no-build-isolation` 失败于 `ModuleNotFoundError: hatchling`。本仓 build-backend
   就是 hatchling, 而 `[dev]` 里没有它, 所以共享 venv 里 `pip install -e .` 不可用。
   已加入 (`hatchling>=1.18`)。
+
+- ★ **仓库里 4 个文件的正文被写坏了 (U+FFFD 替换字符), 而全套门禁是绿的**。
+  `docs/cn/api.md` / `tools/check_changelog.py` / `tests/test_corrupt_record.py` /
+  `tests/test_max_concurrent_runs_queue.py` 各有一处, 落盘的就是 `ef bf bd` 三个字节:
+
+      docs/cn/api.md                          要[U+FFFD]**等待本身**设上界
+      tools/check_changelog.py                恒红[U+FFFD]门禁迟早被关掉
+      tests/test_corrupt_record.py            traceback 里[U+FFFD]文件和行号
+      tests/test_max_concurrent_runs_queue.py 才开[U+FFFD]"是确定性事实
+
+  机制: 字符在**写文件那一步**被截断, 于是 U+FFFD 被当作真实内容存了进去 —— 文件本身
+  仍是**合法 UTF-8**, `read_text()` 一切正常。
+
+  为什么全套门禁都看不见: 4 处**全在注释与中文说明里**。语法正常、import 正常、每一条
+  断言都不受影响, 所以"跑一遍 831 绿"完全正常。凡是能跑出来的东西都验不到它 ——
+  只能显式扫字节。而 `docs/cn/api.md` 那处是**用户可见**的: 读者看到的是一个替换字符
+  方块, 意味着那句话在生成链路上被截断了, 却没人知道被截掉的是什么。
+
+  已按上下文补回四处 (`的` / `始` / `的` / `给`), 并新增 `tools/check_text_integrity.py`:
+  扫**已跟踪**文件的文本后缀, U+FFFD 与非法 UTF-8 都算坏 (前者是已经坏过一次留下的痕迹,
+  后者是硬伤), 报 `file:line:col` 与所在行。两个防自欺的自检: 扫到 <20 个文件判失明;
+  `git ls-files` 失败直接退出而不是恒过。判据自身用 `\ufffd` 转义而非字面量 ——
+  字面量会让**本文件自己**被自己的判据判失败 (第一版正是这么写的)。
+
+  判别力 (四个分支逐个验过): 对着**提交态**跑 → 抓到上面那 3 处 (第 4 处在工作区),
+  rc=1; 把 `REPLACEMENT` 变异成仓里不存在的码位 → 变绿 (证明红色来自这条判据本身,
+  而不是别的); 注入裸 `0xff` → 报"不是合法 UTF-8"并给对行号; 白名单收窄到只剩 `.txt`
+  → 显式判"判据失明"。另接进 CI (`test.yml` 新 step) 与本地 `loop-check.sh`。
+
+- ★ **`check_changelog` 对重名版本段完全失明, 而本仓正好有一个重名段** ——
+  CHANGELOG 里有**两个** `## [0.8.0] — 2026-09-06` (同日期同版本, 一次发版被误拆成两段:
+  一段 `### Added`, 一段 `### Changed` / `### Fixed` / `### Chore`)。而 `sections()`
+  重名时"后段覆盖前段", 于是**第一段 0.8.0 从来没被本判据看过**。
+
+  危险的不是排版乱, 而是**一段内容能躲开门禁**: 门禁照样报"12 个段已核对", 全绿,
+  而被盖掉那段可以是任意陈旧的、错的、或重复的。已把两段并成一段, 并让
+  `check_changelog.py` 在**任何比对之前**显式判重名失败 (报版本与各自行号)。放在
+  比对之后等于没放 —— 那时 `sections()` 已经挑好了赢家。
+
+  判别力 (两次变异): 对着**提交态**(仍带重复段)跑 → 红, 并点名 `[0.8.0] ... 行
+  1824, 1838`; 把 `len(ls) > 1` 改成 `> 99` 短路掉这条判据 → **同一份文件转绿**,
+  报"OK: 12 个段已核对" —— 那一刻的输出就是本条修复前门禁失明的原样。
+
+- ★ **推 tag 发版这条路, 一个门禁都不跑** —— 破包会直接进 PyPI。
+  `publish.yml` 原先只有 build + publish 两步; 而 `test.yml` 的触发条件是
+  `push: branches: [main]` 与 `pull_request`, **不含 tags**。两者叠加的结果是:
+  "跑过测试的版本" 与 "发出去的版本" 是两个**不同的集合**, 后者是前者的超集 ——
+  而发版恰恰是唯一**不可逆**的那一步 (PyPI 上的版本撤不回, yank 也只是标记, 版本号
+  已经烧掉)。
+
+  修法是让 `publish.yml` 先 `needs` 一个复用 `test.yml` 的 `gates` job (`workflow_call`),
+  **不是**把 7 个 step 抄第二份: 抄的副本会悄悄过期, 而过期的门禁比没门禁更坏 ——
+  它给人"已经检查过了"的错觉, 正是本会话反复栽的同一棵树。`test.yml` 加
+  `workflow_call` 触发器后, `push: main` / PR / 被 publish 调用三条路共用**同一份定义**。
 
 - **`RELEASING.md` 指向仓内不存在的 `tools/verify-release.sh`** —— 那个脚本一直只在
   `~/claude/pvos-dev/tools/` (我本机的工作目录)。照文档走的维护者会得到
@@ -1835,7 +1889,6 @@ stage + diff 输出, 把 2 小时 hack 缩到 15 分钟.
 - 重试退避 full-jitter: `uniform(0, min(2^(attempt-1), 30))` — 多 task 同步重试防雷群.
 
 
-## [0.8.0] — 2026-09-06
 
 ### Changed (checkpoint 格式: state 不落盘 — 旧格式 cp 兼容读但不再写)
 

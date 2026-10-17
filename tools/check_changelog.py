@@ -8,7 +8,7 @@
 这个错没有任何现有门禁看得见, 因为它在 git 层面完全合法 (就是普通的一次文本编辑)。
 本判据用**可判定的事实**把它挡住: 已发布段的内容不许在发布之后再变。
 
-三档判定 (关键是别让历史遗留把门禁焊死 —— 恒红��门禁迟早被关掉, 那比没有更坏):
+三档判定 (关键是别让历史遗留把门禁焊死 —— 恒红的门禁迟早被关掉, 那比没有更坏):
 
   1. 与自己的 tag 一致                    → OK
   2. 与自己的 tag 不一致, 但与**最新 tag** 里的同一段一致 → 历史遗留, 只提示。
@@ -32,19 +32,43 @@ HEADING = re.compile(r"^## \[(?P<ver>[^\]]+)\]")
 
 
 def sections(text: str) -> dict[str, str]:
-    """版本 → 该段的完整文本 (含 `## ` 标题行, 到下一个 `## ` 之前)。"""
+    """版本 → 该段的完整文本 (含 `## ` 标题行, 到下一个 `## ` 之前)。
+
+    重名时后段覆盖前段 —— 但那**不是**"重名没关系", 而是 `duplicate_versions()` 会
+    先把它判失败。留这个行为是为了让 sections() 保持纯函数; 判失败在 main() 里做。
+    """
     out: dict[str, str] = {}
     cur: list[str] | None = None
     for line in text.splitlines(keepends=True):
         m = HEADING.match(line)
         if m:
             cur = [line]
-            out[m.group("ver")] = ""      # 重名时后段覆盖前段 (CHANGELOG 不该重名)
+            out[m.group("ver")] = ""
             continue
         if cur is not None:
             cur.append(line)
             out[HEADING.match(cur[0]).group("ver")] = "".join(cur)
     return out
+
+
+def duplicate_versions(text: str) -> dict[str, list[int]]:
+    """版本 → 它出现过的行号 (只含出现 >1 次的)。
+
+    起因 (2026-10-17 实测): 本仓的 CHANGELOG 里有**两个** `## [0.8.0] — 2026-09-06`
+    (同日期同版本, 一次发版被误拆成两段: 一段 Added, 一段 Changed/Fixed/Chore)。而
+    `sections()` 重名时"后段覆盖前段", 于是**第一段 0.8.0 从来没被本判据看过** ——
+    判据对它完全失明, 而且失明得毫无征兆: 12 个段"已核对", 全绿。
+
+    这比"CHANGELOG 排版乱"严重: 一段内容能躲开门禁, 就等于那段内容可以是任意陈旧
+    的、错的、或重复的, 而门禁报告"一切正常"。所以重名必须**显式判失败**, 而不是
+    悄悄挑一个赢。
+    """
+    seen: dict[str, list[int]] = {}
+    for i, line in enumerate(text.splitlines(), 1):
+        m = HEADING.match(line)
+        if m:
+            seen.setdefault(m.group("ver"), []).append(i)
+    return {v: ls for v, ls in seen.items() if len(ls) > 1}
 
 
 def newest_tag() -> str | None:
@@ -81,7 +105,19 @@ def main() -> int:
     if not CHANGELOG.is_file():
         print(f"FAIL: 找不到 {CHANGELOG}")
         return 1
-    work = sections(CHANGELOG.read_text(encoding="utf-8"))
+    raw = CHANGELOG.read_text(encoding="utf-8")
+
+    # 重名版本段: 必须在**任何比对之前**判失败。放在后面等于没放 —— sections() 已经
+    # 挑了一个赢家, 报告会像模像样地说"12 个段已核对", 而被盖掉那一段从未被看过。
+    dups = duplicate_versions(raw)
+    if dups:
+        for ver, lines in sorted(dups.items()):
+            print(f"FAIL: 版本段 [{ver}] 出现 {len(lines)} 次 (行 {', '.join(map(str, lines))})"
+                  f" —— 本判据按版本号取段, 重名时**只有最后一段会被核对**, 其余的"
+                  f"内容对门禁完全不存在。同一次发版不该拆成两段, 请并成一段。")
+        return 1
+
+    work = sections(raw)
 
     newest = newest_tag()
     newest_txt = git_show(newest) if newest else None

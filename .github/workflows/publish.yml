@@ -12,7 +12,18 @@ permissions:
   id-token: write  # Trusted Publishing 必需
 
 jobs:
+  # ⚠️ 发版前必须过门禁。2026-10-17 修: 本文件原先**直接** build + publish, 一个
+  # 检查都没有 —— 而 test.yml 只在 `push: main` / PR 上跑, `push: tags: v*` 根本不
+  # 触发它。也就是说"跑过测试的版本"和"发出去的版本"是**两个集合**, 后者是前者的
+  # 超集。PyPI 上的版本撤不回 (yank 也只是标记, 版本号已烧), 所以这条路必须是
+  # 门禁最严的那条, 而不是唯一没检查的那条。
+  # 复用 test.yml 而不是在这里抄一份 7 个 step: 抄的副本会悄悄过期, 而过期的门禁
+  # 比没门禁更坏 (它给人"已经检查过了"的错觉)。
+  gates:
+    uses: ./.github/workflows/test.yml
+
   publish:
+    needs: gates
     runs-on: ubuntu-latest
     environment: pypi
     steps:

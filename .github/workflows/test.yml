@@ -1,9 +1,16 @@
 name: test
 
+# ⚠️ `workflow_call` 不是可有可无的装饰 —— publish.yml **复用这个定义**再发版。
+# 此前 test.yml 只在 `push: main` 与 PR 上跑, 而发版由 `push: tags: v*` 触发,
+# 于是**推 tag 这条路上一个门禁都不跑**: 破包直接进 PyPI, 而发出去的版本撤不回
+# (能 yank, 但版本号已经烧掉)。发版是不可逆的那一步, 恰恰是最该有门禁的一步。
+# 复用而不是抄第二份: 抄一份就多一处会悄悄过期的副本 (本会话已经吃过"注释说的
+# 和代码做的不一致"的亏)。
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 
 jobs:
   test:
@@ -38,6 +45,9 @@ jobs:
       - name: CHANGELOG released sections frozen
         run: |
           python tools/check_changelog.py
+      - name: Text integrity (no U+FFFD)
+        run: |
+          python tools/check_text_integrity.py
       - name: Test (coverage gate 80%)
         run: |
           python -m pytest tests/ -q --cov=pavoz --cov-fail-under=80
