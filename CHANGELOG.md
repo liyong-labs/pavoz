@@ -203,6 +203,34 @@ tag 之后任何改动若落在已发布段内即报错)_
   含"真 CLI 层面 rc=1 且 stdout 里不许出现任何 `ran`"这一条 —— 静默跑错比报错糟得多,
   光断言报错不够, 还得钉住"**什么都没跑**"。
 
+- ★ **文本完整性门禁只扫已跟踪文件 —— 新写的文件在 `git add` 之前它完全看不见**,
+  而那正是最该拦的窗口。
+
+  实测 (2026-10-17, 门禁抓到了我自己): 上一轮新增
+  `tests/test_cli_dag_selection.py` 时, 我在它的 docstring 里带进了 2 处 U+FFFD。
+  紧接着跑门禁, 输出是:
+
+      OK: 147 个已跟踪文本文件均无替换字符
+
+  绿。**因为那个文件还没被 `git add`, 不在 `git ls-files` 的输出里。** 提交之后它变成
+  "148 个", 门禁这才转红并点名 `L26`。也就是说: 一个只扫已跟踪文件的门禁, 恰好在
+  "新东西即将落仓"那一刻是瞎的 —— 而那正是它存在的理由。
+
+  改成 `git ls-files --cached --others --exclude-standard`: 已跟踪 + 未跟踪但未被
+  ignore。实测 `.venv` 与那两棵垃圾目录树都在 ignore 里, 扫描数不变 (148)。
+
+  ⚠️ 这**不会**让 CI 变严: `actions/checkout` 给出的工作区是干净的, 那里
+  `--others --exclude-standard` 返回空集, 扫的还是同一批文件。这个拓宽纯粹是给本地
+  提交前加的。
+
+  判别力: 新建一个**未跟踪**的 `.md`、里面放一个替换字符 → 门禁 rc=1 并报出行列;
+  同一时刻用旧命令 (`--cached` 只扫已跟踪) 跑, 扫了 148 个文件报"无" —— 精确复现
+  修复前的盲区。
+
+  顺带确认这个盲区**只此一处**: `check_doc_links` / `check_doc_style` 走
+  `rglob("*.md")` 看文件系统 (未跟踪文件照样看得到), `check_changelog` 只用 git 读
+  **历史 tag** 版本、当前 CHANGELOG 走磁盘。
+
 - ★ **仓库里 4 个文件的正文被写坏了 (U+FFFD 替换字符), 而全套门禁是绿的**。
   `docs/cn/api.md` / `tools/check_changelog.py` / `tests/test_corrupt_record.py` /
   `tests/test_max_concurrent_runs_queue.py` 各有一处, 落盘的就是 `ef bf bd` 三个字节:

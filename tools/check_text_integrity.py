@@ -17,9 +17,18 @@
 中文说明), 不影响任何断言, 不影响任何 import, 所以"跑一遍测试全绿"完全正常。
 换句话说, 凡是能跑出来的东西都验不到它 —— 只能显式扫字节。
 
-扫**已跟踪**文件 (`git ls-files`): 未跟踪的临时产物不该让门禁变红, 而门禁该管的是
-"会被发出去的字节"。解码失败与 U+FFFD 都算坏 —— 前者是硬伤, 后者是已经坏过一次
-留下的痕迹。
+扫**已跟踪 + 未跟踪但未被 ignore** 的文件 (`git ls-files --cached --others
+--exclude-standard`)。带 `--others` 是 2026-10-17 补的: 原先只扫已跟踪的, 于是新写的
+文件在 `git add` 之前完全不在范围内 —— 而本会话写 `tests/test_cli_dag_selection.py`
+时自己带进 2 处替换字符, 门禁当时报 "OK: 147 个已跟踪文本文件" 因为**看不见那个还没
+跟踪的文件**, 提交后才转红。门禁在"新东西即将落仓"那一刻瞎, 恰好抵消了它存在的理由。
+
+`--exclude-standard` 保证 .gitignore 里的东西 (构建产物 / .venv / data/) 不被扫进来 ——
+实测本仓 `.venv` 与那两棵垃圾目录树都在 ignore 里, 加了 `--others` 之后扫描数不变。
+
+⚠️ 加 `--others` **不会**让 CI 变严: `actions/checkout` 给出的工作区是干净的, 那里
+`--others --exclude-standard` 返回空集, 扫的还是同一批已跟踪文件。换句话说这个拓宽
+纯粹是给**本地提交前**加的, 而提交前恰恰是损坏最该被拦住的那一刻。
 
 Usage:  python tools/check_text_integrity.py     (exit 0 = 文本完好)
 """
@@ -41,7 +50,18 @@ REPLACEMENT = "\ufffd"
 
 def tracked_files() -> list[pathlib.Path]:
     """git 已跟踪的文件 (相对仓库根)。"""
-    p = subprocess.run(["git", "ls-files", "-z"], capture_output=True)
+    # ⚠️ `--others --exclude-standard` 不是可选项 —— 2026-10-17 实测: 本函数原先只扫
+    # 已跟踪文件, 于是**新写的文件在 `git add` 之前完全不在扫描范围里**。而那正是最
+    # 该拦的窗口: 本会话写 `tests/test_cli_dag_selection.py` 时自己带进了 2 处替换
+    # 字符, 门禁当时报 "OK: 147 个已跟踪文本文件" —— 因为那个文件还没被跟踪, 门禁
+    # **看不见它**。提交后才变成 "148 个" 并转红。
+    # 也就是说: 只扫已跟踪文件的门禁, 恰好在"新东西即将落仓"那一刻是瞎的, 而那正是
+    # 它存在的理由。`--exclude-standard` 保证 .gitignore 里的东西 (构建产物、.venv)
+    # 不会被扫进来。
+    p = subprocess.run(
+        ["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+        capture_output=True,
+    )
     if p.returncode != 0:
         print("FAIL: `git ls-files` 失败 —— 判据失明, 退出而不是恒过")
         raise SystemExit(1)
@@ -100,7 +120,7 @@ def main() -> int:
               "字节, 语法与测试都验不到它。按上下文把那句话补回去再提交 —— "
               "别用 sed 之类的方式批量删, 那会把句子删残。")
         return 1
-    print(f"OK: {len(files)} 个已跟踪文本文件均无替换字符")
+    print(f"OK: {len(files)} 个文本文件均无替换字符 (已跟踪 + 未跟踪未忽略)")
     return 0
 
 
