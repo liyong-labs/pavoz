@@ -269,6 +269,14 @@ ctx.on_event: Callable[[str, dict], None] | None                   # 本 run 的
 - ⚠️ 与 overrides 的语义**不同**: `--set` / `--set-file` / `--overrides` /
   `fork_run(overrides=)` 走 `apply_overrides` → **深合并** (只打 patch leaf, 兄弟键
   保留)。stage 返回值是浅、注入值是深 —— 两条路径别互相类推
+- ⚠️ **点分路径**不存在时会**静默新建**, 不报错。把 `llm.model` 拼成 `llm.modle`
+  ⇒ 多出一个没人读的死 key, 真正的 `llm.model` 保持旧值, 而 run 照报 `done` ——
+  配置看起来设了, 实际没生效。这是**有意**的行为: 往已有结构里加新配置项
+  (`llm.temp`) 与往空 state 首次注入都是合法常态, 报错会把它们一起拒掉 (pvos 不该
+  猜用户的 state schema)。可发现性靠分级日志: 覆盖**非 dict 的中间值** = WARNING
+  (那是数据丢失, 几乎总是写错), 中间层新建与**叶子 key 新建** = DEBUG (叶子拼错与
+  加新项无法区分, 只能这样)。所以排查这类"改了没生效"要先开 DEBUG 日志, 或看
+  `fork-run` 输出里的 `overrides_applied` / `--compare-with` 的 diff
 - 冲突: delta key 已存在于 state 且 producer **不是**当前 stage 的传递上游
   → `StateConflictError` (平行 producer 冲突)
 - 链式覆盖: producer 是传递上游 → 合法 (v0.1.1)

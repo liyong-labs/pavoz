@@ -312,6 +312,18 @@ ctx.on_event: Callable[[str, dict], None] | None                   # this run's 
   `fork_run(overrides=)` go through `apply_overrides` → **deep merge** (only the
   patched leaf is replaced, siblings survive). Stage returns are shallow, injected
   overrides are deep — don't carry reasoning from one path to the other
+- ⚠️ A **dot-path that does not exist is silently created**, no error. Typing
+  `llm.modle` instead of `llm.model` leaves a dead key nobody reads, the real
+  `llm.model` keeps its old value, and the run still reports `done` — the config
+  looks set but never took effect. This is **deliberate**: adding a new config key
+  (`llm.temp`) to an existing structure, and first-time injection into empty state,
+  are both legitimate, so erroring would reject them too (pvos must not guess your
+  state schema). Discoverability comes from tiered logging: overwriting a
+  **non-dict intermediate** = WARNING (that loses data, almost always a mistake);
+  intermediate creation and **leaf-key creation** = DEBUG (a mistyped leaf and a
+  genuinely new key are indistinguishable). So when an override "didn't take",
+  turn on DEBUG logging, or read `overrides_applied` in the `fork-run` output /
+  the `--compare-with` diff
 - Conflict: a delta key already exists in state and its producer is **not** a transitive upstream of the current stage → `StateConflictError` (parallel-producer conflict)
 - Chained overwrite: the producer is a transitive upstream → allowed (v0.1.1)
 
