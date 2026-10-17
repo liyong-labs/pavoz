@@ -391,7 +391,7 @@
 
 - **`return None` ≡ `return {}` 的约定此前只在代码与测试里, 文档没写**。
   `_run_stage` 把 `None` 归一成 `{}` (纯副作用 stage 不写 state), 且
-  `tests/test_done_delta_lockstop.py` 早有一条专门钉它。反面值得提醒: **忘了
+  `tests/test_done_delta_lockstep.py` 早有一条专门钉它。反面值得提醒: **忘了
   `return` 也是这个结果** —— run 照报 `done`、不写任何 state, 下游读不到产出时先去查
   上游是不是漏了 `return`。`docs/{cn,en}/api.md` 的 State 段已补。
 
