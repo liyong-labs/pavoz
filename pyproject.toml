@@ -46,6 +46,21 @@ dev = [
 [project.scripts]
 pavoz = "pavoz.cli:main"
 
+# ⚠️ sdist 必须**显式**排除消费方业务目录 —— 不写的话, hatchling 默认打包**全部
+# git 跟踪的文件**, 于是 `research/` 与 `dags/` 会跟着发出去。2026-10-17 实测:
+# PyPI 上的 0.5.8 sdist (512KB) 里逐字含有 research/llm_router.py 的
+# "用户原话 (2026-09-07)" + 四个厂商模型 + 硬编码的厂商 API 端点 +
+# **真实 token 消耗反推的人民币成本** (total_yuan: 0.474), 以及 dags/research_dag.py。
+#
+# 这两个目录是被跟踪的业务代码 (是否从仓里删除待定), 但**无论删不删, 它们都不该进
+# 任何发布产物**。`tools/check_business_leak.py` 有一条判据盯着这里: 它给业务目录开
+# 例外的同时, 要求 pyproject 的 exclude 必须覆盖同样的路径 —— 两边一旦漂移就报红。
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "/research",
+    "/dags",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["pavoz"]
 

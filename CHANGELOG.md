@@ -358,6 +358,47 @@ tag 之后任何改动若落在已发布段内即报错)_
   没有参与运行 —— 9 条全绿。已把 subprocess 的 `PYTHONPATH` 钉到被测仓, 并加一条自检
   直接查子进程里 `find_spec` 的 origin。**判据必须自己保证它测的是被测对象。**
 
+- ★★ **上条说的那笔业务债已经在 PyPI 上了 —— sdist 默认打包全部 git 跟踪的文件。**
+  上一条把它记成"在公开仓里、是否删除待定", 那是**不够严重的说法**。实测把 PyPI 上的
+  0.5.8 sdist (512KB) 下载下来解开, 里面逐字含有:
+
+      research/llm_router.py
+        """ai_research LLM 路由. 4 模型 3 档 + 1 fallback.
+        用户原话 (2026-09-07): minimax M3 = 主力 … longcat 2.0 = minimax 伙伴"""
+        _get_api_base(): return os.environ.get("LLM_API_BASE", "https://api.deepseek.com")
+        return {"FAST": {"calls": 24, "model": "minimax-m3", "est_yuan": 0.024}, …,
+                "total_yuan": 0.474, …}
+      dags/research_dag.py
+        """ai-research M0 DAG … s_clarify → s_warm_search → …"""
+
+  也就是说厂商模型名、硬编码的厂商 API 端点、**真实 token 消耗反推出来的人民币成本**,
+  以及消费方的 DAG, 都在任何一个 `pip download <pkg> --no-binary :all:` 的人手里。
+  根因: `[tool.hatch.build.targets]` **只配了 wheel**, sdist 没有 exclude, 而 hatchling
+  的 sdist 默认打包**全部 git 跟踪的文件** —— 于是"仓里有什么就发什么"。
+
+  已修 (可逆, 不动你的文件): `pyproject.toml` 增加
+
+      [tool.hatch.build.targets.sdist]
+      exclude = ["/research", "/dags"]
+
+  **真打过验证**, 不是只写配置: 新 sdist 149 个条目, `research/` 与 `dags/` 各 0 条,
+  而包本体 `pavos/` 完整 (16 个文件)、解出来结构正常。
+
+  `tools/check_business_leak.py` 同时加了一条: `MUST_NOT_SHIP` 里的目录必须被 pyproject
+  的 sdist exclude 覆盖, 两边漂移就报红。上条的 ALLOWLIST 管"仓里能不能留", 这条管
+  "**发出去**能不能带" —— 只做前者, 那笔债还躺在 PyPI 上。
+
+  判别力 (5 个变异, 4 转红 + 1 空变异): 删掉 `"/dags"` → 红; 整个 sdist 段删掉 (回到
+  0.5.8 的状态) → 红; `MUST_NOT_SHIP` 加一个未覆盖的目录 → 红; 正常状态 → 绿。
+  ⚠️ **"`/research/` 多一个尾斜杠"是空变异** —— 门禁的归一化剥两端斜杠所以照样绿, 而我
+  没有就此下结论, **真打了一个 sdist 验证 hatchling 确实认尾斜杠** (产物里 0 条目)。
+  这与前两轮的 `re.match` 隐含锚定是同一类: 门禁的宽松必须与被测系统的真实行为对齐,
+  而这一点只能靠真跑确认。
+
+  ⚠️ 另: 本条最初统计时, `tar tzf` 之后接 `grep -c` 在**空文件**上得到 0, 被我当成
+  "已排除 ✅" —— 而那次构建根本没产出文件 (venv 里没装 hatchling)。**"数量为 0" 要先
+  确认分母存在**, 否则那不是证据。
+
 - ★ **仓库里 4 个文件的正文被写坏了 (U+FFFD 替换字符), 而全套门禁是绿的**。
   `docs/cn/api.md` / `tools/check_changelog.py` / `tests/test_corrupt_record.py` /
   `tests/test_max_concurrent_runs_queue.py` 各有一处, 落盘的就是 `ef bf bd` 三个字节:

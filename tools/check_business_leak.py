@@ -67,6 +67,16 @@ ALLOWLIST: tuple[tuple[str, str], ...] = (
     ("dags/research_dag.py", "消费方自己的 DAG —— 同上"),
 )
 
+# 这些目录**即便暂留在仓里**, 也不得进任何发布产物。2026-10-17 实测: hatchling 的
+# sdist 默认打包**全部 git 跟踪的文件**, 于是 PyPI 上的 0.5.8 sdist (512KB) 里逐字含有
+# research/llm_router.py 的 "用户原话 (2026-09-07)" + 四个厂商模型 + 硬编码的
+# 厂商 API 端点 + **真实 token 消耗反推的人民币成本** (total_yuan: 0.474), 以及
+# dags/research_dag.py。
+#
+# 上面的 ALLOWLIST 解决"仓里能不能留", 这条解决"**发出去**能不能带"。两者都要:
+# 只做前者, 那笔债还躺在 PyPI 上; 只做后者, 仓里继续误导读代码的人。
+MUST_NOT_SHIP: tuple[str, ...] = ("research", "dags")
+
 TEXT_SUFFIXES = frozenset({
     ".py", ".md", ".sh", ".bash", ".toml", ".yml", ".yaml",
     ".cfg", ".ini", ".txt", ".json",
@@ -146,6 +156,25 @@ def main() -> int:
     # 通配 `("*", ...)`, 结果是 **0 个文件被扫、150 个被豁免, 而门禁报 OK**。这正是本
     # 会话反复栽的"空集绿灯": 一个扫不到任何东西的判据, 报的是"一切正常"。
     # 例外是逐条登记的, 不是通配 —— 一条通配就足以让整道门禁变成空转。
+    # 发布产物也不许带 —— 判据与 pyproject 的 sdist exclude 必须覆盖同一批路径,
+    # 两边一旦漂移就报红 (少一个 exclude = 下一版又把它发出去)。
+    import tomllib
+    try:
+        cfg = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+        excludes = cfg["tool"]["hatch"]["build"]["targets"]["sdist"]["exclude"]
+    except (OSError, KeyError, TypeError) as e:
+        print(f"FAIL: 读不到 pyproject 的 sdist exclude ({e}) —— "
+              f"无法确认发布产物是否干净, 不该绿")
+        return 1
+    norm = {str(e).strip("/") for e in excludes}
+    leaking = [d for d in MUST_NOT_SHIP if d not in norm]
+    if leaking:
+        print(f"FAIL: {leaking} 在 MUST_NOT_SHIP 里, 但 pyproject 的 "
+              f"[tool.hatch.build.targets.sdist] exclude 没覆盖它们 (当前: {sorted(norm)})。"
+              f"\n  hatchling 的 sdist 默认打包**全部 git 跟踪的文件** —— 不显式排除, "
+              f"这些目录就会跟着发出去 (0.5.8 实测已经发出去过一次)。")
+        return 1
+
     if scanned < 20:
         print(f"FAIL: 只实际扫了 {scanned} 个文件 (豁免 {len(allowed_files)} 个) —— "
               f"白名单把扫描面吃空了, 本判据已空转。"
@@ -159,7 +188,8 @@ def main() -> int:
               "ALLOWLIST 并写明理由 —— 后者是给人看的决定, 不是扫到就放过。")
         return 1
     print(f"OK: {scanned} 个已扫文件均无未登记的业务值; "
-          f"{len(allowed_files)} 个文件按登记豁免 {sorted(set(allowed_files))}")
+          f"{len(allowed_files)} 个文件按登记豁免; "
+          f"sdist exclude 已覆盖 {sorted(MUST_NOT_SHIP)}")
     return 0
 
 
