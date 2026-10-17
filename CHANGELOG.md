@@ -430,6 +430,36 @@ tag 之后任何改动若落在已发布段内即报错)_
   坏。已补一条直接钉 `_is_excluded` 本身 (目录级排除覆盖其下文件 / 文件级排除不连坐
   同目录兄弟 / 包本体永不被排除 / 空列表不排除任何东西)。
 
+- ★ **`CONTRIBUTING.md` 声称"与 CI 同款命令", 实际只列了 8 条里的 2 条** —— 而那 2 条
+  本身也不对:
+
+  ```
+  ## 质量门槛 (PR 前必须全过 — 与 CI 同款命令)
+  python -m pytest                          # 全部测试
+  python -m pyflakes <pkg> tests examples   # lint
+  ```
+
+  · 标题写"与 CI 同款", CI 实际跑 8 条 (pyflakes / pyright / doc links / doc style /
+    changelog / text integrity / business leak / pytest+覆盖率)。
+  · 那条 pyflakes 的目标列表**漏了 `tools`** —— 8 个门禁脚本全在 `tools/` 里, 于是贡献者
+    照做等于**连门禁脚本自己都没 lint**。
+  · pytest **没带 `--cov-fail-under=80`** —— 覆盖率门禁没跑, 于是本地过、CI 红。
+
+  这与上一条 `llms.txt` 的过期门禁清单是同一类, 而 `llms.txt` 那条判据当时只管
+  `llms.txt` 一份。已把 `tests/test_llms_txt_current.py` 改名并泛化为
+  `tests/test_contributor_docs_current.py`, **两份入口文档都查**: 发布状态不许自相矛盾
+  (有 tag 就不许写 "not on PyPI")、门禁清单与 `test.yml` 的 `run:` **逐字一致**、不许列
+  CI 不跑的工具。
+
+  ⚠️ 泛化时把匹配从"子串包含"**收紧成精确相等**, 而这一步是必须的: 原来那条
+  `pyflakes <pkg> tests examples` 恰好是 CI 那条 `... examples tools` 的**子串**, 于是
+  判据本会**对这份缺陷判通过** —— 对命令而言漏参数就是漏检查。
+
+  判别力 (6 个变异, 5 转红 + 1 对照绿): 把 CONTRIBUTING 的 pyflakes 退回漏掉 `tools`
+  (复刻本条缺陷) → 红; 删掉 llms.txt 一行门禁 → 红; 列一个 CI 不跑的工具 → 红; 把
+  llms.txt 移出 `check_doc_links` 扫描面 → 红; **CI 悄悄加一个门禁** → 两份文档同时
+  转红 (这正是"从事实源头派生"的意义: 不用等人来发现清单没跟上)。
+
 - ★ **`llms.txt` 三处过期, 而零条判据看着它** —— 那份文件是**专门写给 AI 工具读**的
   入口清单, 里面的错会被当成事实照着做。实测:
 
