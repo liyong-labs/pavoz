@@ -8,6 +8,18 @@
 pip install pavoz
 ```
 
+Confirm which version is actually loaded — **trust `__version__` + the load path, not
+`pip list`**:
+
+```bash
+python -c "import pavoz; print(pavoz.__version__, pavoz.__file__)"
+```
+
+`pip list` only reflects the dist-info **at install time**: with an editable install
+(`pip install -e .`), repo code can change while `pip list` still shows the old version —
+so "I changed the code and nothing happened" gets misdiagnosed as a code problem (field
+report from ai@home, haomem id=3653).
+
 ## 1. Define a DAG
 
 ```python

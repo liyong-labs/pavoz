@@ -8,6 +8,16 @@
 pip install pavoz
 ```
 
+确认装的是哪个版本 —— **看 `__version__` + 加载路径, 不要信 `pip list`**:
+
+```bash
+python -c "import pavoz; print(pavoz.__version__, pavoz.__file__)"
+```
+
+`pip list` 只反映**安装当时**的 dist-info: editable 装法 (`pip install -e .`) 下, 仓库
+代码变了而 `pip list` 仍显示旧版本号 —— 于是"我明明改了代码却没生效"会被误判成代码问题
+(ai@home 现场报告, haomem id=3653)。
+
 ## 1. 定义 DAG
 
 ```python
