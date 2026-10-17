@@ -190,7 +190,7 @@ LLM stage 出错时, 从"当时输入是什么 → 改一句 → 只重跑那个
 ```bash
 # 切某 stage 的 writer 模型并重跑 — 前序 stage 复用
 pavoz fork-run pipeline.py --task-id job-1 --stage s_compose \
-  --set llm.model=longcat --set config.target_chars=8000 \
+  --set llm.model=my-model --set config.target_chars=8000 \
   --compare-with <original_run_id>
 
 # 只看 override 会应用成什么样 (不执行):

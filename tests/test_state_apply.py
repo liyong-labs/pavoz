@@ -16,15 +16,15 @@ class TestParseSetFile:
 
         from pavoz.state import parse_set_file
         f = tmp_path / "override.json"
-        f.write_text(json.dumps({"llm": {"model": "longcat"}}))
-        assert parse_set_file(str(f)) == {"llm": {"model": "longcat"}}
+        f.write_text(json.dumps({"llm": {"model": "my-model"}}))
+        assert parse_set_file(str(f)) == {"llm": {"model": "my-model"}}
 
     def test_yaml_file_safe_load(self, tmp_path):
         pytest.importorskip("yaml")
         from pavoz.state import parse_set_file
         f = tmp_path / "override.yaml"
-        f.write_text("llm:\n  model: longcat\n")
-        assert parse_set_file(str(f)) == {"llm": {"model": "longcat"}}
+        f.write_text("llm:\n  model: my-model\n")
+        assert parse_set_file(str(f)) == {"llm": {"model": "my-model"}}
 
     def test_yaml_python_object_rejected(self, tmp_path):
         """!!python/object must be rejected by yaml.safe_load → ValueError."""
@@ -174,19 +174,19 @@ class TestParseSetArgs:
 
     def test_single_nested(self):
         from pavoz.state import parse_set_args
-        assert parse_set_args(["llm.model=longcat"]) == {
-            "llm": {"model": "longcat"}
+        assert parse_set_args(["llm.model=my-model"]) == {
+            "llm": {"model": "my-model"}
         }
 
     def test_multiple_merge(self):
         from pavoz.state import parse_set_args
         result = parse_set_args([
-            "llm.model=longcat",
+            "llm.model=my-model",
             "llm.temperature=0.7",
             "config.target_chars=5000",
         ])
         assert result == {
-            "llm": {"model": "longcat", "temperature": 0.7},
+            "llm": {"model": "my-model", "temperature": 0.7},
             "config": {"target_chars": 5000},
         }
 

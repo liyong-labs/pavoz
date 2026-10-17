@@ -96,15 +96,15 @@ async def test_set_nested(monkeypatch, tmp_path, capsys):
     await _run_initial(dag_path, "set2")
     capsys.readouterr()  # 丢掉 run 的 JSON, 只留 fork-run 的输出
     rc = await _cmd_fork_run(
-        _fork_args(dag_path, "set2", set=["llm.model=longcat", "config.x=42"]))
+        _fork_args(dag_path, "set2", set=["llm.model=my-model", "config.x=42"]))
     assert rc == 0
     out = json.loads(capsys.readouterr().out)
-    assert out["overrides_applied"]["llm"]["model"] == "longcat"
+    assert out["overrides_applied"]["llm"]["model"] == "my-model"
     assert out["overrides_applied"]["config"]["x"] == 42
     # CLI 路径下兄弟键保留 (mirror test_fork_overrides.py 场景):
     # fork 后新 run 的 final state 里 llm.model 被覆盖, llm.temperature 仍在
     fork_cp = CheckpointStore(FileStorage(store_dir)).load("set2", out["run_id"])
-    assert fork_cp.state["llm"]["model"] == "longcat"
+    assert fork_cp.state["llm"]["model"] == "my-model"
     assert fork_cp.state["llm"]["temperature"] == 0.5
 
 

@@ -275,6 +275,48 @@ tag 之后任何改动若落在已发布段内即报错)_
   "5 条快照"一条都没真正对上过; ② 越过代码围栏继续收集, 把后面半页不相干文字也当成
   快照内容。现在先按标题定位到那**一个**代码块再解析。
 
+- ★★ **消费方的业务代码就在这个开源仓里, 而 7 个门禁一个都扫不到它。**
+
+  CLAUDE.md 里写着 "pvos 不能包含 ai_writer 业务"、"不能硬编码配置 / schema / 模型
+  路由表", 但这条纪律**从来没变成机器判据**, 于是它一直在被违反而不报警。实测发现四种:
+
+  1. **`research/` 是被 git 跟踪的消费方业务包** (4 个文件):
+     - `llm_router.py` — 4 个厂商模型的路由表 + 档位 + **用户原话 (2026-09-07)** +
+       PRD 引用 + 调用次数与**人民币成本估算** + `https://api.deepseek.com` 端点
+     - `state.py` — 消费方自己的状态 schema (docstring 写着"复用 ai_writer 五档分级")
+     - `pavos_stub.py` — 给消费方本地 pyright 用的桩
+     - `__init__.py` — `"""ai-research: 基于 pavoz 的研究助手 agent."""`
+  2. **`dags/research_dag.py` 也是被跟踪的** —— 消费方自己的 DAG (`ai-research M0 DAG`)。
+  3. 上面两条**扫不到的原因很具体**: pyflakes 的目标列表是 `pavos tests examples tools`,
+     pyright 是 `include: ["pavos"]` —— 两个**顶层目录**谁都没覆盖。而 `tools/` 的门禁
+     按内容扫全仓时, 又因为它们不在任何既有判据的范围内而一直绿。
+  4. **厂商模型名被当通用示例值**: `--set llm.model=longcat` 写在**库源码的 CLI help**
+     里、两份 README 首页、`docs/replay-params.md` 的可复制示例、以及 3 个测试文件。
+     最刺眼的是: **pvos 根本没有模型层** (`ctx.call` 是调用方注入的 Protocol),
+     CLI help 写死一个厂商模型, 等于告诉读者这个库认得模型 —— 它不认得。
+     同一节 README 的下一行却已经用的是中性值 `x`, 自相矛盾。
+     `docs/replay-params.md` 里还留着消费方 state key `research_writer` 与 stage 名
+     `compose_synthesize`。以上 10 处已全部换成中性占位符 / 通用形状, 测试里的 13 处
+     任意值也一并中性化。
+
+  新增 `tools/check_business_leak.py` (第 8 个门禁, 接进 CI 与 loop-check): 扫已跟踪 +
+  未跟踪未忽略的文本, 禁 **厂商模型名 + 消费方配置 key/stage 名**。刻意**不**禁项目名
+  (`ai-research` 之类) —— 仓里正当地用它们记录需求来由 (docstring 的 "R1, 2026-09-10
+  ... PR"), 扫项目名会逼着一片真话被删。例外**逐条登记并写明理由**, 不是通配: 新增一处
+  没登记的提及照样转红。
+
+  ⚠️ **`research/` 与 `dags/research_dag.py` 目前列在例外里, 那是一笔明确的欠账, 不是
+  认可** —— 删不删由 user 决定 (它们可能被消费方的本地开发流程引用)。删除时请把这两条
+  例外一并删掉: 留着它们, 这个门禁就会永远为那笔债开绿灯, 而它转绿时你不会知道债还在。
+
+  判别力 (5 个变异, 5/4 转红 —— 见下): README 里放一处真实厂商模型名 → 转红;
+  白名单失效 → 30 处转红; TOKENS 真清空 → 自检拦下; 白名单被悄悄删掉 `research/*` 那条
+  → 11 处转红。**其中"白名单换成通配"这一条第一版没被抓住** —— 它让 0 个文件被扫、
+  150 个被豁免, 而门禁报 OK。已补第二个自检: 实际扫描面 < 20 个文件即判失败
+  ("白名单把扫描面吃空了")。这是本会话反复栽的"空集绿灯", 连新写的门禁第一版也没躲开。
+  另: 第一版把 `reason = _allowed(rel)` 算出来却没用它跳过, 白名单是**形同虚设的摆设**
+  —— 判据里挂一个不生效的例外比没有例外更坏, 它让人以为那几处被审过。
+
 - ★ **仓库里 4 个文件的正文被写坏了 (U+FFFD 替换字符), 而全套门禁是绿的**。
   `docs/cn/api.md` / `tools/check_changelog.py` / `tests/test_corrupt_record.py` /
   `tests/test_max_concurrent_runs_queue.py` 各有一处, 落盘的就是 `ef bf bd` 三个字节:

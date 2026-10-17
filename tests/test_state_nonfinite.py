@@ -137,8 +137,8 @@ def test_set_file_yaml_normal_values_unaffected(tmp_path):
     """反向约束: 正常 YAML override 不受影响."""
     pytest.importorskip("yaml")
     f = tmp_path / "over.yaml"
-    f.write_text("llm:\n  model: longcat\n  temperature: 0.7\ntags:\n  - a\n  - b\n",
+    f.write_text("llm:\n  model: my-model\n  temperature: 0.7\ntags:\n  - a\n  - b\n",
                  encoding="utf-8")
     got = parse_set_file(str(f))
-    assert got == {"llm": {"model": "longcat", "temperature": 0.7}, "tags": ["a", "b"]}
+    assert got == {"llm": {"model": "my-model", "temperature": 0.7}, "tags": ["a", "b"]}
     assert math.isfinite(got["llm"]["temperature"])

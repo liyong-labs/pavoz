@@ -126,7 +126,7 @@ Each fork gets a new `run_id` and becomes the task's latest run; the original ch
 ```bash
 # Switch the writer model of one stage and rerun it — upstream stages are reused.
 pavoz fork-run pipeline.py --task-id job-1 --stage s_compose \
-  --set llm.model=longcat --set config.target_chars=8000 \
+  --set llm.model=my-model --set config.target_chars=8000 \
   --compare-with <original_run_id>
 
 # Preview what the override would apply (no execution):

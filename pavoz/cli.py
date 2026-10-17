@@ -455,7 +455,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="编辑过的输入 JSON 文件 (export-input 产物, 全量 state 覆盖)")
     # v0.9 NEW — 4 flags
     p_fork.add_argument("--set", action="append", default=[],
-                        help="点分路径 KEY=VALUE (可重复). 例: --set llm.model=longcat. "
+                        help="点分路径 KEY=VALUE (可重复). 例: --set llm.model=my-model. "
                              "值按 int→float→JSON→str 自动推断, 所以 1.10→1.1、007→7 "
                              "(静默, 无开关); 要字符串写 --set-file 的 JSON (引号即字符串)")
     p_fork.add_argument("--set-file", default=None,

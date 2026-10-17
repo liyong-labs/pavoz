@@ -48,6 +48,9 @@ jobs:
       - name: Text integrity (no U+FFFD)
         run: |
           python tools/check_text_integrity.py
+      - name: No business values (vendor models / consumer keys)
+        run: |
+          python tools/check_business_leak.py
       - name: Test (coverage gate 80%)
         run: |
           python -m pytest tests/ -q --cov=pavoz --cov-fail-under=80

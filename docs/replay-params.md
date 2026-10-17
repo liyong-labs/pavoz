@@ -6,14 +6,14 @@ Before 0.3.0, changing a nested param required JSON string with deep escaping:
 
 ```bash
 pavoz fork-run dag.py --task-id X --stage s_compose \
-  --overrides '{"llm_config": {"research_writer": {"model": "longcat"}}}'
+  --overrides '{"llm_config": {"writer": {"model": "my-model"}}}'
 ```
 
 With 0.3.0:
 
 ```bash
 pavoz fork-run dag.py --task-id X --stage s_compose \
-  --set llm_config.research_writer.model=longcat
+  --set llm_config.writer.model=my-model
 ```
 
 ## 4 new flags
@@ -141,20 +141,20 @@ rt = Runtime(checkpoint_store=...)
 # Declarative (v0.3.0): 组合 helpers, 一行装回
 overrides = merge_overrides(
     parse_set_file("overrides.yaml"),          # 可选
-    parse_set_args(["llm.model=longcat", "config.target_chars=8000"]),
+    parse_set_args(["llm.model=my-model", "config.target_chars=8000"]),
 )
 await rt.fork_run(dag, task_id, from_stage="s_compose", overrides=overrides)
 
 # nested dict (v0.6+, 不变) — 现在也是深合并语义
 await rt.fork_run(dag, task_id, from_stage="s_compose",
-                  overrides={"llm": {"model": "longcat"}})
+                  overrides={"llm": {"model": "my-model"}})
 
 # dot-path key dict (v0.3.0) — 值应用与 nested 等价, producer 语义不同 (见下)
 await rt.fork_run(dag, task_id, from_stage="s_compose",
-                  overrides={"llm.model": "longcat"})
+                  overrides={"llm.model": "my-model"})
 
 # 纯 state 变换 (不跑 pipeline)
-new_state = apply_overrides(state, {"llm.model": "longcat"})
+new_state = apply_overrides(state, {"llm.model": "my-model"})
 ```
 
 > ⚠️ fork resume 场景下两者的 producer 语义不同: nested patch 会让 <fork> 认领
