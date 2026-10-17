@@ -286,6 +286,43 @@
   正是这条恒过放过了真盲点。现挂 root logger, 且三条用条数的判据都带
   `counting_logs.all > 0` 自检 —— 计数器收不到东西时它们会**自己报红**。
 
+- ★ **checkpoint 落盘不是原子的 —— 崩溃会毁掉上一份**本来合法**的 checkpoint**,
+  "崩溃后能 resume"被崩溃本身破坏。
+  `FileStorage.put` 原来是 `open(path, "w")` + `json.dump`, 即**先截断再写**。而
+  checkpoint 正是 run 崩溃后**续跑的唯一凭据**。实测 (写到一半 SIGKILL, 3/3):
+
+      写到一半被杀 → 留下 12-17 MB 半截 JSON (完整应有 60 MB), `get` 直接
+      JSONDecodeError;
+
+  更狠的是**连崩溃前那份本来合法的 checkpoint 也一起没了**: 实测先写好一份 825 字节
+  的完整 checkpoint (stage=f0), 再跑一个大 run 写到一半 SIGKILL, 那个文件变成 17 MB
+  半截 —— 既不是旧的 (f0) 也不是新的 (f1)。于是想靠 checkpoint 扛过崩溃的那道防线,
+  被崩溃**本身**摧毁。
+
+  改为原子写: 同目录临时文件 + `os.replace` 换名 (POSIX rename / Windows
+  MoveFileEx+REPLACE_EXISTING, 都是同文件系统内的原子改名), 读者只可能看到旧值或
+  新值, 永远看不到半截。复验同样 3 次 SIGKILL, 磁盘上每次都还是那份 825 字节的
+  `stage=f0`。
+
+  两个配套决定:
+  · 临时文件**不带 `.json` 后缀** —— `list_keys` 靠 `*.json` 收集 key, 带后缀的话
+    崩溃残留会变成一个谁都读不到的假 key。SIGKILL 不可捕获, 临时文件清不掉 (会
+    残留 `.pvos-tmp-*.tmp`), 但它对 `get`/`list_keys` 都不可见。
+  · 失败清理 catch 的是 **`BaseException`** 而不是 `Exception` ——
+    KeyboardInterrupt / SystemExit / asyncio.CancelledError 都是 BaseException,
+    只 catch Exception 会漏。清理逻辑本身有判据钉住。
+
+  **边界 (明说, 不假装覆盖)**: 这里保证的是**进程崩溃**下的完整性。掉电 / 内核 panic
+  那档还需要 `fsync` 临时文件 + `fsync` 父目录 (父目录 fsync 在 Windows 上无可移植
+  做法), 本仓没有承诺那一档, 故不做 —— 不拿一个看不见的开销换一个证明不了的收益。
+  顺带: `docs/architecture.md` 那句"同 `(task_id, run_id)` 双写 = last-writer-wins"
+  此前其实说轻了 (是 last-writer-wins-**或损坏**), 原子写之后才真正成立。
+
+  判据 `tests/test_storage_atomic_write.py` 五条, 用**确定性崩溃模拟**而不是真
+  SIGKILL (后者依赖时序, CI 上必 flaky): 把 `json.dump` 换成"写一半就抛
+  KeyboardInterrupt"。判别力 (三次变异各验一次): 退回 `open(path,"w")` → 2 红;
+  临时文件带 `.json` 后缀 → 1 红; 失败不清理临时文件 → 1 红。
+
 ### Internal
 
 - ★ **本会话追加的 214 行 / 10 条 CHANGELOG 条目全落进了**已发布**的 0.5.7 段**,

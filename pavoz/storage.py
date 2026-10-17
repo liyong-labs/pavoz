@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 from abc import ABC, abstractmethod
 
 __all__ = ["FileStorage", "StorageBackend", "key_sha256"]
@@ -87,10 +88,50 @@ class FileStorage(StorageBackend):
         return path
 
     def put(self, key: str, data: dict) -> None:
+        """原子写一个 JSON 对象: 先写同目录临时文件, 再 `os.replace` 换名.
+
+        为什么必须是原子的 (2026-10-17 实测): `open(path, "w")` 是**先截断再写**,
+        而 checkpoint 正是 run 崩溃后**续跑的唯一凭据**。写到一半进程被杀时
+        (SIGKILL, 实测 3/3), 磁盘上留下的既不是旧的也不是新的:
+
+            写到一半被杀 → 12-17 MB 的半截 JSON (完整应有 60 MB), `get` 直接
+            JSONDecodeError;
+
+        更糟的是**连崩溃前那份本来合法的 checkpoint 也一起没了** —— 实测先写好一份
+        825 字节的完整 checkpoint, 再跑一个大 run 写到一半 SIGKILL, 结果那个文件
+        变成 17 MB 半截: 既不是旧的也不是新的。于是"崩溃后能 resume"这件事,
+        被崩溃**本身**给毁了 —— 而这恰恰是这个库最核心的承诺。
+
+        `os.replace` 是同文件系统内的原子改名 (POSIX rename / Windows
+        MoveFileEx+REPLACE_EXISTING), 所以读者只可能看到旧值或新值, 永远不会看到
+        半截; `get` 要么读到上一份, 要么读到这一份, 不会是坏的。
+
+        临时文件**不带 `.json` 后缀** —— `list_keys` 是靠 `*.json` 收集 key 的, 带
+        后缀的话崩溃残留的临时文件会变成一个谁都读不到的假 key。崩溃确实可能留下
+        一个 `.pvos-tmp-*` 文件, 但它对 `get`/`list_keys` 都不可见, 也不会被误当成
+        checkpoint。
+
+        边界 (明说, 不假装覆盖): 这里保证的是**进程崩溃**下的完整性。机器掉电 /
+        内核 panic 那档还需要 `fsync` 临时文件 + `fsync` 父目录 (且父目录 fsync 在
+        Windows 上没有可移植做法), 本仓没有承诺那一档, 故不做 —— 不拿一个看不见的
+        开销换一个证明不了的收益。
+        """
         path = self._path(key)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
+        parent = os.path.dirname(path) or "."
+        os.makedirs(parent, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=parent, prefix=".pvos-tmp-", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            os.replace(tmp, path)
+        except BaseException:
+            # 失败就把临时文件收掉。**必须收**: 否则每次写失败都在数据目录里留一个
+            # 垃圾文件, 而调用方 (比如 run 收尾) 往往还会继续失败很多次。
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
 
     def get(self, key: str) -> dict | None:
         path = self._path(key)
