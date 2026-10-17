@@ -40,6 +40,7 @@ dev = [
     "pyflakes>=3.0",
     "pyyaml>=6.0",
     "pyright>=1.1.400",
+    "hatchling>=1.18",
 ]
 
 [project.scripts]

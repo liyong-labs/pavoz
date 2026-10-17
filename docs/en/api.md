@@ -126,6 +126,22 @@ re-run against the injected `overrides` — "change one input, re-run only what
 depends on it". The original run's checkpoint is untouched; the fork gets a new
 run_id and becomes the task's latest.
 
+
+> ⚠️ **With `skip_unchanged=True`, `from_stage` is a "starting hint", not a forced
+> re-run point.** The engine walks the topo order comparing `stage_input_hash` (fn
+> source + full pre-execution state) and **keeps skipping until the first miss**;
+> everything from there on re-runs — so `from_stage` itself is skipped when its own
+> hash matches. Measured (`from_stage="s_a"` + `skip_unchanged=True` + **no
+> override**): all three stages skipped, not a single fn called, yet
+> `status=done`.
+> Injected `overrides` change the input hash, so a fork that *did* change something
+> always re-runs. Replaying instead of re-running is equivalent for pure functions;
+> but if your change lives somewhere the hash cannot see (module-level constant,
+> env var, file, clock — see `stage_input_hash`'s coverage boundary), that fork
+> becomes a **silent no-op**.
+> To check whether anything was skipped: `RunResult.skipped_stages` /
+> `pavos trace`'s `skipped_stages` (since v0.5.8) — `stage_statuses` records those
+> as `"done"` and cannot tell them apart.
 - `overrides`: top-level state-key overrides injected into `from_stage`'s pre-run
   state (deep merge — sibling keys survive). The CLI `--set` / `--set-file` flags
   go through this same entry (see [replay-params.md](../replay-params.md))
@@ -317,6 +333,9 @@ ctx.on_event: Callable[[str, dict], None] | None                   # this run's 
   `fork_run(overrides=)` go through `apply_overrides` → **deep merge** (only the
   patched leaf is replaced, siblings survive). Stage returns are shallow, injected
   overrides are deep — don't carry reasoning from one path to the other
+- ⚠️ **`skipped_stages`**: stage names whose function was **not called** — their
+  results were replayed from the checkpoint. Empty means every completed stage
+  really ran.
 - ⚠️ A **dot-path that does not exist is silently created**, no error. Typing
   `llm.modle` instead of `llm.model` leaves a dead key nobody reads, the real
   `llm.model` keeps its old value, and the run still reports `done` — the config

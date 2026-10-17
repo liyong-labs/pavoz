@@ -144,6 +144,11 @@ async def _cmd_trace(args) -> int:
         "dag": cp.dag_name,
         "workflow_hash": cp.workflow_hash,
         "stage_statuses": cp.stage_statuses,
+        # ⚠️ 这两个必须一起读: `stage_statuses` 对被 skip_unchanged 跳过的 stage 记的是
+        # "done" (结果从 cp 重放, 但状态层面确实完成了), 所以**光看它无法分辨"跑过"
+        # 与"重放过"** —— 而"我改的那一段到底跑没跑"恰恰是唯一该问的问题。不给这个
+        # 字段, trace 就会理直气壮地报告"都跑了", 而它们一个都没跑。
+        "skipped_stages": cp.stage_skipped,
         "done_stages": cp.done_stages,
         "state_keys": sorted(cp.state.keys()),
     }, ensure_ascii=False, indent=2))
@@ -407,7 +412,9 @@ def main(argv: list[str] | None = None) -> int:
     p_fork = sub.add_parser("fork-run", help="从历史 stage 分支: 前序复用, 该 stage 起用改后输入重跑")
     p_fork.add_argument("dag", help="dag 文件路径")
     p_fork.add_argument("--task-id", required=True)
-    p_fork.add_argument("--stage", required=True, help="分支点 stage (重跑起点)")
+    p_fork.add_argument(
+        "--stage", required=True,
+        help="分支点 stage (重跑起点)。⚠️ 若开了 skip_unchanged (库 API / EnginePolicy; CLI 未暴露该 flag), 它只是\"起点提示\": 输入 hash 命中就跳到首个未命中处, 自身也可能被跳过 —— 查 pavos trace 的 skipped_stages")
     p_fork.add_argument("--overrides", default=None,
                         help='JSON 顶层覆盖, e.g. \'{"topic": "chickens"}\'')
     p_fork.add_argument("--input", default=None,

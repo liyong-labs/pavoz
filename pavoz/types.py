@@ -87,8 +87,17 @@ class RunResult:
         task_id: caller-supplied (or auto UUID4), stable across retries/resumes
         run_id: pavoz auto UUID4 per runtime.run() — distinguishes runs
         state: final merged state after all completed stages
-        stage_statuses: {stage_name: "done" | "failed" | "cancelled"} — only executed stages;
-            resume-skipped stages are absent, never recorded as "skipped"
+        stage_statuses: {stage_name: "done" | "failed" | "cancelled"} — 含被 skip_unchanged
+            跳过的 stage, 它们记的是 **"done"** (结果是从 cp 重放的, 但状态层面确实完成
+            了)。⚠️ 此前这里写的是 "resume-skipped stages are absent", 与实现不符 (实测
+            fork + skip_unchanged 下它们以 "done" 出现) —— 要分辨"跑过"与"重放过", 看
+            `skipped_stages`
+        skipped_stages: {skip_unchanged 跳过的 stage 名} — 这些的 fn **没有被调用**, 结果是
+            从 checkpoint 重放的。空列表 = 每个完成的 stage 都真跑过。
+            为什么单列: `stage_statuses` / `done_stages` / `stage_timings` 三者对它们都与
+            "正常执行" 不可区分, 而"我改的那一段到底跑没跑"恰恰是调试 skip_unchanged 时
+            唯一的疑问 —— 此前只有事件流 (stage_end status="skipped") 知道, 而
+            `pavos trace` 不看事件流, 于是会理直气壮地报告"都跑了"
         stage_timings: {stage_name: wall-clock seconds} — executed stages only,
             includes retry backoff sleeps; a cancelled-intercepted stage may
             appear with ~0 duration
@@ -112,7 +121,8 @@ class RunResult:
 
     __slots__ = (
         "dag_name", "error", "error_category", "error_class", "failed_stage",
-        "retryable", "run_id", "stage_statuses", "stage_timings", "state",
+        "retryable", "run_id", "skipped_stages", "stage_statuses", "stage_timings",
+        "state",
         "state_summary", "status", "task_id",
     )
 
@@ -122,6 +132,7 @@ class RunResult:
         self.run_id = run_id
         self.state: dict = {}
         self.stage_statuses: dict[str, str] = {}
+        self.skipped_stages: list[str] = []   # skip_unchanged 跳过的 (fn 没被调用)
         self.stage_timings: dict[str, float] = {}  # stage → 墙钟秒 (含 retry 退避)
         self.status: str = "running"
         self.error: str | None = None

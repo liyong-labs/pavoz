@@ -51,12 +51,15 @@ def test_to_dict_has_no_state_key():
     """v0.8: 序列化层无 state — 体积减半的核心. (R2: +stage_input_hashes)"""
     d = _mk_cp().to_dict()
     assert "state" not in d
+    # ⚠️ 这份白名单是**故意**写死的: 新增落盘字段必须在这里被有意识地登记一次
+    # (2026-10-17 加 `stage_skipped` 时它当场变红 —— 这正是它该有的作用)。
+    # "无 state" 那条断言才是本测试的主体, 白名单只是配套。
     assert set(d) == {"task_id", "run_id", "dag_name", "workflow_hash",
                       "stage_statuses", "done_stages", "producers",
                       "initial_state", "stage_deltas_visits", "stage_ts",
                       "fork_overrides", "stage_input_hashes",
                       "fork_keep_counts", "reset_pending",
-                      "stage_fn_sources"}
+                      "stage_fn_sources", "stage_skipped"}
 
 
 def test_from_dict_rebuilds_state_equivalent():

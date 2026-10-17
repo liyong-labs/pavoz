@@ -7,6 +7,52 @@
 _(空 —— 已发布的版本段不再修改, 这条纪律由 `tools/check_changelog.py` 判据钉住:
 tag 之后任何改动若落在已发布段内即报错)_
 
+### Fixed
+
+- ★ **被 `skip_unchanged` 跳过的 stage 从结果上与真跑过的完全无法区分** ——
+  `pavos trace` 会理直气壮地报告"都跑了", 而它们一个都没跑。
+  起因是 ai@home 的生产侧报告 (haomem id=3653): "我改的那一段根本没执行, 两次跑的
+  状态与数值逐字相同"。实测把机制钉出来了:
+
+      fork_run(from_stage="s_a", skip_unchanged=True) 且**无 override** 时
+        · 真正被调用的 fn : []            ← 一个都没跑
+        · stage_statuses   : 三个全 "done"
+        · done_stages      : 三个全在
+        · stage_timings    : {}           (跳过的不计时)
+        · 事件流            : 三个全 "skipped"
+        · status           : done
+
+  也就是说从结果上它与一次完整跑**完全无法区分**, 而 `trace` 只读 checkpoint。
+
+  `skip_unchanged` 连 `from_stage` 自身一起跳过是**有意设计** (runtime docstring:
+  "`from_stage` 退化为起点提示"), 所以修的不是行为而是**可见性**: 新增
+  `RunResult.skipped_stages` 与 `Checkpoint.stage_skipped` (落盘), 并让
+  `pavos trace` 报出来。改动是**纯增量** —— `stage_statuses` 的取值语义不动 (对它们
+  仍记 `"done"`), 所以现有 caller 不受影响。
+
+  同时修正 `RunResult` docstring 里一句**与实现不符**的话: 它写着 "resume-skipped
+  stages are absent, never recorded as skipped", 而实测它们以 `"done"` 出现。
+  (这类"注释声称的边界与实现不符"此前在 `storage.py` 的注释里也出现过一次。)
+
+  文档侧: "`from_stage` 及其后继重跑" 这句在 `docs/{cn,en}/api.md` 里是**不完整**的 ——
+  它没说 `skip_unchanged=True` 时 `from_stage` 自身也可能被跳过, 而那段警告一直只活在
+  runtime 的内部 docstring 里。两份 api.md 与 CLI `--help` 均已补齐 (CLI 其实没有
+  `--skip-unchanged` flag, 触发路径只有库 API / `EnginePolicy`)。
+
+  判据 `tests/test_skipped_stages_visible.py` 五条, 钉的是"列表与**实际调用**完全一致"
+  —— 只断言"非空"会被"把三个都填上"的实现蒙混过去, 而那正是最坏的一种错报。三次
+  变异: 不记 → 红; 无脑全记 (误报一侧) → 红; `to_dict` 漏字段 → 红。
+
+- **`dev` extra 缺 `hatchling`** —— 照 ai@home 报的复现: `pip install -e . --no-deps
+  --no-build-isolation` 失败于 `ModuleNotFoundError: hatchling`。本仓 build-backend
+  就是 hatchling, 而 `[dev]` 里没有它, 所以共享 venv 里 `pip install -e .` 不可用。
+  已加入 (`hatchling>=1.18`)。
+
+- **`RELEASING.md` 指向仓内不存在的 `tools/verify-release.sh`** —— 那个脚本一直只在
+  `~/claude/pvos-dev/tools/` (我本机的工作目录)。照文档走的维护者会得到
+  "No such file"。已把脚本**收进仓内**, 并把它的 `SRC` 默认值从"维护者本机的家目录
+  路径"改成由脚本自身位置推导 (`tools/` 的上一级), 这样仓外调用也能工作。
+
 ## [0.5.8] — 2026-10-17
 
 ### ⚠️ 升级注意 (0.5.7 → 0.5.8)

@@ -111,6 +111,18 @@ result: RunResult = await rt.fork_run(
 "改一个输入, 只重跑下游"。原 run 的 checkpoint 不动; fork 产生新 run_id 并成为该
 task 的 latest。
 
+> ⚠️ **`skip_unchanged=True` 时 `from_stage` 只是"起点提示", 不是强制重跑点**。
+> 引擎沿 topo 序逐 stage 比对 `stage_input_hash` (fn 源码 + 执行前 state), **命中就一直
+> 跳到首个未命中处**, 那之后才全部重跑 —— 所以 `from_stage` 自身 hash 命中时会被跳过。
+> 实测 (`from_stage="s_a"` + `skip_unchanged=True` + **无 override**): 三个 stage 全部
+> 被跳过、一个 fn 都没被调用, 而 `status=done`。
+> `overrides` 注入会改变输入 hash ⇒ **必然重跑**, 所以"改了东西"的那条路径不受影响。
+> 被跳过的是纯函数时重放等价于重跑; 但若你的改动落在 **hash 看不见的地方**
+> (模块级常量 / 环境变量 / 文件 / 时钟, 见 `stage_input_hash` 的覆盖边界), 这次 fork
+> 就成了**静默的空跑**。
+> 查有没有被跳过: `RunResult.skipped_stages` / `pavos trace` 的 `skipped_stages`
+> (v0.5.8 起) —— `stage_statuses` 对它们记的是 `"done"`, 光看它分辨不出来。
+
 - `overrides`: 顶层 state key 覆盖, 注入 `from_stage` 的执行前 state (深合并 —
   兄弟键保留)。CLI 的 `--set` / `--set-file` 走同一入口 (见 [replay-params.md](../replay-params.md))
 - overrides 是**注入输入, 不是最终值**: `from_stage` 重跑后可以覆盖它们 (产物以

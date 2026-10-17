@@ -457,6 +457,13 @@ class Runtime:
         _fork_overrides: dict = {}
         # R2 (0.5.3): stage 名 → 执行输入 hash, 随 cp 持久化 (fork skip_unchanged 用)
         input_hashes: dict[str, str] = {}
+        # 被 skip_unchanged 跳过的 stage 名 (结果是从 cp 重放的, **没有真的跑**)。
+        # 为什么单独记一份: `stage_statuses` 对它们记的是 "done" —— 与真跑过无法区分,
+        # 而"我改的那一段到底跑没跑"恰恰是调试 skip_unchanged 时唯一的疑问。实测
+        # (fork from s_a + skip_unchanged=True + 无 override): 三个 stage 全被跳过、
+        # 一个 fn 都没被调用, 而 stage_statuses / done_stages 全是 done —— 从结果上看
+        # 与一次完整跑**完全无法区分**。只有事件流 (stage_end status="skipped") 知道。
+        stage_skipped: list[str] = []
         # fork_keep_counts 与 _fork_overrides 同理: 它标着"done_stages 里哪些条目属于
         # fork 截断点**之前**", 重建时靠它把重跑段与 visits 尾部对齐 (见
         # Checkpoint._rebuild_state)。此前 _save_cp 根本没有这个参数 → fork 续跑的
@@ -482,6 +489,7 @@ class Runtime:
             initial_state_saved = dict(cp.initial_state)
             _fork_overrides = dict(cp.fork_overrides)  # fork 分支续保
             input_hashes = dict(cp.stage_input_hashes)  # R2: resume 续记
+            stage_skipped = list(cp.stage_skipped)      # 跳过记录同样续记 (否则断点一续就丢)
             _kcounts = dict(cp.fork_keep_counts)        # fork 截断点标记: 续传 (见上)
             result.state = state
             logger.info(
@@ -590,7 +598,7 @@ class Runtime:
             result.state = state
             self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                           producers, stage_deltas_visits, initial_state_saved,
-                          stage_ts, _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, wf_hash=wf_hash)
+                          stage_ts, _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash)
             self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                    "dag": dag.name, "status": "failed"})
             logger.warning(
@@ -674,11 +682,14 @@ class Runtime:
                 done_stages.append(name)
                 run_exec_order.append(name)
                 reset_pending.discard(name)
+                stage_skipped.append(name)
                 result.stage_statuses = stage_statuses
+                # 显式给出去: 否则 caller 只能靠事件流才知道这些 stage 没真跑
+                result.skipped_stages = list(stage_skipped)
                 result.state = state
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, wf_hash=wf_hash)
+                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash)
                 self._emit("stage_end", {"task_id": task_id, "run_id": run_id,
                                          "stage": name, "attempt": 0, "visit": 0,
                                          "status": "skipped", "duration": 0.0,
@@ -706,7 +717,7 @@ class Runtime:
                 _fill_error_context(result, name, "MaxStepsExceeded", state)
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, wf_hash=wf_hash)
+                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash)
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": "failed"})
                 logger.warning(
@@ -787,7 +798,7 @@ class Runtime:
                 })
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, wf_hash=wf_hash)
+                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash)
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": "cancelled"})
                 logger.warning(
@@ -829,7 +840,7 @@ class Runtime:
                 _fill_error_context(result, name, err_class, state, err_category)
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, wf_hash=wf_hash)
+                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash)
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": result.status})
                 return result
@@ -855,7 +866,7 @@ class Runtime:
             visits[name] = visit_no
             self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                           producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                          _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, wf_hash=wf_hash)
+                          _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash)
             logger.info(
                 "task=%s run=%s stage=%s done (len state=%d)",
                 task_id, run_id[:8], name, len(state),
@@ -1428,7 +1439,8 @@ class Runtime:
                  reset_pending: set[str] | None = None,
                  stage_fn_sources: dict[str, str] | None = None,
                  fork_keep_counts: dict[str, int] | None = None,
-                 wf_hash: str | None = None) -> None:
+                 wf_hash: str | None = None,
+                 stage_skipped: list[str] | None = None) -> None:
         if self.checkpoint_store is None:
             return
         try:
@@ -1449,6 +1461,7 @@ class Runtime:
                 fork_keep_counts=dict(fork_keep_counts or {}),
                 fork_overrides=dict(fork_overrides or {}),
                 stage_input_hashes=dict(input_hashes or {}),
+                stage_skipped=list(stage_skipped or []),
                 reset_pending=sorted(reset_pending or ()),
                 stage_fn_sources=dict(stage_fn_sources or {}),
             )

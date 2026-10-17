@@ -280,6 +280,10 @@ class Checkpoint:
     # R2 (id=433 评审): route 重入待重跑集 — router 回跳已执行 stage 时, 其静态
     # 下游闭包中被 done_stages 拦截的成员 (循环静态链第二圈要重跑). 运行态为 set,
     # 落盘转 list (JSON). resume 中段续跑依赖它; 非 loop run 恒空 (A7 默认).
+    # skip_unchanged 跳过的 stage 名 (结果从 cp 重放, fn 没被调用). 落盘是因为
+    # `pavos trace` 只读 cp —— 不记的话它会拿 stage_statuses 的 "done" 报告"都跑了".
+    # 旧 cp 无此字段 → 空 (A7 默认): 老 run 的跳过记录无从恢复, 但不影响任何行为.
+    stage_skipped: list[str] = field(default_factory=list)
     reset_pending: list[str] = field(default_factory=list)
     # R2 (id=1132): stage 名 → 上次真实执行的 fn 源码指纹 (_stage_source_id).
     # fn 体不计 workflow_hash 是有意的 (改 prompt 免全链重跑), 代价是"改了代码
@@ -323,6 +327,7 @@ class Checkpoint:
             "stage_ts": self.stage_ts,
             "fork_overrides": self.fork_overrides,
             "stage_input_hashes": self.stage_input_hashes,
+            "stage_skipped": self.stage_skipped,
             "fork_keep_counts": self.fork_keep_counts,
             "reset_pending": self.reset_pending,
             "stage_fn_sources": self.stage_fn_sources,
@@ -350,6 +355,7 @@ class Checkpoint:
             stage_input_hashes=dict(d.get("stage_input_hashes") or {}),
             fork_keep_counts=dict(d.get("fork_keep_counts") or {}),
             reset_pending=list(d.get("reset_pending") or []),
+            stage_skipped=list(d.get("stage_skipped") or []),
             stage_fn_sources=dict(d.get("stage_fn_sources") or {}),
         )
 
