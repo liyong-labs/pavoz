@@ -430,6 +430,39 @@ tag 之后任何改动若落在已发布段内即报错)_
   坏。已补一条直接钉 `_is_excluded` 本身 (目录级排除覆盖其下文件 / 文件级排除不连坐
   同目录兄弟 / 包本体永不被排除 / 空列表不排除任何东西)。
 
+- ★ **`llms.txt` 三处过期, 而零条判据看着它** —— 那份文件是**专门写给 AI 工具读**的
+  入口清单, 里面的错会被当成事实照着做。实测:
+
+  1. `Install (not on PyPI yet): pip install <pkg>` —— **事实错误**。包早已在 PyPI 上
+     (`git tag -l "v*"` 非空, CHANGELOG 有 `[0.5.8]`)。同一轮我刚把 README 里的同一句
+     删掉, **却漏了这个文件**。AI 读到会告诉用户装不上。
+  2. 指向 `ROADMAP.md` 的那个链接是**死链** —— 文件在仓里根本不存在。而
+     `tools/check_doc_links.py` 当时只 `rglob("*.md")`, 于是 **`.txt` 里的链接一条都
+     没被验过**。这与本会话早先修的"文本门禁只扫已跟踪文件"是同一类**扫描范围盲区**。
+  3. "Before you commit" 列了 3 个门禁, CI 早就有 8 个 —— 照着做的人会少跑一半检查,
+     而且**不会知道自己漏了**。
+
+  已修三处, 并把 `llms.txt` 加进 `check_doc_links.py` 的扫描面 (当场就抓到了那条死链,
+  反向验证自带)。新增 `tests/test_llms_txt_current.py` 五条, 判据从**事实源头派生**,
+  不信任手抄的副本:
+    · 发布状态不写死: **有 tag 就不许**出现 "not on PyPI" —— 还没发版时那句话是对的,
+      判据自己会跳过。
+    · 门禁清单从 `.github/workflows/test.yml` 的 `run:` 里抽。CI 加一个门禁, 这里立刻
+      转红, 而不是等几个月后有人发现清单没跟上。两个方向都查: 漏列 (`CI ⊆ llms`) 与
+      多列 (`llms ⊆ CI`, 只对 `tools/check_*.py` 这一族, 其余命令在 CI 里可能带不同参数)。
+
+  判别力 (5 个变异, 5/5 符合预期): 把 "not on PyPI yet" 加回去 → 红; 删掉一行门禁 → 红;
+  列一个 CI 不跑的工具 → 红; 把 llms.txt 移出扫描面 → 红; 正常 → 绿。
+  ⚠️ **"移出扫描面"那条第一轮没被抓住**, 因为我写的是
+  `assert "llms.txt" in <check_doc_links.py 的源码>` —— 而那个文件的**说明文字**里
+  同样出现这个词, 把扫描列表整段删掉照样绿。**判据查字符串不等于查行为**: 已改成 import
+  那个工具、调用它的 `markdown_files()` 看 llms.txt 在不在返回值里, 再真跑一遍。
+
+  另: 本轮把两份 README 的命令序列各真跑了一遍 (python 块 + bash 块), **全部正确** ——
+  `README.md` 的两条打印断言逐字相符、bash 序列 rc=0、`state --key count` → `3`;
+  `README.cn.md` 的 run → replay → trace → state 序列也全绿。**两个负结果**, 记下来
+  免得下轮重查。
+
 - ★ **仓库里 4 个文件的正文被写坏了 (U+FFFD 替换字符), 而全套门禁是绿的**。
   `docs/cn/api.md` / `tools/check_changelog.py` / `tests/test_corrupt_record.py` /
   `tests/test_max_concurrent_runs_queue.py` 各有一处, 落盘的就是 `ef bf bd` 三个字节:

@@ -2,7 +2,7 @@
 
 > In-process Python workflow engine: static DAG + per-node retries + checkpoints + single-stage replay and time-travel forks. Standard library only, zero runtime dependencies, no server/scheduler/YAML.
 
-Install (not on PyPI yet): `pip install pavoz`
+Install: `pip install pavoz`
 
 ## Start here
 
@@ -12,7 +12,7 @@ Install (not on PyPI yet): `pip install pavoz`
 - [docs/en/api.md](docs/en/api.md) · [docs/cn/api.md](docs/cn/api.md): public API reference
 - [docs/storage.md](docs/storage.md): config-driven storage adapters
 - [examples/](examples/): runnable demos (LLM pipeline, convergence loop, resume after crash)
-- [ROADMAP.md](ROADMAP.md) · [CHANGELOG.md](CHANGELOG.md)
+- [CHANGELOG.md](CHANGELOG.md): version history, including `[Unreleased]`
 
 ## Rules that do not change
 
@@ -23,10 +23,16 @@ Install (not on PyPI yet): `pip install pavoz`
 ## Before you commit
 
 ```bash
-python -m pytest                          # all tests
-python -m pyflakes pavoz tests examples tools
-python tools/check_doc_links.py           # markdown links must resolve
-python tools/check_doc_style.py           # doc style (clichés / versioned headings / punctuation)
+python -m pytest tests/ -q --cov=pavoz --cov-fail-under=80   # tests + coverage gate
+python -m pyflakes pavoz tests examples tools              # lint (pyflakes, not ruff)
+python -m pyright                          # type check (basic)
+python tools/check_doc_links.py            # markdown links must resolve
+python tools/check_doc_style.py            # doc style (clichés / headings / punctuation)
+python tools/check_changelog.py            # released CHANGELOG sections are frozen
+python tools/check_text_integrity.py       # no U+FFFD in tracked text
+python tools/check_business_leak.py        # no vendor models / consumer keys
 ```
 
 Docs in this repo are for humans first: value up front, runnable example early, no dead links.
+The gate list above is derived from `.github/workflows/test.yml` and kept in sync by
+`tests/test_llms_txt_current.py` — do not hand-edit it into disagreement.

@@ -69,11 +69,23 @@ def anchors_of(md_path: pathlib.Path) -> set[str] | None:
 
 
 def markdown_files(root: pathlib.Path) -> list[pathlib.Path]:
-    return [
+    """仓里所有**面向读者**的 markdown 文档。
+
+    ⚠️ `llms.txt` **也是** markdown (只是扩展名是 .txt), 而且它是**专门写给 AI 工具读
+    的**那份入口清单 —— 第一版只扫 `*.md`, 于是它的链接一条都没人验。实测它引用了一个
+    仓里**根本不存在**的 `ROADMAP.md`, 门禁全绿。AI 读到这份文件会照着一条死链去找
+    路线图, 找不到。所以它必须跟 .md 一起进扫描面。
+    """
+    out = [
         path
         for path in root.rglob("*.md")
         if not any(part in str(path) for part in SKIP_DIRS)
     ]
+    for extra in ("llms.txt",):
+        f = root / extra
+        if f.is_file():
+            out.append(f)
+    return sorted(out)
 
 
 def broken_links(root: pathlib.Path) -> list[str]:
