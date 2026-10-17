@@ -9,11 +9,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 from typing import Any
 
 __all__ = ["EventRecorder"]
+
+logger = logging.getLogger(__name__)
 
 
 def _json_safe(obj: Any) -> Any:
@@ -50,6 +53,11 @@ class EventRecorder:
         self._events: list[tuple[str, dict]] = []
         self._sink = sink_path
         self._sink_dir_ready = False
+        # sink 被判死之后的理由 (None = 还活着)。见 `__call__` 里的两分支。
+        self._sink_disabled: str | None = None
+        # 数据侧 (序列化) 失败按**原因**去重: 同一个坏载荷每个事件都来一次时,
+        # 不该刷同样的一行 —— 但也不能像 I/O 那样直接停用 sink (见 `__call__`)。
+        self._data_errors_seen: set[str] = set()
 
     def _ensure_sink_dir(self, sink: str) -> None:
         # sink 由调用点传入而不是读 self._sink: 非空收窄发生在 `if self._sink:`
@@ -80,14 +88,42 @@ class EventRecorder:
 
     def __call__(self, event: str, data: dict) -> None:
         self._events.append((event, data))
-        if self._sink:
-            # _json_safe + allow_nan=False 是一对: 前者把非有限值换成字符串,
-            # 后者保证万一还有别的非标准值时**响**而不是悄悄写坏文件。
+        if not self._sink or self._sink_disabled:
+            return
+        # _json_safe + allow_nan=False 是一对: 前者把非有限值换成字符串,
+        # 后者保证万一还有别的非标准值时**响**而不是悄悄写坏文件。
+        #
+        # 失败分两类, 处理方式**故意不同**:
+        #
+        # · I/O 失败 (OSError: 无权限 / 只读挂载 / ENOSPC / 路径不是目录 …) 是
+        #   sink 本身的毛病, 再写一千次也是同样一次失败。实测 (2026-10-17):
+        #   sink 指向不可写目录时, 一个 N 个 stage 的 run 吐 **2N+2 条完整
+        #   traceback** (N=100 → 202 条), run 照样报 done、磁盘上一个字节没有。
+        #   那正是 `_ensure_sink_dir` 当初要杀掉的形状 —— 它只治了
+        #   FileNotFoundError (建父目录), PermissionError 等原样漏过。所以这里
+        #   **第一次** I/O 失败就判死 sink 并说清理由, 之后不再尝试 (顺带省掉
+        #   每个事件一次注定失败的 open 系统调用)。判死是诚实的: 落盘已经没戏,
+        #   继续假装在写才是骗人。
+        #
+        # · 数据侧失败 (json 序列化: 循环引用等 `default=str` 救不了的) 是**这一条
+        #   事件**的毛病, sink 本身好好的。所以只丢这一行, 继续写后面的; 但按
+        #   原因去重, 免得同一个坏载荷把日志刷爆 (循环引用常是每个事件都有)。
+        try:
             self._ensure_sink_dir(self._sink)
             payload = _json_safe({"event": event, "data": data})
-            with open(self._sink, "a", encoding="utf-8") as f:
-                f.write(json.dumps(payload, ensure_ascii=False,
-                                   default=str, allow_nan=False) + "\n")
+            line = json.dumps(payload, ensure_ascii=False, default=str, allow_nan=False)
+        except OSError as exc:
+            self._sink_disabled = f"{type(exc).__name__}: {exc}"
+            logger.exception("事件落盘失败, sink 已停用 (后续事件不再写 %s)", self._sink)
+            return
+        except Exception as exc:
+            key = f"{type(exc).__name__}: {exc}"[:200]
+            if key not in self._data_errors_seen:
+                self._data_errors_seen.add(key)
+                logger.exception("事件无法序列化, 跳过这一行 (sink 仍可用)")
+            return
+        with open(self._sink, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
 
     @property
     def events(self) -> list[tuple[str, dict]]:
@@ -96,5 +132,11 @@ class EventRecorder:
     def names(self) -> list[str]:
         return [e for e, _ in self._events]
 
+    @property
+    def sink_disabled(self) -> str | None:
+        """sink 判死后的理由 (None = 可用)。只读属性, 供 caller 察觉落盘已停。"""
+        return self._sink_disabled
+
     def __repr__(self) -> str:
-        return f"<EventRecorder {len(self._events)} events>"
+        tail = f" sink DISABLED ({self._sink_disabled})" if self._sink_disabled else ""
+        return f"<EventRecorder {len(self._events)} events{tail}>"
