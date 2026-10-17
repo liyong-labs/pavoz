@@ -31,7 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ._id import new_id
-from .cancel import CancelRegistry
+from .cancel import CancelRegistry, NotKillable, TaskIdInUse
 from .checkpoint import (
     Checkpoint,
     CheckpointMismatchError,
@@ -41,8 +41,9 @@ from .checkpoint import (
     stage_input_hash,
     workflow_hash,
 )
-from .dag import DAG, Stage
+from .dag import DAG, CycleError, Stage, UnknownDepError
 from .policy import EnginePolicy
+from .storage import CorruptRecordError
 from .state import (
     ReadOnlyStateView,
     _validate_dict_keys,
@@ -50,9 +51,11 @@ from .state import (
     deep_validate_state,
     merge_state,
     snapshot,
+    StateConflictError,
 )
 from .types import (
     FatalError,
+    PavozError,
     MaxVisitsExceeded,
     OrphanStagesError,
     RetryableError,
@@ -129,6 +132,37 @@ def _fill_error_context(result: RunResult, stage_name: str,
             state, ensure_ascii=False, default=str)[:2048]
     except (TypeError, ValueError):
         result.state_summary = None
+
+
+# pavoz **自己**抛的、且用户能据以行动的错误类型。
+#
+# 存在的理由 (2026-10-17 实测): 单 producer 契约被违反时 (`StateConflictError`),
+# 用户在 stderr 上看到的是
+#     task=t3 run=0ef27a3f stage=s_b 未预期异常
+#     Traceback (most recent call last): ... merge_state ... raise StateConflictError
+# 也就是 —— 一句**已经写给读者看**的消息 (它自带成因与建议: "改用不同 key (语义
+# key)"), 被当程序 bug 再配一屏栈, 而"未预期"这个标签本身是**错的**: 单 producer 是
+# 文档化的规则, 不是意外。
+#
+# 为什么显式列举而不是 `except PavozError`: 一半的库错误**并不**继承它 ——
+# StateConflictError / CycleError / UnknownDepError / NotKillable / TaskIdInUse /
+# CheckpointMismatchError / CorruptRecordError 都直接继承 Exception。让它们统一继承
+# PavozError 是更彻底的解法, 但那会扩大第三方 `except PavozError` 的捕获范围 (已发布的包,
+# 属 breaking), 不在本轮擅自做。
+#
+# 代价要认: 以后新增一个用户可处置的错误类型而忘了加进这个元组, 表现就是多一条
+# traceback —— 不会算错, 只是吵。根治办法是统一基类 (见上)。
+_EXPECTED_USER_ERRORS = (
+    PavozError,                 # StageError/FatalError/RetryableError 已被更靠前的分支接走;
+                           # 留基类是兜住同族将来新增的类型
+    CheckpointMismatchError,
+    CorruptRecordError,
+    CycleError,
+    NotKillable,
+    StateConflictError,
+    TaskIdInUse,
+    UnknownDepError,
+)
 
 
 class CallResult(dict):
@@ -1386,6 +1420,21 @@ class Runtime:
                                              "status": "failed",
                                              "duration": time.time() - _t0, "error": str(e)})
                 return "failed", state, str(e), type(e).__name__, getattr(e, "category", None), producers, None, attempt
+            except _EXPECTED_USER_ERRORS as e:
+                # pavoz 自己抛的、用户能据以行动的错误 (见 _EXPECTED_USER_ERRORS)。
+                # ⚠️ 返回值与下面的 catch-all 分支**逐字相同** (含 "FatalError: " 前缀)
+                # —— 那个前缀被 tests/test_prune_error_progress.py 断言着并标注了
+                # "API 冻结"。本分支只改**日志级别与措辞**, 不动任何调用方可见的字段。
+                logger.warning(
+                    "task=%s run=%s stage=%s %s: %s",
+                    task_id, run_id[:8], name, type(e).__name__, e,
+                )
+                if emit:
+                    self._emit("stage_end", {"task_id": task_id, "run_id": run_id,
+                                             "stage": name, "attempt": attempt,
+                                             "status": "failed",
+                                             "duration": time.time() - _t0, "error": str(e)})
+                return "failed", state, f"FatalError: {e}", type(e).__name__, getattr(e, "category", None), producers, None, attempt
             except Exception as e:  # 未知异常 → FatalError 语义 (category 仍透传)
                 logger.exception("task=%s run=%s stage=%s 未预期异常", task_id, run_id[:8], name)
                 if emit:

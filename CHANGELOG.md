@@ -122,6 +122,50 @@ tag 之后任何改动若落在已发布段内即报错)_
   就是 hatchling, 而 `[dev]` 里没有它, 所以共享 venv 里 `pip install -e .` 不可用。
   已加入 (`hatchling>=1.18`)。
 
+- ★ **单 producer 契约被违反时, 用户看到的是"未预期异常" + 一整屏 traceback** ——
+  而那句话本来就带成因与建议, 且同时已经进了 JSON 的 `error` 字段。实测 (两个 stage
+  写同一个 state key, 经 CLI `run`):
+
+      $ pavos run dag.py --task-id t1
+      # stderr:
+      task=t1 run=0ef27a3f stage=s_b 未预期异常
+      Traceback (most recent call last):
+        File ".../runtime.py", line 1340, in _run_stage
+          new_state = merge_state(state, delta, name, overwrite_keys=_ow)
+        File ".../state.py", line 147, in merge_state
+          raise StateConflictError(
+      pavos.state.StateConflictError: stage 's_b' 试图写已存在的 state key: ['shared'].
+          DAG 里每个 key 只允许一个 producer — 改用不同 key (语义 key).
+
+  两个问题叠在一起:
+
+  ① **重复**。那句 "改用不同 key (语义 key)" 是写给读者看的话, 已在 JSON `error`
+     里, 栈里没有读者需要的新信息 —— 同一句话说三遍。
+  ② **标签是错的**。"未预期" 说的是程序 bug, 而单 producer 是**文档化的规则**。看到
+     "未预期异常" 的人会先去查环境/版本, 而不是去查自己 DAG 里两个 stage 写了同一个 key。
+
+  根因在 `runtime._run_stage` 的异常链: `(StageError, FatalError)` 走 warning (无栈),
+  `(RetryableError, TimeoutError)` 走重试, 剩下的**一律** `except Exception` →
+  `logger.exception`。而库自己抛的用户可处置错误有一半**并不**继承 `PovozError`
+  (`StateConflictError` / `CycleError` / `UnknownDepError` / `NotKillable` /
+  `TaskIdInUse` / `CheckpointMismatchError` / `CorruptRecordError` 都直接继承
+  `Exception`), 所以没有 `except <基类>` 可以一把捞。
+
+  修法: 新增 `_EXPECTED_USER_ERRORS` 元组 + 一个 except 分支, 走 **warning**、不打栈。
+  ⚠️ **返回值与原 catch-all 分支逐字相同** (含 `"FatalError: "` 前缀) —— 那个前缀被
+  `tests/test_prune_error_progress.py` 断言着并标注"API 冻结"。本改动只碰**日志级别
+  与措辞**, `RunResult` 的任何字段都没动 (实测 `error` 字符串前后逐字一致)。
+
+  刻意**不**动 catch-all: 用户 stage 里的真 bug (AttributeError 等) 仍打完整栈。
+  cli.py 顶层"不写 catch-all"的立场 (真 bug 的栈里有文件和行号) 原样保留。
+
+  新增 `tests/test_expected_errors_no_traceback.py` 六条, 形态是**两侧**: 只钉
+  "预期错误不带栈"的话, 把 catch-all 整个删掉也能让那条变绿 —— 而那会让真 bug 也失去
+  traceback, 恰好是最坏的结果。四个变异逐个验过: 元组里删掉 `StateConflictError` /
+  整个新分支删掉 / 新分支改回 `logger.exception` / 拆掉 catch-all —— **4/4 转红**,
+  且每次都是预期的那几条 (变异 4 只有反面判据能抓住)。另附"两条判据跑出同一个
+  error_class"的退化自检, 与元组覆盖的自检。
+
 - ★ **仓库里 4 个文件的正文被写坏了 (U+FFFD 替换字符), 而全套门禁是绿的**。
   `docs/cn/api.md` / `tools/check_changelog.py` / `tests/test_corrupt_record.py` /
   `tests/test_max_concurrent_runs_queue.py` 各有一处, 落盘的就是 `ef bf bd` 三个字节:
