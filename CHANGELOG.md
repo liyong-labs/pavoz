@@ -4,8 +4,20 @@
 
 ## [Unreleased]
 
-0.5.7 发布之后累积的条目。**已发布的版本段不再修改** —— 这条纪律由
-`tools/check_changelog.py` 判据钉住 (tag 之后任何改动若落在已发布段内即报错)。
+_(空 —— 已发布的版本段不再修改, 这条纪律由 `tools/check_changelog.py` 判据钉住:
+tag 之后任何改动若落在已发布段内即报错)_
+
+## [0.5.8] — 2026-10-17
+
+### ⚠️ 升级注意 (0.5.7 → 0.5.8)
+
+- **`FileStorage.get` 在记录损坏时抛新的 `CorruptRecordError`**, 不再是裸
+  `json.JSONDecodeError`。想按 JSON 解析错误来 catch 的调用点要改成
+  `CorruptRecordError` (它已导出为公开名字)。语义不变: 仍是**抛错而不是返回
+  `None`** —— 把损坏当成"没有记录"会让 `resume` 静默从头开始、丢掉已有进度。
+- **`FileStorage.put` 改为原子写** (同目录临时文件 + `os.replace`)。写失败的语义
+  不变 (仍抛), 但崩溃/断电时磁盘上留下的是**上一份完整记录**而不是半截文件。实测
+  代价为零 (0.71x–1.00x, 在噪声内)。
 
 ### Fixed
 

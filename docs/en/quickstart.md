@@ -6,7 +6,6 @@
 
 ```bash
 pip install pavoz
-# once 0.3.0 is released this collapses to:  pip install pavoz
 ```
 
 ## 1. Define a DAG

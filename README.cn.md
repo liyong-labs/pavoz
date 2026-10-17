@@ -69,9 +69,7 @@ async def s_save(ctx):
 ## 安装
 
 ```bash
-# 目前 (PyPI 未上线): 直接从 git 装
 pip install pavoz
-# 0.3.0 发布后一行搞定: pip install pavoz
 
 # 要改代码 / 跑测试 (贡献者):
 git clone git@github.com:liyong-labs/pavoz.git && cd pavoz && pip install -e ".[dev]"
