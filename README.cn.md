@@ -123,7 +123,7 @@ async def main():
     rt = Runtime()
     result = await rt.run(dag, task_id="demo-1", initial_state={"name": "pavoz"})
     print(result.status, result.state)
-    # done {'greeting': 'hello, pavoz', 'shout': 'HELLO, PAVOZ'}
+    # done {'name': 'pavoz', 'greeting': 'hello, pavoz', 'shout': 'HELLO, PAVOZ'}
 
 asyncio.run(main())
 ```

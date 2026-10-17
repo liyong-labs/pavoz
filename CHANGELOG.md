@@ -62,6 +62,25 @@ tag 之后任何改动若落在已发布段内即报错)_
   ⚠️ 第一版把 flag 改成 `--task` 时判据**没红**, 而原因是 argparse 允许**唯一前缀缩写**
   —— `--task` 被当成了 `--task-id`, 行为根本没变。"改坏 flag"必须改成非前缀形式。
 
+- **`README.cn.md` 内联示例写死的输出与实跑不一致 (少一个 key)**。
+  文档断言 `# done {'greeting': 'hello, pavoz', 'shout': 'HELLO, PAVOZ'}`, 实跑是
+  `done {'name': 'pavos', 'greeting': ..., 'shout': ...}` —— `initial_state={"name":
+  "pavos"}` 里的 `name` 也在 state 里。
+
+  这不是"文档不精确"的小事: 一段**输出被写死**的示例, 读者会拿它对照自己跑出来的结果,
+  差一个 key 就会开始怀疑是不是自己装错了。而 `README.md` 同一位置的断言
+  (`# → saved: 3 [...]` / `# → done`) **全对** —— 同一件事两个版本一个对一个错, 更该有
+  判据。已按实跑输出改写。
+
+  新增 `tests/test_readme_claimed_output.py`: 从示例里把"声称的输出"抠出来, 真跑一遍,
+  对不上就红。`# → X` 整行比对; `# X {...}` 用 `ast.literal_eval` 逐 key 比 dict (不比
+  字符串, 否则空格/顺序差异会误报)。每份 README 带"至少抠到一条断言"的非空自检。
+
+  判别力 (两次变异): 断言退回少一个 key → 红; `→ done` 改成 `→ finished` → 红。
+  抠取逻辑自己翻过一次车: 第一版只认"以 `#` 开头的整行注释", 而 `README.md` 的断言是
+  **行尾**注释 (`print(result.status)   # → done`) ⇒ 一条都抠不到, 判据自己报了"判据
+  失明"。已改成扫整行。
+
 ### Fixed
 
 - ★ **被 `skip_unchanged` 跳过的 stage 从结果上与真跑过的完全无法区分** ——
