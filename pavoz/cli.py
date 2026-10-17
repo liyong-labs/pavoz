@@ -99,7 +99,14 @@ def _storage(task_id: str | None = None):
     """
     spec = os.environ.get("PAVOZ_STORAGE_SPEC")
     if not spec:
-        return FileStorage(DEFAULT_STORAGE)
+        # FileStorage 会就"这个根目录看起来是 storage spec 而不是目录"抛 ValueError
+        # (它紧跟着 os.makedirs, 否则错误提示晚于副作用 —— 目录已经建出来了)。
+        # 这里转成 SystemExit 与本文件其余的参数错一致: CLI 的用法就是**一句说清怎么办**,
+        # 而不是一段指向 storage.py 的 traceback (2026-10-17 实测)。
+        try:
+            return FileStorage(DEFAULT_STORAGE)
+        except ValueError as e:
+            raise SystemExit(f"PAVOZ_STORAGE 无效: {e}")
     from .storage_loader import load_storage
 
     kwargs = {}

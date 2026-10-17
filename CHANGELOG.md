@@ -317,6 +317,47 @@ tag 之后任何改动若落在已发布段内即报错)_
   另: 第一版把 `reason = _allowed(rel)` 算出来却没用它跳过, 白名单是**形同虚设的摆设**
   —— 判据里挂一个不生效的例外比没有例外更坏, 它让人以为那几处被审过。
 
+- ★ **`PAVOZ_STORAGE` 收下一个 storage spec 时, pavos 静默建出那个名字的目录** ——
+  而且是先咬了我自己 (仓根躺了好几轮的 `pvos.storage:WrongClass/`)。
+
+  两个环境变量只差一个词: `PAVOZ_STORAGE` 收**目录**, `PAVOZ_STORAGE_SPEC` 收 **spec**。
+  实测写错的后果:
+
+      $ PAVOZ_STORAGE='pavos.storage:FileStorage' pavos trace --task-id t1
+      task t1 无 checkpoint (没跑过)        # rc=0, stderr 一个字没有
+      $ ls
+      pavos.storage:FileStorage/            # ← cwd 里长出来的目录
+
+  根因是 `FileStorage.__init__` 里那句 `os.makedirs(self.root, exist_ok=True)` **对来者
+  不拒** —— 它在用户看到任何提示之前就把目录建好了, 而那才是真正的危害: 之后所有
+  checkpoint 静默写进一个没人会去看的地方。
+
+  修在路径的**唯一**汇合点 (CLI 的 `_storage` 也走这里, 两个入口一起修好): 形如
+  `pkg.mod:Class` 的根目录直接拒绝, 消息同时点出两个变量各自收什么。识别刻意很窄 ——
+  必须同时含 '.' 与 ':' 且冒号后是合法标识符, 所以 `data.v2` / `weird:name` /
+  `./data` / 绝对路径都不受影响。⚠️ 只挡**裸** token (整串不含 '/'): 带路径分隔符的
+  放行, 因为那是一个**路径**, 目录名叫成什么样是用户自己的事。CLI 侧转成 SystemExit,
+  与其余参数错一致 —— 这是**预期内**的参数错, 不该甩一段指向 storage.py 的 traceback。
+
+  判据 `tests/test_storage_spec_not_a_dir.py` 十二条, 含"**什么都没发生**"那条
+  (`cwd 里不许多出任何东西`) 与四条正常目录名的反面用例。
+
+  判别力 (7 个变异, 逐个记录而不是笼统说"验过"):
+    1 删掉拒绝检查                      -> 2 红
+    2 检查挪到 os.makedirs **之后**        -> 2 红 (原缺陷的形状)
+    3 识别规则放宽 (点号段变可选)          -> 1 红 (weird:name 被误伤)
+    4 CLI 不再转 SystemExit              -> 1 红 ⚠️ **补了 PYTHONPATH 才抓住的**
+    5 去掉 `"/" not in self.root` 那半   -> **空变异**: `re.match` 本身就隐含锚定,
+                                            带 '/' 的路径本来就匹配不上, 行为不变
+    6 正则去掉 `^`                       -> 同上, 仍是空变异
+    7 两道防线同时失效 (去 guard + match 改 search) -> 那条边界判据转红 ✅
+
+  ⚠️ **变异 4 第一轮没被抓住, 而原因是判据本身没测到它要测的东西**: 本仓的 venv 里有
+  `_editable_impl_*.pth`, 把仓库根加进 `sys.path`, 于是子进程里 `python -m <pkg>`
+  加载的是**那棵树**, 与 cwd 无关。在一份临时副本里跑测试时, 撤掉的那段 CLI 代码根本
+  没有参与运行 —— 9 条全绿。已把 subprocess 的 `PYTHONPATH` 钉到被测仓, 并加一条自检
+  直接查子进程里 `find_spec` 的 origin。**判据必须自己保证它测的是被测对象。**
+
 - ★ **仓库里 4 个文件的正文被写坏了 (U+FFFD 替换字符), 而全套门禁是绿的**。
   `docs/cn/api.md` / `tools/check_changelog.py` / `tests/test_corrupt_record.py` /
   `tests/test_max_concurrent_runs_queue.py` 各有一处, 落盘的就是 `ef bf bd` 三个字节:

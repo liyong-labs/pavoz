@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from abc import ABC, abstractmethod
 
@@ -51,6 +52,13 @@ class StorageBackend(ABC):
         """删一个 key."""
 
 
+# `pkg.mod:Class` / `pkg.mod.sub:Class` —— storage **spec** 的形状, 不是目录名。
+# 刻意很窄: 必须同时有 '.' 与 ':', 且冒号后是合法标识符。相对路径 ('./data' / 'data')
+# 与绝对路径 ('/var/lib/x') 都不含冒号, 所以不会误伤正常目录 —— 一个既带点又带冒号的
+# 相对目录名, 实际上只可能是个写错的 spec。
+_SPEC_SHAPED = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)+:[A-Za-z_][A-Za-z0-9_]*$")
+
+
 class FileStorage(StorageBackend):
     """文件系统实现: root_dir/<key>.json. 测试 / 单机默认."""
 
@@ -70,6 +78,26 @@ class FileStorage(StorageBackend):
         # 两个入口一起修好; os.path.expanduser 只处理**行首**的 ~ (与 shell 一致),
         # 路径中间的 ~ 与绝对/相对路径都不受影响 —— 纯修正, 不改既有解析语义。
         self.root = os.path.expanduser(os.fspath(root_dir))
+        # 挡"把 storage spec 写进目录变量"这类错。2026-10-17 实测:
+        #   PAVOZ_STORAGE='pvos.storage:FileStorage' pavos trace --task-id t1
+        #   → rc=0, stderr 一个字没有, 而 cwd 里长出一个名叫
+        #     `pvos.storage:FileStorage` 的目录, 之后所有 checkpoint 静默写进去。
+        # 两个环境变量只差一个词 (PAVOZ_STORAGE=目录 vs PAVOZ_STORAGE_SPEC=spec),
+        # 写错的后果不是报错而是**数据落到一个没人会去看的地方** —— 本会话自己就被咬过
+        # 一次 (`pvos.storage:WrongClass/` 空目录在仓根躺了好几轮才发现)。
+        # 同一个 os.makedirs 也不该对来者不拒: 它在用户看到任何提示之前就把目录建好了。
+        # ⚠️ 只挡**裸** spec token (整串不含 '/'), 不挡带路径分隔符的:
+        #   `pvos.storage:FileStorage`        → 拒绝 (它压根不是路径形状)
+        #   `/var/data/pvos.storage:FileStorage` → 放行 (这是一个**路径**, 目录名叫成
+        #     什么样是用户自己的事, 替他决定会打断真实部署)
+        # 判断依据: spec 不是路径, 而路径必带分隔符 (或以 ~ / . 开头)。
+        if "/" not in self.root and _SPEC_SHAPED.match(self.root):
+            raise ValueError(
+                f"storage 根目录 {self.root!r} 看起来是 **storage spec** 而不是目录 —— "
+                f"本实现要的是一个目录 (会在其下建 <key>.json)。"
+                f"要加载自定义 StorageBackend, 请走 load_storage(\"{self.root}\") "
+                f"(CLI 里对应 PAVOZ_STORAGE_SPEC); PAVOZ_STORAGE 只收目录。"
+            )
         os.makedirs(self.root, exist_ok=True)
 
     def _path(self, key: str) -> str:
