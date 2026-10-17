@@ -53,7 +53,7 @@ def main():
     )
     try:
         subprocess.run([
-            "pavoz", "fork-run", str(dag),
+            sys.executable, "-m", "pavoz", "fork-run", str(dag),
             "--task-id", task_id,
             "--stage", "s_compose",
             "--set-file", meta_path,

@@ -38,7 +38,7 @@ def main():
 
     print("=== dry-run: 检查 overrides 解析 (只有 model 一个 leaf) ===")
     subprocess.run([
-        "pavoz", "fork-run", str(dag),
+        sys.executable, "-m", "pavoz", "fork-run", str(dag),
         "--task-id", task_id,
         "--stage", stage,
         "--set", "llm_config.writer.model=tuned-model",
@@ -50,7 +50,7 @@ def main():
     print("确认无误后, 去掉 --dry-run 真正执行 (见本文件末尾注释).")
 
     # subprocess.run([
-    #     "pavoz", "fork-run", str(dag),
+    #     sys.executable, "-m", "pavoz", "fork-run", str(dag),
     #     "--task-id", task_id,
     #     "--stage", stage,
     #     "--set", "llm_config.writer.model=tuned-model",

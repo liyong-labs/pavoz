@@ -7,6 +7,33 @@
 _(空 —— 已发布的版本段不再修改, 这条纪律由 `tools/check_changelog.py` 判据钉住:
 tag 之后任何改动若落在已发布段内即报错)_
 
+- ★ **四个 example 调的是裸 `pavos` 命令 —— "装了但 venv 没激活"就全线跑不起来**。
+  实测 (照各自 docstring 的用法):
+
+      $ bash examples/01_model_switch.sh demo s_compose
+        examples/01_model_switch.sh: 行 49: pavos: 未找到命令
+      $ python examples/04_deep_merge.py demo
+        FileNotFoundError: [Errno 2] No such file or directory: 'pavos'
+
+  裸命令要求 **venv 的 bin 在 PATH 上**, 而那不是默认处境; 失败消息既不指向原因也不
+  给出路。统一改成经解释器: Python 例子用 `sys.executable, "-m", ...` (保证与运行
+  例子的是同一个解释器, 不会捡到别的 pavos), shell 例子用 `"$PAVOZ_PY" -m ...`
+  (`PAVOZ_PYTHON` 可覆盖)。`05_yaml_file.sh` 的预检查也一并改了 —— 它查的是
+  `command -v pavos`, 失败时说"pvos 未安装 (pip install pavos)", 而真实原因常常是
+  "装了, 但这个解释器看不到"; 现在直接问解释器能不能 import, 并把出路写进提示。
+
+  ⚠️ **既有判据验的是另一种形式**: `test_examples_runnable.py` 查"引用的路径存在"与
+  "传给 CLI 的 flag 存在", 取 flag 面时用的是 `[sys.executable, "-m", ...]` ——
+  **判据验的形式与例子实际用的形式不是一回事**, 所以它全绿而例子照样跑不起来。
+  新增 `tests/test_examples_runnable_e2e.py`: ① 静态 —— 任何例子都不许裸调 CLI (只扫
+  **代码**, docstring 里印的命令行示例不算); ② 端到端 —— 照 `04_deep_merge.py` 的
+  文档流程真跑一遍, 且**显式把 venv 的 bin 从 PATH 里抹掉**(否则这条只在"测试恰好从
+  已激活的 venv 里跑"时才成立, 换个人跑就失效), 带"venv 确实不在 PATH 上"的自检。
+
+  判别力: 把 `04` 退回裸调用 → **2 红** (静态 + 端到端)。过程中判据自己翻过一次车:
+  argv[0] 那条我第一版按行匹配, 而真实写法里 `"pavos"` 在**下一行**, 于是它对真裸调用
+  完全失明 —— 是变异验证里"端到端红了而静态没红"把它逼出来的。
+
 ### Fixed
 
 - ★ **被 `skip_unchanged` 跳过的 stage 从结果上与真跑过的完全无法区分** ——

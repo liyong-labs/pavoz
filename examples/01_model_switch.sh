@@ -14,6 +14,12 @@
 # 解析, 所以在哪个 cwd 跑都对)。
 set -euo pipefail
 
+# 用 `python -m pavos` 而不是裸 `pavos`: 裸命令要求 venv 的 bin 在 PATH 上,
+# 而 venv 没激活 (或用 pipx / 另一个解释器) 时它是 not found —— 而这条消息对
+# 读者毫无指向性 (2026-10-17 实测)。解释器可用 PAVOZ_PYTHON 覆盖。
+PAVOZ_PY="${PAVOZ_PYTHON:-python}"
+
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 TASK_ID="${1:?need task_id (先跑一次 demo_dag.py 留下 checkpoint)}"
@@ -38,7 +44,7 @@ echo
 for model in "${MODELS[@]}"; do
   echo "--- fork-run with model: $model ---"
   if [ -n "${COMPARE_WITH:-}" ]; then
-    pavoz fork-run "$DAG" \
+    "$PAVOZ_PY" -m pavoz fork-run "$DAG" \
       --task-id "$TASK_ID" \
       --stage "$STAGE" \
       --set "llm_config.writer.model=$model" \
@@ -46,7 +52,7 @@ for model in "${MODELS[@]}"; do
   else
     # COMPARE_WITH 没给时**不能**传空串占位 (本文件第一版就是 `--compare-with "${...:-}"`,
     # 靠下游 falsy 判断兜住) —— 显式两分支更清楚, 也不给"空 run_id"留歧义
-    pavoz fork-run "$DAG" \
+    "$PAVOZ_PY" -m pavoz fork-run "$DAG" \
       --task-id "$TASK_ID" \
       --stage "$STAGE" \
       --set "llm_config.writer.model=$model"
