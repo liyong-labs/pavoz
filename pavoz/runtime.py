@@ -170,6 +170,35 @@ _EXPECTED_USER_ERRORS = (
 _ATTEMPT_ERROR_MAX = 500
 
 
+@dataclass
+class _RunLedger:
+    """一次 run 的**全部可落盘累积器** —— `_save_cp` 的唯一入参.
+
+    这些字段原先以 11 个位置参数、在 `_run_inner` 的 6 个保存点逐个重复传递。
+    2026-10-18 加 `stage_attempts` 时必须在 6 处各改一次; 少传任何一处都只会
+    静默丢数据, 而 run 仍然报成功 (判据 `test_checkpoint_attempts.py` 正是为此
+    而写)。集中成一个对象后, 新增落盘字段只加在这里和 `Checkpoint` 两处,
+    保存点不再各自持有参数列表.
+
+    字段与 `Checkpoint` 的同名参数一一对应; `initial_state` 对应
+    `Checkpoint.initial_state` (run 起始 state, state 重建用).
+    """
+
+    done_stages: list[str]
+    stage_statuses: dict[str, str]
+    producers: dict[str, str]
+    stage_deltas_visits: dict[str, list[dict]]
+    stage_attempts: dict[str, list[dict]]
+    stage_ts: dict[str, float]
+    initial_state: dict
+    fork_overrides: dict
+    stage_input_hashes: dict[str, str]
+    reset_pending: set[str]
+    stage_fn_sources: dict[str, str]
+    fork_keep_counts: dict[str, int]
+    stage_skipped: list[str]
+
+
 def _attempt_record(visit: int, attempt: int, status: str, started: float,
                     error: BaseException | str | None = None) -> dict[str, Any]:
     """一条落盘用的 attempt 记录 (Checkpoint.stage_attempts 的元素).
@@ -700,6 +729,28 @@ class Runtime:
         skip_replay = skip_unchanged if skip_unchanged is not None else (
             self.policy.skip_unchanged if self.policy else False)
 
+        def _save() -> None:
+            """唯一的 checkpoint 保存点 —— 累积器只在这里被打包一次.
+
+            所有可变累积器都在本闭包的作用域里, 调用时按**当时**的值打包 (闭包
+            捕获的是变量, 不是快照), 与原先在每个保存点逐个传参等价.
+            """
+            self._save_cp(task_id, run_id, dag, _RunLedger(
+                done_stages=done_stages,
+                stage_statuses=stage_statuses,
+                producers=producers,
+                stage_deltas_visits=stage_deltas_visits,
+                stage_attempts=stage_attempts,
+                stage_ts=stage_ts,
+                initial_state=initial_state_saved,
+                fork_overrides=_fork_overrides,
+                stage_input_hashes=input_hashes,
+                reset_pending=reset_pending,
+                stage_fn_sources=fn_sources,
+                fork_keep_counts=_kcounts,
+                stage_skipped=stage_skipped,
+            ), wf_hash)
+
         def _next_auto() -> str | None:
             for n in auto_order:
                 if n in done_stages and n not in reset_pending:
@@ -724,10 +775,7 @@ class Runtime:
             _fill_error_context(result, stage_name, err_class, state)
             result.stage_statuses = stage_statuses
             result.state = state
-            self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
-                          producers, stage_deltas_visits, initial_state_saved,
-                          stage_ts, _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash,
-                          stage_attempts=stage_attempts)
+            _save()
             self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                    "dag": dag.name, "status": "failed"})
             logger.warning(
@@ -816,10 +864,7 @@ class Runtime:
                 # 显式给出去: 否则 caller 只能靠事件流才知道这些 stage 没真跑
                 result.skipped_stages = list(stage_skipped)
                 result.state = state
-                self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
-                              producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash,
-                              stage_attempts=stage_attempts)
+                _save()
                 self._emit("stage_end", {"task_id": task_id, "run_id": run_id,
                                          "stage": name, "attempt": 0, "visit": 0,
                                          "status": "skipped", "duration": 0.0,
@@ -845,10 +890,7 @@ class Runtime:
                 )
                 result.error_class = "MaxStepsExceeded"
                 _fill_error_context(result, name, "MaxStepsExceeded", state)
-                self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
-                              producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash,
-                              stage_attempts=stage_attempts)
+                _save()
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": "failed"})
                 logger.warning(
@@ -940,10 +982,7 @@ class Runtime:
                     visit_no, len(attempt_log) + 1, "cancelled", _st0,
                     "killed (hard kill by CancelRegistry)"))
                 stage_attempts.setdefault(name, []).extend(attempt_log)
-                self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
-                              producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash,
-                              stage_attempts=stage_attempts)
+                _save()
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": "cancelled"})
                 logger.warning(
@@ -987,10 +1026,7 @@ class Runtime:
                 result.error = err
                 result.error_class = err_class
                 _fill_error_context(result, name, err_class, state, err_category)
-                self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
-                              producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash,
-                              stage_attempts=stage_attempts)
+                _save()
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": result.status})
                 return result
@@ -1014,10 +1050,7 @@ class Runtime:
             reset_pending.discard(name)
             fn_sources[name] = _stage_source_id(stage.fn)  # 真实执行才更新 (重放不覆盖)
             visits[name] = visit_no
-            self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
-                          producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                          _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash,
-                          stage_attempts=stage_attempts)
+            _save()
             logger.info(
                 "task=%s run=%s stage=%s done (len state=%d)",
                 task_id, run_id[:8], name, len(state),
@@ -1568,18 +1601,13 @@ class Runtime:
                              task_id, stage)
 
     def _save_cp(self, task_id: str, run_id: str, dag: DAG,
-                 done_stages: list, statuses: dict, producers: dict | None = None,
-                 stage_deltas_visits: dict[str, list] | None = None,
-                 initial_state: dict | None = None,
-                 stage_ts: dict | None = None,
-                 fork_overrides: dict | None = None,
-                 input_hashes: dict | None = None,
-                 reset_pending: set[str] | None = None,
-                 stage_fn_sources: dict[str, str] | None = None,
-                 fork_keep_counts: dict[str, int] | None = None,
-                 wf_hash: str | None = None,
-                 stage_skipped: list[str] | None = None,
-                 stage_attempts: dict[str, list[dict]] | None = None) -> None:
+                 ledger: _RunLedger, wf_hash: str | None = None) -> None:
+        """把 `_RunLedger` 落成 checkpoint (无 store 时 no-op; 失败不杀 run).
+
+        唯一的序列化点 —— 新增落盘字段只需改 `Checkpoint` 与 `_RunLedger`,
+        不再需要在各保存点逐个补参数 (那正是 `stage_attempts` 之前的结构性
+        风险: 少传一处 = 静默丢数据, run 仍报成功).
+        """
         if self.checkpoint_store is None:
             return
         try:
@@ -1590,21 +1618,21 @@ class Runtime:
                 # wf_hash 由调用点整次 run 算一次传下来 (见 _run_inner 的说明);
                 # None = 自己算 (run_stage / fork_run / 库调用等单次场景)
                 workflow_hash=wf_hash if wf_hash is not None else workflow_hash(dag),
-                stage_statuses=dict(statuses),
-                done_stages=list(done_stages),
-                producers=dict(producers or {}),
-                initial_state=dict(initial_state or {}),
+                stage_statuses=dict(ledger.stage_statuses),
+                done_stages=list(ledger.done_stages),
+                producers=dict(ledger.producers),
+                initial_state=dict(ledger.initial_state),
                 stage_deltas_visits={
-                    k: list(v) for k, v in (stage_deltas_visits or {}).items()},
-                stage_ts=dict(stage_ts or {}),
-                fork_keep_counts=dict(fork_keep_counts or {}),
-                fork_overrides=dict(fork_overrides or {}),
-                stage_input_hashes=dict(input_hashes or {}),
-                stage_skipped=list(stage_skipped or []),
-                reset_pending=sorted(reset_pending or ()),
-                stage_fn_sources=dict(stage_fn_sources or {}),
+                    k: list(v) for k, v in ledger.stage_deltas_visits.items()},
+                stage_ts=dict(ledger.stage_ts),
+                fork_keep_counts=dict(ledger.fork_keep_counts),
+                fork_overrides=dict(ledger.fork_overrides),
+                stage_input_hashes=dict(ledger.stage_input_hashes),
+                stage_skipped=list(ledger.stage_skipped),
+                reset_pending=sorted(ledger.reset_pending),
+                stage_fn_sources=dict(ledger.stage_fn_sources),
                 stage_attempts={k: [dict(rec) for rec in v]
-                                for k, v in (stage_attempts or {}).items()},
+                                for k, v in ledger.stage_attempts.items()},
             )
             self.checkpoint_store.save(cp)
         except Exception:
