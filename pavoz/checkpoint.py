@@ -291,6 +291,18 @@ class Checkpoint:
     # 不阻断不拒续. 只在真实执行时更新 (skip_replay 重放不覆盖, 它代表产出
     # 该结果的代码). 旧 cp 无此字段 → 无漂移检查, A7 默认空.
     stage_fn_sources: dict[str, str] = field(default_factory=dict)
+    # R2 (0.5.9, Unreleased): stage 名 → 历次 attempt 的执行记录, 追加序 = 执行序.
+    # 每条: {"visit", "attempt", "status", "ts", "duration_ms", "error"} —
+    # status ∈ done | failed | retry | cancelled; error 是异常消息摘要 (截断到
+    # runtime._ATTEMPT_ERROR_MAX 字符), 成功为 None.
+    #
+    # 为什么落盘 (2026-10-18 竞品调研, zeroflow audit_trail 同形): 事件流只在 run
+    # 期间存在 (回调即弃), `RunResult.stage_timings` 只在内存结果里 — 一旦 run
+    # 结束或进程崩了, "哪个 stage 慢 / 上次为什么失败" 就没有任何落盘证据.
+    # 循环多轮的区分靠 (visit, attempt); resume 会在同一 visit 上重新从 attempt=1
+    # 计数 (retry 预算本来就是每次调用独立), 跨 resume 的先后靠 ts 排序.
+    # 旧 cp 无此字段 → 空 dict (A7 默认), 不影响 resume / state 重建.
+    stage_attempts: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
     @property
     def state(self) -> dict[str, Any]:
@@ -331,6 +343,7 @@ class Checkpoint:
             "fork_keep_counts": self.fork_keep_counts,
             "reset_pending": self.reset_pending,
             "stage_fn_sources": self.stage_fn_sources,
+            "stage_attempts": self.stage_attempts,
         }
 
     @classmethod
@@ -367,6 +380,11 @@ class Checkpoint:
             reset_pending=list(d.get("reset_pending") or []),
             stage_skipped=list(d.get("stage_skipped") or []),
             stage_fn_sources=dict(d.get("stage_fn_sources") or {}),
+            # 0.5.9: 旧 cp 无此字段 → 空 (A7 默认); 记录本身是纯审计数据,
+            # 不参与 state 重建, 缺了不影响任何执行语义.
+            stage_attempts={
+                k: [dict(rec) for rec in v]
+                for k, v in (d.get("stage_attempts") or {}).items()},
         )
 
     def rebuild_state(self) -> dict[str, Any]:

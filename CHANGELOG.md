@@ -588,6 +588,26 @@ tag 之后任何改动若落在已发布段内即报错)_
   "No such file"。已把脚本**收进仓内**, 并把它的 `SRC` 默认值从"维护者本机的家目录
   路径"改成由脚本自身位置推导 (`tools/` 的上一级), 这样仓外调用也能工作。
 
+- ★ **per-attempt 审计轨迹落盘: `Checkpoint.stage_attempts`**, `pavoz trace` 直接可见。
+  对照 6 个同形项目源码 (2026-10-18 调研) 后, 这是唯一"便宜且纯增量"的真实差距:
+  zeroflow 把每次 step 的 `status / ts / error / duration_ms` 随 snapshot 落盘;
+  而 pavoz 此前只有 `stage_statuses` + `stage_ts`, 每次 attempt 的耗时与错误只活在
+  事件流 (回调即弃, 不持久化) 与 `RunResult.stage_timings` (只在内存结果里) ——
+  run 结束或 resume 之后, "哪个 stage 慢 / 上次为什么失败" 没有任何落盘证据。
+
+  新字段: `stage 名 → [{visit, attempt, status, ts, duration_ms, error}]`,
+  `status ∈ done | failed | retry | cancelled`; 错误摘要截断到 500 字符 (完整消息仍在
+  `RunResult.error`); `duration_ms` 不含 retry 的退避 sleep; 循环多轮按
+  `(visit, attempt)` 区分, resume 续记而不覆盖上一轮。**纯增量**: 旧 cp 无此字段
+  → `{}`, 不参与执行决策或 state 重建。
+
+  判据 (`tests/test_checkpoint_attempts.py`, 7 条) 一律**从落盘 cp 读回**核对 ——
+  从 `RunResult` / 事件流断言会让"字段加了但 `_save_cp` 没带上"这种实现错误全绿。
+  变异验证 6 条全部转红 (to_dict 漏字段 / done 路径不传 / save 恒写空 / retry 不记录 /
+  trace 不输出 / visit 写死), 对照组绿。另一候选 (stage 中途续跑, LangGraph
+  `pending_writes` 形) 维持 backlog: 它要求 stage 声明内部检查点, 是新的核心语义,
+  等真实痛点驱动。
+
 ## [0.5.8] — 2026-10-17
 
 ### ⚠️ 升级注意 (0.5.7 → 0.5.8)

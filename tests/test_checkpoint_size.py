@@ -59,7 +59,7 @@ def test_to_dict_has_no_state_key():
                       "initial_state", "stage_deltas_visits", "stage_ts",
                       "fork_overrides", "stage_input_hashes",
                       "fork_keep_counts", "reset_pending",
-                      "stage_fn_sources", "stage_skipped"}
+                      "stage_fn_sources", "stage_skipped", "stage_attempts"}
 
 
 def test_from_dict_rebuilds_state_equivalent():

@@ -164,6 +164,29 @@ _EXPECTED_USER_ERRORS = (
     UnknownDepError,
 )
 
+# checkpoint 里每条 attempt 记录的错误摘要上限. 异常消息可能极长 (整段 HTTP body、
+# 千行文本), 而审计记录随每次 _save_cp 落盘 —— 截断而不是丢弃: 诊断需要的是开头
+# 那一句; 完整消息仍在 RunResult.error / 事件流 / 日志里.
+_ATTEMPT_ERROR_MAX = 500
+
+
+def _attempt_record(visit: int, attempt: int, status: str, started: float,
+                    error: BaseException | str | None = None) -> dict[str, Any]:
+    """一条落盘用的 attempt 记录 (Checkpoint.stage_attempts 的元素).
+
+    ts 是 attempt **开始**时刻 (epoch, 毫秒精度), duration_ms 是结束减开始 ——
+    不含 retry 的退避 sleep。纯 dict 构造, 不读 state / 不调外部对象: 它在异常
+    处理路径上被调用, 自己不能成为新的失败点。
+    """
+    return {
+        "visit": visit,
+        "attempt": attempt,
+        "status": status,
+        "ts": round(started, 3),
+        "duration_ms": int((time.time() - started) * 1000),
+        "error": None if error is None else str(error)[:_ATTEMPT_ERROR_MAX],
+    }
+
 
 def _find_orphan_and_stale(
     dag: DAG,
@@ -549,6 +572,9 @@ class Runtime:
         # v0.5.1 (M2): 每 stage return delta (按完成序) + run 初始 state — M3 replay 重建用
         # R1 (0.5.5): 值改为 list — 循环多轮按 visit 追加 (见 stage_deltas_visits)
         stage_deltas_visits: dict[str, list[dict]] = {}
+        # 0.5.9: stage 名 → 历次 attempt 记录 (耗时/错误摘要). 纯审计数据, 不参与
+        # 执行决策; resume 续记 (见下方 resume 段).
+        stage_attempts: dict[str, list[dict]] = {}
         # v0.7: stage 完成 epoch ts — 恢复侧 TTL 判定 (内容过期 gate) 用
         stage_ts: dict[str, float] = {}
         initial_state_saved: dict = {}
@@ -585,6 +611,8 @@ class Runtime:
             producers = dict(cp.producers)
             stage_deltas_visits = {k: list(v) for k, v in cp.stage_deltas_visits.items()}
             # resume 续收集 (R1: 按 visit 列表)
+            stage_attempts = {k: [dict(rec) for rec in v]
+                              for k, v in cp.stage_attempts.items()}
             stage_ts = dict(cp.stage_ts)              # v0.7: resume 续记
             initial_state_saved = dict(cp.initial_state)
             _fork_overrides = dict(cp.fork_overrides)  # fork 分支续保
@@ -698,7 +726,8 @@ class Runtime:
             result.state = state
             self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                           producers, stage_deltas_visits, initial_state_saved,
-                          stage_ts, _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash)
+                          stage_ts, _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash,
+                          stage_attempts=stage_attempts)
             self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                    "dag": dag.name, "status": "failed"})
             logger.warning(
@@ -789,7 +818,8 @@ class Runtime:
                 result.state = state
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash)
+                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash,
+                              stage_attempts=stage_attempts)
                 self._emit("stage_end", {"task_id": task_id, "run_id": run_id,
                                          "stage": name, "attempt": 0, "visit": 0,
                                          "status": "skipped", "duration": 0.0,
@@ -817,7 +847,8 @@ class Runtime:
                 _fill_error_context(result, name, "MaxStepsExceeded", state)
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash)
+                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash,
+                              stage_attempts=stage_attempts)
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": "failed"})
                 logger.warning(
@@ -850,11 +881,16 @@ class Runtime:
             if self.checkpoint_store is not None or skip_replay:
                 input_hashes[name] = stage_input_hash(stage.fn, state)
             visit_no = visits.get(name, 0) + 1  # R1: 本次执行序 (1 起; 事件/retry 外层不变)
+            # 0.5.9: 本次 stage 调用的 attempt 审计记录. 单独一个 list 再合并 ——
+            # 硬杀 (CancelledError) 时代码不走正常返回路径, 这里要能把"被杀的那次"
+            # 补进去; `_run_stage` 在每次 attempt 终态前 append (retry 也 append).
+            attempt_log: list[dict] = []
             try:
                 status, new_state, err, err_class, err_category, producers, delta, attempts = \
                     await self._run_stage(
                         dag, stage.fn, name, task_id, run_id, state, stage.retries,
                         stage_deadline, producers, visit=visit_no,
+                        attempt_log=attempt_log,
                     )
             except asyncio.CancelledError:
                 # R1a: registry 来源的硬杀 → 落 cp 返 cancelled RunResult;
@@ -896,9 +932,18 @@ class Runtime:
                     "duration": time.time() - _st0,
                     "error": "killed (hard kill by CancelRegistry)",
                 })
+                # 审计记录: attempt 号 = 本 visit 已结束的 attempt 数 + 1 (retry 记录
+                # 已在 sleep 前 append). 硬杀时拿不到本 attempt 的起点, 用 stage 调用
+                # 起点代替 —— duration_ms 因此可能偏大 (含退避), 这是这条罕见路径上
+                # 可接受的近似; 事件流的 duration 本来就是同一口径.
+                attempt_log.append(_attempt_record(
+                    visit_no, len(attempt_log) + 1, "cancelled", _st0,
+                    "killed (hard kill by CancelRegistry)"))
+                stage_attempts.setdefault(name, []).extend(attempt_log)
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash)
+                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash,
+                              stage_attempts=stage_attempts)
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": "cancelled"})
                 logger.warning(
@@ -907,6 +952,10 @@ class Runtime:
                     task_id, run_id[:8], name, len(done_stages),
                 )
                 return result
+            # 正常返回才走到这里 (硬杀分支已在上面合并并 return). 空 list 不建 key:
+            # 取消拦截发生在 attempt 之前时没有记录, 不该凭空造一个空条目.
+            if attempt_log:
+                stage_attempts.setdefault(name, []).extend(attempt_log)
             steps_used += attempts
             result.stage_timings[name] = result.stage_timings.get(name, 0) + (
                 time.time() - _st0)  # R1: 循环多轮累计 (单轮图数值不变)
@@ -940,7 +989,8 @@ class Runtime:
                 _fill_error_context(result, name, err_class, state, err_category)
                 self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                               producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash)
+                              _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash,
+                              stage_attempts=stage_attempts)
                 self._emit("run_end", {"task_id": task_id, "run_id": run_id,
                                        "dag": dag.name, "status": result.status})
                 return result
@@ -966,7 +1016,8 @@ class Runtime:
             visits[name] = visit_no
             self._save_cp(task_id, run_id, dag, done_stages, stage_statuses,
                           producers, stage_deltas_visits, initial_state_saved, stage_ts,
-                          _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash)
+                          _fork_overrides, input_hashes, reset_pending, fn_sources, _kcounts, stage_skipped=stage_skipped, wf_hash=wf_hash,
+                          stage_attempts=stage_attempts)
             logger.info(
                 "task=%s run=%s stage=%s done (len state=%d)",
                 task_id, run_id[:8], name, len(state),
@@ -1294,6 +1345,7 @@ class Runtime:
         producers: dict[str, str],
         emit: bool = True,
         visit: int = 0,
+        attempt_log: list[dict[str, Any]] | None = None,
     ) -> tuple[str, dict, str | None, str | None, str | None, dict, dict | None, int]:
         """跑一个 stage (含 retry). 返 (status, new_state, error, error_class, error_category, producers, delta, attempts).
 
@@ -1314,9 +1366,13 @@ class Runtime:
         attempts = 实际执行 attempt 总数 (W3 max_steps 熔断计数用).
         visit = 本 stage 在本 run 内的第几次执行 (R1, 1 起; 循环重入 >1) — 事件观测用.
         emit=False → 不发生命周期事件 (单 stage 重放不是正式 run).
+        attempt_log: 传入 list 时, 每次 attempt 结束追加一条落盘记录 (见
+        `_attempt_record`); None = 不记录 (单 stage 重放等不落 cp 的场景).
+        记录在各终态**返回前**追加, 所以 retry 的记录也留得住.
         """
         attempt = 0
         _t0 = time.time()
+        _record = attempt_log.append if attempt_log is not None else (lambda _rec: None)
         while True:
             if self._is_cancelled(task_id):
                 logger.warning("task=%s run=%s stage=%s 取消拦截 (attempt 前)",
@@ -1338,6 +1394,7 @@ class Runtime:
                                              "error": "cancelled by caller"})
                 return "cancelled", state, "stage 已取消 (cancelled by caller)", None, None, producers, None, attempt
             attempt += 1
+            _a0 = time.time()   # 本 attempt 的起点 — 记录用, 不含退避 sleep
             if emit:
                 self._emit("stage_start", {"task_id": task_id, "run_id": run_id,
                                            "stage": name, "attempt": attempt,
@@ -1403,6 +1460,7 @@ class Runtime:
                                              "attempt": attempt, "visit": visit,
                                              "status": "done",
                                              "duration": time.time() - _t0, "error": None})
+                _record(_attempt_record(visit, attempt, "done", _a0))
                 return "done", new_state, None, None, None, producers, delta, attempt
 
             except (StageError, FatalError) as e:
@@ -1416,6 +1474,7 @@ class Runtime:
                                              "attempt": attempt, "visit": visit,
                                              "status": "failed",
                                              "duration": time.time() - _t0, "error": str(e)})
+                _record(_attempt_record(visit, attempt, "failed", _a0, e))
                 return "failed", state, str(e), type(e).__name__, getattr(e, "category", None), producers, None, attempt
             except (RetryableError, TimeoutError) as e:
                 if attempt <= retries:
@@ -1432,6 +1491,9 @@ class Runtime:
                         self._emit("stage_retry", {"task_id": task_id, "run_id": run_id,
                                                    "stage": name, "attempt": attempt,
                                                    "backoff": backoff, "error": str(e)})
+                    # 记录的是**这次失败的 attempt**, 不是最终结果 — 落在 sleep 之前:
+                    # 退避期间进程若被杀, 已发生的失败仍留在 checkpoint 里.
+                    _record(_attempt_record(visit, attempt, "retry", _a0, e))
                     await asyncio.sleep(backoff)
                     continue
                 logger.warning(
@@ -1443,6 +1505,7 @@ class Runtime:
                                              "attempt": attempt, "visit": visit,
                                              "status": "failed",
                                              "duration": time.time() - _t0, "error": str(e)})
+                _record(_attempt_record(visit, attempt, "failed", _a0, e))
                 return "failed", state, str(e), type(e).__name__, getattr(e, "category", None), producers, None, attempt
             except _EXPECTED_USER_ERRORS as e:
                 # pavoz 自己抛的、用户能据以行动的错误 (见 _EXPECTED_USER_ERRORS)。
@@ -1458,6 +1521,7 @@ class Runtime:
                                              "stage": name, "attempt": attempt,
                                              "status": "failed",
                                              "duration": time.time() - _t0, "error": str(e)})
+                _record(_attempt_record(visit, attempt, "failed", _a0, e))
                 return "failed", state, f"FatalError: {e}", type(e).__name__, getattr(e, "category", None), producers, None, attempt
             except Exception as e:  # 未知异常 → FatalError 语义 (category 仍透传)
                 logger.exception("task=%s run=%s stage=%s 未预期异常", task_id, run_id[:8], name)
@@ -1465,6 +1529,7 @@ class Runtime:
                     self._emit("stage_end", {"task_id": task_id, "run_id": run_id, "stage": name,
                                              "attempt": attempt, "status": "failed",
                                              "duration": time.time() - _t0, "error": str(e)})
+                _record(_attempt_record(visit, attempt, "failed", _a0, e))
                 return "failed", state, f"FatalError: {e}", type(e).__name__, getattr(e, "category", None), producers, None, attempt
 
     # ── timeout wrapper ─────────────────────────────────
@@ -1513,7 +1578,8 @@ class Runtime:
                  stage_fn_sources: dict[str, str] | None = None,
                  fork_keep_counts: dict[str, int] | None = None,
                  wf_hash: str | None = None,
-                 stage_skipped: list[str] | None = None) -> None:
+                 stage_skipped: list[str] | None = None,
+                 stage_attempts: dict[str, list[dict]] | None = None) -> None:
         if self.checkpoint_store is None:
             return
         try:
@@ -1537,6 +1603,8 @@ class Runtime:
                 stage_skipped=list(stage_skipped or []),
                 reset_pending=sorted(reset_pending or ()),
                 stage_fn_sources=dict(stage_fn_sources or {}),
+                stage_attempts={k: [dict(rec) for rec in v]
+                                for k, v in (stage_attempts or {}).items()},
             )
             self.checkpoint_store.save(cp)
         except Exception:

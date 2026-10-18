@@ -382,6 +382,21 @@ removed: dict = store.prune(task_id, keep_last=5, dry_run=False)   # trim old ru
   within the current format, missing optional fields load via defaults
   (forward-compatible schema — v0.5.0 checkpoints without the new fields
   load and resume fine).
+- `cp.stage_attempts` (0.5.9+): one record per **attempt** of every stage,
+  in execution order. Each record is
+  `{visit, attempt, status, ts, duration_ms, error}` — `status` is
+  `done | failed | retry | cancelled`; `error` is a summary of the exception
+  message (truncated to 500 chars; the full message stays in
+  `RunResult.error`) and `None` on success; `ts` is the attempt's **start**
+  time (epoch seconds) and `duration_ms` excludes retry backoff sleeps.
+  Loop rounds are distinguished by `(visit, attempt)`; on resume the attempt
+  counter restarts at 1 for the same visit, and `ts` orders records across
+  resume episodes. `pavoz trace` prints this field.
+  **This is pure audit data**: it affects neither execution decisions nor
+  state rebuilding; checkpoints without it load as `{}`. It answers "which
+  stage was slow / why did it fail last time" after a run ends or resumes —
+  the event stream is not persisted and `RunResult.stage_timings` lives only
+  in memory.
 - `cp.rebuild_state() -> dict` — reconstruct the merged state after all
   completed stages (`initial_state` + done deltas in completion order;
   chain overwrites resolve by order). This is the input state for replaying

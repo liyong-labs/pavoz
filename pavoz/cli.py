@@ -192,6 +192,10 @@ async def _cmd_trace(args) -> int:
         "skipped_stages": cp.stage_skipped,
         "done_stages": cp.done_stages,
         "state_keys": sorted(cp.state.keys()),
+        # 0.5.9: 每次 attempt 的耗时/错误摘要 — 回答"哪个 stage 慢, 上次为什么
+        # 失败"的唯一落盘证据 (事件流不持久化; RunResult.stage_timings 只在内存).
+        # 纯增量字段, 旧 cp 为 {}.
+        "stage_attempts": cp.stage_attempts,
     }, ensure_ascii=False, indent=2))
     return 0
 

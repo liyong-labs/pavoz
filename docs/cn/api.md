@@ -324,6 +324,16 @@ removed: dict = store.prune(task_id, keep_last=5, dry_run=False)  # 修剪旧 ru
   `runs/{task_id}/checkpoint`) 已 orphan (hard cut, 无 legacy loader);
   当前格式内缺可选字段走默认值 (schema 向前兼容 — v0.5.0 旧 cp 无新字段
   也可读可 resume)
+- `cp.stage_attempts` (0.5.9+): 每个 stage 的**每次 attempt** 记录, 追加序 =
+  执行序。每条 `{visit, attempt, status, ts, duration_ms, error}` ——
+  `status ∈ done | failed | retry | cancelled`; `error` 是异常消息摘要
+  (截断到 500 字符, 完整消息仍在 `RunResult.error`), 成功为 `None`; `ts` 是
+  attempt **开始**时刻 (epoch 秒), `duration_ms` 不含 retry 的退避 sleep。
+  循环多轮按 `(visit, attempt)` 区分; resume 会在同一 visit 上重新从
+  `attempt=1` 计数, 跨 resume 的先后按 `ts` 排序。`pavoz trace` 直接输出它。
+  **这是纯审计数据**: 不参与执行决策或 state 重建; 旧 cp 无此字段 → `{}`。
+  它解决的是"run 结束后 / resume 后, 哪个 stage 慢、上次为什么失败没有落盘
+  证据" —— 事件流不持久化, `RunResult.stage_timings` 只在内存结果里。
 - `cp.rebuild_state() -> dict` — 重建所有已完成 stage merge 后的 state
   (`initial_state` + done deltas 按完成序; 链式覆盖由顺序天然处理)。
   给从未完成 (依赖已全完成) 的 stage 当执行前 state (重放用)
