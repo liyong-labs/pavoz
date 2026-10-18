@@ -414,6 +414,12 @@ async def _cmd_fork_run(args) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI 入口: 解析 argv (默认 sys.argv) → 派发子命令 → 返回退出码.
+
+    退出码约定: 0 = 成功; 1 = 业务/参数错误 (打一句人话, 不打栈); 其余留给未预期异常
+    (真 bug 的 traceback 里有文件和行号, 顶层刻意**不**写 catch-all —— 只有
+    CorruptRecordError 是例外, 它是预期内的, 单独兜住)。
+    """
     parser = argparse.ArgumentParser(prog="pavoz", description="LLM/SE/Extract 流程编排")
     sub = parser.add_subparsers(dest="cmd", required=True)
 

@@ -335,6 +335,16 @@ class Checkpoint:
 
     @classmethod
     def from_dict(cls, d: dict) -> Checkpoint:
+        """从落盘 dict 重建 Checkpoint —— `to_dict` 的反向操作, 也是**唯一**的旧格式入口.
+
+        兼容规则 (与 `to_dict` 成对维护, 改动时两边一起改):
+          · `run_id` 必填 —— 无 run_id 的远古数据在 0.5.0 已 hard cut, 不在这里兜底;
+            其余字段一律 `.get` 带默认, 见 `_rebuild_state` 的说明。
+          · `stage_deltas_visits` 缺失 (0.5.4 及更早的 last-write dict) → 包装成
+            **单 visit 列表**, 让 R1 之后的按 visit 索引代码不需要分支。
+          · 损坏的 JSON 不会走到这里 —— 那在 `FileStorage.get` 就抛 `CorruptRecordError`
+            (损坏 ≠ 不存在, 见 storage.py 里那段说明)。
+        """
         # run_id 必填 (旧无 run_id 数据已 hard cut orphan); 以后加新字段一律 .get 默认 (A7)
         # stage_deltas: 0.5.4 旧格式 (last-write dict) → 包装成单 visit 列表 (R1 兼容读)
         visits = d.get("stage_deltas_visits") or {}

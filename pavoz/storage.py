@@ -41,10 +41,20 @@ class StorageBackend(ABC):
 
     @abstractmethod
     def get(self, key: str) -> dict | None:
+        """读一条记录; **不存在**返回 None, **损坏**抛 CorruptRecordError.
+
+        这个区分是这条 API 的全部意义: 把损坏当成 None, `resume` 会认为"没有 checkpoint"
+        而**静默从头开始**, 丢掉该 task 已有的全部进度 (2026-10-17 实测修复前正是如此)。
+        """
         """读. 不存在返 None."""
 
     @abstractmethod
     def list_keys(self, prefix: str) -> list[str]:
+        """列出以 `prefix` 为目录前缀的全部 key (字典序), key 分隔符恒为 "/".
+
+        跨平台: 宿主机用 os.sep (Windows 是 "\\"), 但返回一律换成 "/" —— 调用方
+        (`CheckpointStore`) 拿它跟 "runs/.../checkpoint" 这类字面量比。
+        """
         """列 prefix 下的所有 key (按字典序)."""
 
     @abstractmethod

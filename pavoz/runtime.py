@@ -41,7 +41,7 @@ from .checkpoint import (
     stage_input_hash,
     workflow_hash,
 )
-from .dag import DAG, CycleError, Stage, UnknownDepError
+from .dag import CycleError, ConditionalEdge, DAG, Stage, UnknownDepError
 from .policy import EnginePolicy
 from .storage import CorruptRecordError
 from .state import (
@@ -163,6 +163,72 @@ _EXPECTED_USER_ERRORS = (
     TaskIdInUse,
     UnknownDepError,
 )
+
+
+def _find_orphan_and_stale(
+    dag: DAG,
+    cond_edges: dict[str, ConditionalEdge],
+    last_route: dict[str, tuple[str, int]],
+    run_exec_order: list[str],
+    order: list[str],
+    done_stages: list[str],
+) -> tuple[str, OrphanStagesError] | None:
+    """条件边图正常终止时, 检查"孤儿 stage"与"过期路由决策".
+
+    返回 `(stage_name, error)` 或 None。**纯计算**: 不写 result / 不落盘 / 不发事件 ——
+    那些副作用留给调用方 (`_fail_route` 是 `_run_inner` 里的闭包, 需要一堆 run 级状态)。
+    从 `_run_inner` 拆出来的理由: 那块是 51 行自成一体的判定, 而 `_run_inner` 当时 544 行。
+
+    R1 (0.5.5, ai@home id=270 BUG 2): 正常终止时若仍有声明 stage 从未执行、且没有任何
+    *已执行* router 的 mapping 覆盖它, 说明路由图没闭合 (回路断了 / 分支挂空), 决不允许
+    报 done。已执行 router 声明的 target 属"本次路由未选中", 是合法豁免 (如 judge 直接
+    pass)。
+
+    两条检查:
+      (a) 覆盖检: 未执行 stage 必须被某个 *决策未过期* 的已执行 router 声明 (本次路由
+          未选中 = 合法豁免); 否则是孤儿 (router 没人触发 / 分支挂空)。
+      (b) 决策过期检: router 决策后只允许跑所选目标可达集内的 stage —— 分支外 stage 在
+          决策后执行 = 回路没闭合, 旧决策已过期却无人重判, 其 mapping 不再构成豁免
+          (ai@home id=270 v1 wiring: judge 判 revise 后 s_review 在分支外跑完, s_save
+          永远不会被 ship 到 → 决不允许静默 done)。
+    """
+    reach = dag._execution_reach()  # 同包私有: n → 传递闭包 (静态+条件边)
+    stale: dict[str, list[str]] = {}
+    covered: set[str] = set()
+    for rname, edge in cond_edges.items():
+        if rname not in last_route:
+            continue  # 未执行的 router 不构成豁免 (其目标若也没跑 → 孤儿)
+        target, decided_at = last_route[rname]
+        allowed = reach[target] | {target}  # 闭包不含自身, 补上所选目标
+        strays = [m for m in run_exec_order[decided_at:] if m not in allowed]
+        if strays:
+            stale[rname] = strays
+        else:
+            # 被声明的分支**整体**豁免, 不只是 target 本身 —— 还有它的可达闭包
+            # (2026-10-16)。只豁免 target 时, "分支目标带静态下游"的形状里那个下游既没人
+            # 跑、又不在豁免名单里 → 被判孤儿, 于是**"选了某分支"这件事本身让 run 永远
+            # failed**。实测 (与 _gated_by 那条同源): router 选 end, 而 s_d 是 go 分支
+            # s_c 的静态下游, s_c/s_d 都不该跑, s_d 却被报成 orphan。
+            # 与"只豁免 target"并不矛盾: target 既然合法地没跑, 属于同一个未选中分支的
+            # 下游同理。
+            for _t in edge.mapping.values():
+                covered.add(_t)
+                covered |= reach[_t]
+
+    orphans = [n for n in order if n not in done_stages and n not in covered]
+    if not (orphans or stale):
+        return None
+    detail = "; ".join(
+        f"router '{r}' 决策 {last_route[r][0]!r} 后分支外执行了 "
+        f"{ss} (回路未闭合, 无人重判)" for r, ss in stale.items())
+    return (
+        orphans[0] if orphans else next(iter(stale)),
+        OrphanStagesError(
+            f"条件边图终止不合法, run 不能报 done: 未执行 stage "
+            f"{orphans or '无'}; {detail or '路由声明不足以覆盖未执行 stage'}. "
+            f"常见原因: 回路未闭合 (分支终点没有边/路由接回判断链) "
+            f"或 router 被 topo 意外入场所致的一次性决策"),
+    )
 
 
 class CallResult(dict):
@@ -917,52 +983,10 @@ class Runtime:
         # 路由图没闭合 (回路断了 / 分支挂空), 决不允许报 done. 已执行 router
         # 声明的 target 属"本次路由未选中", 是合法豁免 (如 judge 直接 pass)。
         if cond_edges:
-            # (a) 覆盖检: 未执行 stage 必须被某个 *决策未过期* 的已执行 router
-            #     声明 (本次路由未选中 = 合法豁免); 否则是孤儿 (router 没人触发 /
-            #     分支挂空). (b) 决策过期检: router 决策后只允许跑所选目标可达集
-            #     内的 stage — 分支外 stage 在决策后执行 = 回路没闭合, 旧决策已
-            #     过期却无人重判, 其 mapping 不再构成豁免 (ai@home id=270 v1
-            #     wiring: judge 判 revise 后 s_review 在分支外跑完, s_save 永远
-            #     不会被 ship 到 → 决不允许静默 done).
-            reach = dag._execution_reach()  # 同包私有: n → 传递闭包 (静态+条件边)
-            stale: dict[str, list[str]] = {}
-            covered: set[str] = set()
-            for rname, edge in cond_edges.items():
-                if rname not in last_route:
-                    continue  # 未执行的 router 不构成豁免 (其目标若也没跑 → 孤儿)
-                target, decided_at = last_route[rname]
-                allowed = reach[target] | {target}  # 闭包不含自身, 补上所选目标
-                strays = [m for m in run_exec_order[decided_at:]
-                          if m not in allowed]
-                if strays:
-                    stale[rname] = strays
-                else:
-                    # 被声明的分支**整体**豁免, 不只是 target 本身 —— 还有它的
-                    # 可达闭包 (2026-10-16)。只豁免 target 时, "分支目标带静态下游"
-                    # 的形状里那个下游既没人跑、又不在豁免名单里 → 被判孤儿, 于是
-                    # **"选了某分支"这件事本身让 run 永远 failed**。实测 (与
-                    # _gated_by 那条同源): router 选 end, 而 s_d 是 go 分支
-                    # s_c 的静态下游, s_c/s_d 都不该跑, s_d 却被报成 orphan。
-                    # 与"只豁免 target"并不矛盾: target 既然合法地没跑, 属于
-                    # 同一个未选中分支的下游同理。
-                    for _t in edge.mapping.values():
-                        covered.add(_t)
-                        covered |= reach[_t]
-            orphans = [n for n in order
-                       if n not in done_stages and n not in covered]
-            if orphans or stale:
-                detail = "; ".join(
-                    f"router '{r}' 决策 {last_route[r][0]!r} 后分支外执行了 "
-                    f"{ss} (回路未闭合, 无人重判)" for r, ss in stale.items())
-                return _fail_route(
-                    orphans[0] if orphans else next(iter(stale)),
-                    OrphanStagesError(
-                        f"条件边图终止不合法, run 不能报 done: 未执行 stage "
-                        f"{orphans or '无'}; {detail or '路由声明不足以覆盖未执行 stage'}. "
-                        f"常见原因: 回路未闭合 (分支终点没有边/路由接回判断链) "
-                        f"或 router 被 topo 意外入场所致的一次性决策"),
-                    "OrphanStagesError",
-                )
+            bad = _find_orphan_and_stale(
+                dag, cond_edges, last_route, run_exec_order, order, done_stages)
+            if bad is not None:
+                return _fail_route(bad[0], bad[1], "OrphanStagesError")
 
         result.status = "done"
         self._emit("run_end", {"task_id": task_id, "run_id": run_id,
