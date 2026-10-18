@@ -151,6 +151,14 @@ Library equivalent: `parse_set_args` / `parse_set_file` / `merge_overrides` / `a
 - **Dynamic graphs** — if your graph shape must change at runtime (agents that spawn agents, data-driven branching): LangGraph / Burr own that space. pavoz graphs are static; dynamic control flow lives *inside* a stage as ordinary Python.
 - **A web UI / observability platform** — see Temporal, Hatchet, Windmill. pavoz gives you CLI + JSON checkpoints to build on.
 
+## Anti-patterns
+
+- **Mutating `ctx.state` inside a stage.** It is a read-only view; writes raise `TypeError`. The return value is the only write path.
+- **Leaving `skip_unchanged=True` on a side-effecting stage.** Skipping means the function does not run — and the side effect does not happen. Mark stages that write to external systems `skip_unchanged=False`.
+- **Reading `stage_statuses["x"] == "done"` as "the function ran".** With `skip_unchanged`, the result may be replayed from the checkpoint; `cp.stage_skipped` (and `trace`'s `skipped_stages`) distinguishes the two.
+- **Treating `list_runs()` order as chronological.** Run IDs are UUID4; use `load_latest` / the `latest` pointer when you mean "most recent".
+- **Putting large payloads in state** (full documents, base64 blobs). State is persisted as per-stage deltas and rebuilt on load; keep references or paths in state and put the bytes in external storage.
+
 ## How it compares
 
 <details>
@@ -199,8 +207,21 @@ Extensions pin a compatible core range (e.g. `pavoz>=0.3,<0.4`); during 0.x, min
 
 ## Docs & development
 
-- [Architecture](docs/en/architecture.md) · [API reference](docs/en/api.md) · [Quickstart](docs/en/quickstart.md) · [Conditional edges](docs/en/conditional-edges.md) · [Comparing two runs](docs/en/diff-runs.md) · [Storage backends](docs/storage.md)
-- [Contributing](CONTRIBUTING.md) · [Releasing](RELEASING.md) · [Changelog](CHANGELOG.md) · MIT License
+| Document | Contents |
+|---|---|
+| [docs/en/quickstart.md](docs/en/quickstart.md) | 5-minute walkthrough (CLI / code / ctx.call / TestPipe) |
+| [docs/en/architecture.md](docs/en/architecture.md) | Architecture and design decisions |
+| [docs/en/api.md](docs/en/api.md) | Public API reference |
+| [docs/en/conditional-edges.md](docs/en/conditional-edges.md) | Conditional edges (cross-stage loops / judge-stage pattern / max_visits) |
+| [docs/en/diff-runs.md](docs/en/diff-runs.md) | `diff_runs` guide (structured differences between two runs) |
+| [docs/replay-params.md](docs/replay-params.md) | Declarative param overrides (`--set` / `--set-file` / `--compare-with` / `--dry-run`) |
+| [docs/storage.md](docs/storage.md) | Storage backends and custom adapters |
+| [docs/en/use-cases/](docs/en/use-cases/) | Reference integrations |
+| [CHANGELOG.md](CHANGELOG.md) | Version history |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Development setup and gates |
+| [RELEASING.md](RELEASING.md) | Release process (maintainers) |
+
+MIT License
 
 ---
 

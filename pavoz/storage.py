@@ -46,7 +46,6 @@ class StorageBackend(ABC):
         这个区分是这条 API 的全部意义: 把损坏当成 None, `resume` 会认为"没有 checkpoint"
         而**静默从头开始**, 丢掉该 task 已有的全部进度 (2026-10-17 实测修复前正是如此)。
         """
-        """读. 不存在返 None."""
 
     @abstractmethod
     def list_keys(self, prefix: str) -> list[str]:
@@ -55,7 +54,6 @@ class StorageBackend(ABC):
         跨平台: 宿主机用 os.sep (Windows 是 "\\"), 但返回一律换成 "/" —— 调用方
         (`CheckpointStore`) 拿它跟 "runs/.../checkpoint" 这类字面量比。
         """
-        """列 prefix 下的所有 key (按字典序)."""
 
     @abstractmethod
     def delete(self, key: str) -> None:
@@ -177,6 +175,11 @@ class FileStorage(StorageBackend):
             raise
 
     def get(self, key: str) -> dict | None:
+        """读一条记录: **不存在**返回 None, 存在但 JSON 损坏抛 `CorruptRecordError`.
+
+        损坏与不存在的区分是刻意契约 (见 `StorageBackend.get`): 把损坏当 None,
+        resume 会静默从头开始, 丢掉该 task 已有的全部进度.
+        """
         path = self._path(key)
         if not os.path.exists(path):
             return None
@@ -198,6 +201,11 @@ class FileStorage(StorageBackend):
             ) from e
 
     def list_keys(self, prefix: str) -> list[str]:
+        """列出 prefix 目录下的全部 key (字典序), key 分隔符恒为 "/".
+
+        prefix 按**目录前缀**解释 (不是字符串前缀): `runs/t1/` 只匹配该目录下
+        的文件; 返回的 key 会剥掉 `.json` 扩展名, 跨平台统一用 "/".
+        """
         prefix_path = self._path(prefix)[:-len(".json")]
         out: list[str] = []
         for dirpath, _dirs, files in os.walk(prefix_path):
@@ -210,6 +218,7 @@ class FileStorage(StorageBackend):
         return sorted(out)
 
     def delete(self, key: str) -> None:
+        """删一个 key. 幂等: key 不存在时 no-op (不抛)."""
         path = self._path(key)
         if os.path.exists(path):
             os.remove(path)

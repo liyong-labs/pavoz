@@ -608,6 +608,30 @@ tag 之后任何改动若落在已发布段内即报错)_
   `pending_writes` 形) 维持 backlog: 它要求 stage 声明内部检查点, 是新的核心语义,
   等真实痛点驱动。
 
+- **接口注释补全 + 文档结构对齐** (对照竞品: justpipe/Hamilton 的参数级 docstring、
+  zeroflow 的 documentation map)。公共入口此前偏重"设计理由"而缺调用者要查的参数/
+  返回/异常: `DAG.stage` (最核心的装饰器) 原只有一行 —— 现在写清 `depends_on`
+  **不注入 state** (只影响拓扑与校验)、`retries` 的总 attempts 数、`timeout=0`
+  的实际下限 0.1s、`skip_unchanged` 与副作用的冲突、`killable` 的硬杀语义；
+  `Runtime.run` 补上漏掉的 `skip_unchanged` 参数与 Returns/Raises, `run_stage`
+  补 Returns/Raises; 另补 `CheckpointStore.save`、`Checkpoint.to_dict`、
+  `FileStorage.get/list_keys/delete`、`CancelRegistry.is_cancelled`、
+  `EventRecorder.events/names`、`ReadOnlyStateView.get/keys/values/items`。
+
+  顺带删掉 `StorageBackend.get/list_keys` 里的**第二条** docstring —— 它是死
+  表达式 (`help()` 看不到), 而它让人以为接口注释已经写过了。
+  文档结构: `docs/{cn,en}/api.md` 顶部增加目录 (16 节, 锚点由
+  `tools/check_doc_links.py` 逐条验证); 两份 README 的文档索引对齐 (补
+  storage / replay-params, 英文版从一行 bullet 改成与中文版同构的表); 两份
+  README 增加 "常见误用 / Anti-patterns" (改 ctx.state / 副作用 stage 留
+  skip_unchanged / 把 done 当跑过 / 把 run_id 字典序当时间序 / 往 state 塞大块内容)。
+
+  两条新判据防回退: `tests/test_public_api_docstrings.py` (导出面 42 项 + 公开
+  成员, 0 缺失; `len(__all__) >= 30` 空集自检) 与 `tests/test_api_toc_complete.py`
+  (目录与正文双向一致, 锚点算法复用 `check_doc_links.slugify`, 避免两处漂移)。
+  5 条变异全部转红 (删 property docstring / 删类 docstring / 目录少一条 / 多一节
+  正文 / 锚点写错), 对照组绿。
+
 ## [0.5.8] — 2026-10-17
 
 ### ⚠️ 升级注意 (0.5.7 → 0.5.8)

@@ -240,6 +240,14 @@ cross-stage retry 原语, 原因相同。
 **不做的事 (YAGNI)**: scheduler/cron、UI/可视化、分布式执行、dynamic DAG、
 sub-DAG 嵌套、业务 wrapper 实现 (LLM/Search/Extract adapter)、业务表 schema。
 
+## 常见误用
+
+- **在 stage 里改 `ctx.state`** —— 它是只读视图, 写入直接抛 `TypeError`; 产出的唯一出口是返回值。
+- **对有副作用的 stage 保留 `skip_unchanged=True`** —— 跳过意味着函数不执行, 副作用也不发生; 写外部系统的 stage 应标 `skip_unchanged=False`。
+- **把 `stage_statuses["x"] == "done"` 当成"函数跑过"** —— `skip_unchanged` 命中时结果是从 checkpoint 重放的; 区分"跑过 / 重放过"看 `cp.stage_skipped` (CLI `trace` 的 `skipped_stages`)。
+- **把 `list_runs()` 的字典序当成时间序** —— run_id 是 UUID4; 要"最新"用 `load_latest` / `latest` 指针。
+- **往 state 里塞大块内容** (整篇文档 / 二进制 base64) —— state 随每个 stage 的 delta 落盘并在 load 时重建; state 里放引用或路径, 内容放外部存储。
+
 ## 什么时候用它 — 什么时候不要
 
 **用**: 单进程内的顺序/有状态管线 — LLM 研究写作管线、需要持久状态的 agent 步骤、
@@ -258,7 +266,6 @@ sub-DAG 嵌套、业务 wrapper 实现 (LLM/Search/Extract adapter)、业务表 
 扩展声明兼容的核心版本区间 (如 `pavoz>=0.3,<0.4`); 0.x 期间 minor 版本可能含破坏性变更 ([详见](docs/cn/architecture.md#扩展面-一个-stage-就是扩展点))。
 
 ## 文档
-- [docs/replay-params.md](docs/replay-params.md) — fork-run 声明式参数覆盖完整指南 (--set / --set-file / --compare-with / --dry-run)
 
 | 文档 | 内容 |
 |---|---|
@@ -267,6 +274,8 @@ sub-DAG 嵌套、业务 wrapper 实现 (LLM/Search/Extract adapter)、业务表 
 | [docs/cn/api.md](docs/cn/api.md) | 公开 API 参考 |
 | [docs/cn/conditional-edges.md](docs/cn/conditional-edges.md) | 条件边 (跨 stage 循环 / judge-stage 模式 / max_visits 熔断) |
 | [docs/cn/diff-runs.md](docs/cn/diff-runs.md) | `diff_runs` 使用指南 (两次 run 的结构化差异) |
+| [docs/replay-params.md](docs/replay-params.md) | fork-run 声明式参数覆盖 (`--set` / `--set-file` / `--compare-with` / `--dry-run`) |
+| [docs/storage.md](docs/storage.md) | 存储后端与自定义 adapter |
 | [docs/cn/use-cases/](docs/cn/use-cases/) | 业务接入参考实现 |
 | [docs/en/quickstart.md](docs/en/quickstart.md) | Quickstart (English) |
 | [docs/en/architecture.md](docs/en/architecture.md) | Architecture (English) |

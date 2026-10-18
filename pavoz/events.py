@@ -127,9 +127,11 @@ class EventRecorder:
 
     @property
     def events(self) -> list[tuple[str, dict]]:
+        """事件快照副本 (按到达序), 每项 `(event, data)`; 改返回值不影响记录器."""
         return list(self._events)
 
     def names(self) -> list[str]:
+        """事件名列表 (按到达序), 与 `events` 等长."""
         return [e for e, _ in self._events]
 
     @property

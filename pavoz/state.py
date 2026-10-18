@@ -46,6 +46,7 @@ class ReadOnlyStateView:
         self._data = data
 
     def get(self, key: str, default: Any = None) -> Any:
+        """读一个 key; 缺失返回 default (与 `dict.get` 同)."""
         return self._data.get(key, default)
 
     def __getitem__(self, key: str) -> Any:
@@ -58,12 +59,15 @@ class ReadOnlyStateView:
         return iter(self._data)
 
     def keys(self):
+        """顶层 key 的只读视图 (与 `dict.keys` 同)."""
         return self._data.keys()
 
     def values(self):
+        """顶层 value 的只读视图 (与 `dict.values` 同)."""
         return self._data.values()
 
     def items(self):
+        """顶层 `(key, value)` 的只读视图 (与 `dict.items` 同)."""
         return self._data.items()
 
     def _readonly_raise(self, *a, **kw):

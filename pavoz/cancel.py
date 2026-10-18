@@ -68,6 +68,12 @@ class CancelRegistry:
             self._flags.add(task_id)
 
     def is_cancelled(self, task_id: str) -> bool:
+        """该 task 是否有取消标志 —— 不代表 run 仍在运行.
+
+        以 `status="cancelled"` 收场的 run 会**保留**标志 (caller 的明确意图),
+        直到显式 `reset(task_id)`. 复用 task_id 前先 reset, 否则新 run 会在第一个
+        stage 执行前就被判 cancelled.
+        """
         return task_id in self._flags
 
     def reset(self, task_id: str) -> None:

@@ -92,7 +92,34 @@ class DAG:
         skip_unchanged: bool = True,
         killable: bool = True,
     ) -> Callable[[NodeFn], NodeFn]:
-        """@dag.stage() 装饰器. stage fn 签名: async def fn(ctx) -> dict (v1 统一 ctx-only)."""
+        """`@dag.stage()` 装饰器 —— 把 `async def fn(ctx) -> dict` 注册成 stage.
+
+        返回的 dict 会 merge 进全局 state; 同一 key 只能有一个 producer, 违反时
+        runtime 抛 `StateConflictError`.
+
+        Args:
+            depends_on: 静态前置 stage 名 (list/tuple). 只影响拓扑排序, 以及
+                `validate` 的未知依赖/环检测; **不用于注入 state** —— state 是
+                全局 dict, stage 通过 `ctx.state` 读任意已完成 stage 的产出.
+            retries: `RetryableError` / `TimeoutError` 的最大重试次数
+                (总 attempts = retries + 1). 其他异常不重试. 退避为 full jitter,
+                上限 `EnginePolicy.backoff_max`.
+            timeout: 单 stage 的绝对超时秒数. `None` = 不设 stage 级超时
+                (run 级 deadline 仍生效); `0` 是有效值, 实际下限 0.1s.
+            skip_unchanged: `fork_run` / `run_stage` 复用历史结果时, 若输入 hash
+                未变则跳过该 stage. 有外部副作用的 stage 应设 `False` —— 跳过 =
+                副作用不发生.
+            killable: 是否允许 `CancelRegistry.kill(hard=True)` 中断该 stage;
+                `False` 时硬杀抛 `NotKillable`.
+
+        Returns:
+            装饰器: 原样返回 fn (仍可正常调用), 同时登记到 DAG.
+
+        Raises:
+            TypeError: fn 不是 `async def`.
+            ValueError: stage 重名.
+            RuntimeError: DAG 已冻结 (`validate` 之后不能再加 stage).
+        """
 
         def _wrap(fn: NodeFn) -> NodeFn:
             if not inspect.iscoroutinefunction(fn):
@@ -185,6 +212,11 @@ class DAG:
     # ── 只读访问 ────────────────────────────────────────
     @property
     def stages(self) -> dict[str, Stage]:
+        """stage 名 → Stage 的**浅拷贝**副本.
+
+        ⚠️ 每次访问都 `dict(...)` 建一份新映射 —— 热循环里先取一次, 别在循环
+        条件里反复访问 (runtime 内有过 O(N²) 拷贝的实测记录).
+        """
         return dict(self._stages)
 
     # ── 校验 ────────────────────────────────────────────

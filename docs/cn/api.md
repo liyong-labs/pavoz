@@ -4,6 +4,25 @@
 
 公开面 = `pavoz/__init__.py` 的 `__all__`。core 零第三方依赖。
 
+## 目录
+
+- [DAG](#dag)
+- [Runtime](#runtime)
+- [Ctx (stage 参数)](#ctx-stage-参数)
+- [State](#state)
+- [Checkpoint](#checkpoint)
+- [StorageBackend (Protocol, 业务注入)](#storagebackend-protocol-业务注入)
+- [Storage loader](#storage-loader)
+- [TestPipe](#testpipe)
+- [DAG viz export (v0.5.4)](#dag-viz-export-v054)
+- [EnginePolicy (v0.5.3)](#enginepolicy-v053)
+- [CancelRegistry (v0.5.3)](#cancelregistry-v053)
+- [EventRecorder (v0.5.3)](#eventrecorder-v053)
+- [CLI](#cli)
+- [参数覆盖 (fork-run 的库等价物)](#参数覆盖-fork-run-的库等价物)
+- [Conditional edges (v0.5.5)](#conditional-edges-v055)
+- [相关文档](#相关文档)
+
 ## DAG
 
 ```python

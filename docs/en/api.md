@@ -4,6 +4,25 @@
 
 The public surface is `__all__` in `pavoz/__init__.py`. The core has zero third-party dependencies.
 
+## Contents
+
+- [DAG](#dag)
+- [Runtime](#runtime)
+- [Ctx (stage argument)](#ctx-stage-argument)
+- [State](#state)
+- [Checkpoint](#checkpoint)
+- [`StorageBackend` (Protocol, business-injected)](#storagebackend-protocol-business-injected)
+- [Storage loader](#storage-loader)
+- [`TestPipe`](#testpipe)
+- [DAG viz export (v0.5.4)](#dag-viz-export-v054)
+- [`EnginePolicy` (v0.5.3)](#enginepolicy-v053)
+- [`CancelRegistry` (v0.5.3)](#cancelregistry-v053)
+- [EventRecorder (v0.5.3)](#eventrecorder-v053)
+- [CLI](#cli)
+- [Param overrides (library equivalents of `fork-run`)](#param-overrides-library-equivalents-of-fork-run)
+- [Related documents](#related-documents)
+- [Conditional edges (v0.5.5)](#conditional-edges-v055)
+
 ## DAG
 
 ```python

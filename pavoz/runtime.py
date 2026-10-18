@@ -492,6 +492,18 @@ class Runtime:
                      命中 cp 且 cp 已有完成 stage 时忽略, 初始值已含在 cp.state)
             resume: True → 从该 task 最新 checkpoint 续跑 (复用原 run_id).
                      无 cp / 已全部完成 → RuntimeError. 重跑用 resume=False.
+            skip_unchanged: 覆盖 `EnginePolicy.skip_unchanged`; None (缺省) 用
+                     policy 值. 只影响 resume / fork 的"输入未变则复用历史结果"
+                     判定, 不影响首次执行.
+
+        Returns:
+            RunResult: 终态、最终 state、各 stage 状态与错误信息.
+
+        Raises:
+            CheckpointMismatchError: resume 时 DAG 结构变了 (workflow_hash 不匹配).
+            RuntimeError: resume=True 但未配置 checkpoint_store, 无 cp, 或该 run
+                已全部完成.
+            ValueError: task_id 非法 (空 / 过长 / 含路径分隔符).
         """
         # task_id: 省略 → UUID4; 显式传值 → A3 校验 (直接进 storage key 路径)
         if task_id is None:
@@ -1111,6 +1123,14 @@ class Runtime:
             dag: DAG (须与 cp 的 workflow_hash 一致, 否则 CheckpointMismatchError)
             task_id: 已有 checkpoint 的 task
             stage_name: 要重放的 stage (已完成过, 或依赖已完成 — 才有 delta 可重建)
+
+        Returns:
+            RunResult: 只含该 stage 的状态; run_id 是本次临时重放的新 UUID4.
+
+        Raises:
+            RuntimeError: 未配置 checkpoint_store / 无 checkpoint / 依赖未完成.
+            CheckpointMismatchError: DAG 结构变了 (workflow_hash 不匹配).
+            KeyError: stage_name 不在 DAG 里.
         """
         # R2 (0.5.5, ai@home id=272): 条件边图单 stage replay 已支持 — 输入
         # 重建走 rebuild_state_before (完成序逐 visit 折叠到该 stage 首次执行前,

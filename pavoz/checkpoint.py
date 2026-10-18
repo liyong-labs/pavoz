@@ -326,6 +326,13 @@ class Checkpoint:
         }
 
     def to_dict(self) -> dict:
+        """序列化为可 JSON 落盘的 dict — `from_dict` 的反向操作.
+
+        **不含全量 state** (v0.8): state 是 `initial_state` +
+        `stage_deltas_visits` 的确定性函数, 由 `state` property 惰性重建.
+        新增落盘字段必须同时改 `from_dict` (旧 cp 缺字段走默认值, 见那里的
+        兼容规则).
+        """
         return {
             "task_id": self.task_id,
             "run_id": self.run_id,
@@ -568,6 +575,11 @@ class CheckpointStore:
         return f"runs/{task_id}/latest"
 
     def save(self, cp: Checkpoint) -> None:
+        """保存 checkpoint, 并把该 task 的 latest 指针指向它.
+
+        两次 `storage.put`: 先写 run 记录, 再写指针 —— 指针永远指向**最后保存**
+        的 run (uuid4 字典序 ≠ 时间序, 不能靠排序判定最新).
+        """
         self.storage.put(self._key(cp.task_id, cp.run_id), cp.to_dict())
         # 指针: 永远指向最后保存的 run (uuid4 字典序 ≠ 时间序, 不能靠排序).
         self.storage.put(self._latest_key(cp.task_id), {"run_id": cp.run_id})
