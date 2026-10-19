@@ -470,9 +470,18 @@ class Checkpoint:
         # 非空 = 这是 fork cp (从第一个 stage fork 时 keep 为空, 故由 fork_run 显式
         # 记 0 来标识)。普通 run 的 kcounts 恒空 → 走顺序索引, 行为逐字节不变。
         is_fork_cp = bool(kcounts)
-        if is_fork_cp:
-            for done in self.done_stages:  # fork cp: 每 stage 总条目数 (尾对齐用)
-                total[done] = total.get(done, 0) + 1
+        # 每 stage 在 done_stages 里的**总条目数** —— 尾对齐要用 (fork 与非 fork 都要)。
+        #
+        # 2026-10-19 (ai-research feac093bf3c8 实锤): 一个 stage 因为**多次 resume**
+        # 跑过 N 次, `stage_deltas_visits` 攒了 N 条, 但 `done_stages` 里它只有
+        # **一条** —— resume 完成不会把 stage 再 append 一遍。⇒ 顺序对齐取到的是
+        # visits[0] = **第一轮**的状态。实测 s_revise: visit0 空壳 9 / visit6 空壳 0,
+        # 任何 resume 都把修订成果丢了, 然后 s_save 拿第一轮的空壳稿去过闸 ⇒ 9 条
+        # `skeleton_subsection` 硬拦, 任务死。
+        # 尾对齐 (与上面的 fork 分支同一套语义): 多出来的 visit 一定是**更晚**的执行
+        # (追加序 = 执行序)。delta 数 == done 条数时尾对齐 ≡ 顺序对齐 ⇒ 行为不变。
+        for done in self.done_stages:
+            total[done] = total.get(done, 0) + 1
         stop_hit = False  # stop_at 是否真的在完成序里出现过 (见下方兜底判定)
         for done in self.done_stages:
             occ = visit_idx.get(done, 0)  # 本 stage 第几个 done 条目 (0 起)
@@ -503,7 +512,16 @@ class Checkpoint:
                 # visit 追加在历史之后) — 顺序对齐会错配到截断前的旧 delta.
                 idx = len(deltas) - (total[done] - occ)
             else:
-                idx = occ  # 截断点前 (或非 fork cp): 顺序对齐
+                # 尾对齐: done 条数 = n 时, 第 occ 条对应 visits[n-1-occ]。
+                # n == len(deltas) 时 idx == occ (逐字节等于旧的顺序对齐)。
+                # ⛔ **fork cp 的截断点前必须保持顺序对齐** —— 那一段的 visits 是历史
+                # delta, 与本 cp 的 done 条目是 1:1 的 (fork 靠 kcounts 切边界, 不靠
+                # 尾数)。改成尾对齐会让 test_conditional_edges /
+                # test_shape_matrix 的 fork 场景全红 (2026-10-19 实测)。
+                if is_fork_cp:
+                    idx = occ
+                else:
+                    idx = len(deltas) - (total[done] - occ)
             if idx < 0 or idx >= len(deltas):
                 continue  # done 记录多于 delta (旧格式/手工残缺) → 跳过该 visit
             delta = deltas[idx]
