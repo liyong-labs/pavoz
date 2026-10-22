@@ -20,6 +20,16 @@ tag 之后任何改动若落在已发布段内即报错)_
   有人从历史里把文件捞回来 add, 也发不出去)。对库的使用者无影响: 它们从来不在 wheel
   里, 也不是公开 API。
 
+- ★ **多轮 stage 的 resume 取**末次** visit, 不是第一轮** (`d8cb20f`,
+  ai@home 3540/3542 那串): `_rebuild_state` 按「done 一个条目 → 消费 visits 一条」
+  顺序取, 同一 stage 因多次 resume 跑过多轮时取到的是**第一轮**的 delta —— 生产现场
+  (ai-research): resume 后下游 stage 拿第一轮的空壳稿过闸被硬拦, 任务死, 而磁盘上的
+  交付稿是好的。修为**尾对齐** (与 fork 分支同一套语义): 只在 delta 比 done 多时生效,
+  `len(deltas) == n` 时行为逐字节不变; fork cp 的截断点前保持顺序对齐 (`is_fork_cp`
+  分支 —— 无条件尾对齐会让 fork 场景 3 条变红)。判据
+  `tests/test_rebuild_takes_the_last_visit.py` 9 条, 含反向验证 (退回顺序对齐 → 2 红);
+  真 checkpoint 复核 rebuild 结果与末次 visit 逐字一致。
+
 - ★ **四个 example 调的是裸 `pavos` 命令 —— "装了但 venv 没激活"就全线跑不起来**。
   实测 (照各自 docstring 的用法):
 
