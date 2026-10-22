@@ -8,6 +8,7 @@
     `llm_router.py` (4 个厂商模型 + 档位 + 用户原话 + PRD 引用) 与消费方 state schema,
     还有一份给消费方本地 pyright 用的 `pavos_stub.py`。**7 个门禁一个都扫不到它**:
     pyflakes 的目标列表是 `pav*z tests examples tools`, pyright 是 `include: ["pav*z"]`。
+    (→ 已解决: 2026-10-23 user 拍板, `research/` 与 `dags/research_dag.py` 从仓里删除。)
   · `dags/research_dag.py` —— 消费方自己的 DAG, 同样被跟踪。
   · 厂商模型名当通用示例值: 出现在**库源码的 CLI help** 里 (`--set llm.model=longcat`)、
     两份 README 首页、`docs/replay-params.md` 的可复制示例、以及 3 个测试文件。
@@ -20,9 +21,9 @@
 记录来由, 删掉反而是篡改历史。它们逐个列在 ALLOWLIST 里并写明理由, 不是"扫到就放过"
 的通配 —— 新增一处没登记的提及照样转红。
 
-ALLOWLIST 里 `research/*` 与 `dags/research_dag.py` 两项是**明确的欠账**, 不是认可:
-那是被跟踪的消费方业务代码, 删不删由 user 决定 (见 CHANGELOG 与报告)。删掉之后请把
-这两条从 ALLOWLIST 一并删掉 —— 留着它们, 这个门禁就会永远为那笔债开绿灯。
+曾经的 ALLOWLIST 欠账 (`research/*` 与 `dags/research_dag.py` 两条豁免) 已随 2026-10-23
+的删除一并撤掉 —— 那两条豁免只该在文件暂留期间存在; 现在这两个路径若有任何文件
+再进仓, 本判据直接对它转红, 不再有绿灯。
 
 Usage:  python tools/check_business_leak.py     (exit 0 = 没有未登记的业务值)
 """
@@ -62,19 +63,18 @@ ALLOWLIST: tuple[tuple[str, str], ...] = (
     ("examples/04_deep_merge.py", "同上"),
     ("tests/test_examples_runnable.py",
      "模块 docstring 里复述那次清理的背景; 正文代码已无这些 token"),
-    # ↓↓↓ 欠账: 消费方业务代码, 是否删除待 user 决定。删掉后请连同本注释一起删 ↓↓↓
-    ("research/*", "消费方 ai-research 的业务包 —— 已报给 user, 待决定是否从开源仓移除"),
-    ("dags/research_dag.py", "消费方自己的 DAG —— 同上"),
 )
 
-# 这些目录**即便暂留在仓里**, 也不得进任何发布产物。2026-10-17 实测: hatchling 的
-# sdist 默认打包**全部 git 跟踪的文件**, 于是 PyPI 上的 0.5.8 sdist (512KB) 里逐字含有
-# research/llm_router.py 的 "用户原话 (2026-09-07)" + 四个厂商模型 + 硬编码的
-# 厂商 API 端点 + **真实 token 消耗反推的人民币成本** (total_yuan: 0.474), 以及
-# dags/research_dag.py。
+# 这些路径**不得进任何发布产物**。2026-10-17 实测: hatchling 的 sdist 默认打包**全部
+# git 跟踪的文件**, 于是 PyPI 上的 0.5.8 sdist (512KB) 里逐字含有 research/llm_router.py
+# 的 "用户原话 (2026-09-07)" + 四个厂商模型 + 硬编码的厂商 API 端点 + **真实 token 消耗
+# 反推的人民币成本** (total_yuan: 0.474), 以及 dags/research_dag.py。
 #
-# 上面的 ALLOWLIST 解决"仓里能不能留", 这条解决"**发出去**能不能带"。两者都要:
-# 只做前者, 那笔债还躺在 PyPI 上; 只做后者, 仓里继续误导读代码的人。
+# 2026-10-23 起这两个路径已从仓里删除 (user 拍板), 但 pyproject 的 sdist exclude
+# **留着不撤**, 作为防再引入的最后一道闸: hatchling 只打包 git 跟踪的文件, 可只要有人
+# 从历史里把文件捞回来 add 进去, sdist 就会再次带上它们 —— 这条判据 + pyproject 里的
+# exclude 共同保证"哪怕再进仓, 也发不出去"。判据同时要求两边一致, 一旦漂移就报红。
+#
 # ⚠️ `dags` 是**文件级**, 不是目录级 —— 而这不是偏好, 是被现实逼出来的 (2026-10-17):
 #   dags/research_dag.py  消费方的 DAG → 必须排除
 #   dags/demo.py          通用 mock demo → **必须发出去**, README.cn 首页与 CLI --help

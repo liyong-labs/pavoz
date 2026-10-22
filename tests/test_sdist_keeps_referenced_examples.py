@@ -117,10 +117,14 @@ def test_exclusion_matcher_covers_ancestors_but_not_siblings():
 
 
 def test_business_dirs_are_still_excluded():
-    """★ 前提不能被顺手改掉: 消费方业务目录仍必须被排除, 且收窄后依然生效。"""
+    """★ 防再引入的闸不能被顺手拆掉: 消费方业务路径的 exclude 必须一直在。
+
+    这两个路径 2026-10-23 已从仓里删除, exclude 留着是为了"哪怕有人从历史里把
+    文件捞回来 add, 也发不出去" (hatchling 默认打包全部 git 跟踪文件)。
+    """
     excludes = [str(x) for x in _sdist_excludes()]
     norm = {x.strip("/") for x in excludes}
-    assert "research" in norm, f"消费方业务包 research/ 必须留在 exclude 里: {excludes}"
+    assert "research" in norm, f"消费方业务包 research/ 的 exclude 必须留着 (防再引入): {excludes}"
     # dags/ 整体不再排除 (demo.py 要发), 但消费方那个文件仍要排除
     assert "dags/research_dag.py" in norm or "dags" in norm, (
         f"消费方的 dags/research_dag.py 必须留在 exclude 里: {excludes}")

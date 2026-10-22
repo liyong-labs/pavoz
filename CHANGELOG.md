@@ -7,6 +7,15 @@
 _(已发布的版本段不再修改, 这条纪律由 `tools/check_changelog.py` 判据钉住:
 tag 之后任何改动若落在已发布段内即报错)_
 
+- ★ **消费方业务包 `research/` (4 个文件) 与 `dags/research_dag.py` 已从仓里删除**
+  (user 拍板, 2026-10-23)。它们是 ai-research 的业务代码, 2026-10-17 由
+  `tools/check_business_leak.py` 查实被 git 跟踪着进了开源仓 (且随 0.5.8 sdist 发出去过
+  一次); 此前以 sdist exclude + 门禁 ALLOWLIST 两条豁免暂留。本次: 文件删除, 那两条
+  豁免一并撤掉 —— 这两个路径下再有文件进仓, 门禁直接转红, 不再有绿灯; pyproject 的
+  exclude **保留**作防再引入的最后一道闸 (hatchling 默认打包全部 git 跟踪文件, 哪怕
+  有人从历史里把文件捞回来 add, 也发不出去)。对库的使用者无影响: 它们从来不在 wheel
+  里, 也不是公开 API。
+
 - ★ **四个 example 调的是裸 `pavos` 命令 —— "装了但 venv 没激活"就全线跑不起来**。
   实测 (照各自 docstring 的用法):
 
