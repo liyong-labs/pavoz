@@ -60,7 +60,7 @@ from .types import (
 )
 from .viz import to_graph_json, to_mermaid
 
-__version__ = "0.5.8"
+__version__ = "0.5.9"
 
 __all__ = [
     "CorruptRecordError",
